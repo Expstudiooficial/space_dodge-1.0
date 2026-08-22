@@ -1,0 +1,152 @@
+:root {
+  --bg: #0b0f14;
+  --fg: #d7e0ea;
+  --dim: #6b7a8c;
+  --stderr: #ff8a8a;
+  --system: #7aa2f7;
+  --input: #4dd0a0;
+  --selection: rgba(122, 162, 247, 0.35);
+
+  --ansi-0: #3b4353;
+  --ansi-1: #ff6b6b;
+  --ansi-2: #4dd0a0;
+  --ansi-3: #f2c97d;
+  --ansi-4: #7aa2f7;
+  --ansi-5: #c792ea;
+  --ansi-6: #56d4dd;
+  --ansi-7: #d7e0ea;
+  --ansi-8: #55637a;
+  --ansi-9: #ff8a8a;
+  --ansi-10: #74e6bb;
+  --ansi-11: #ffd98a;
+  --ansi-12: #9cb8ff;
+  --ansi-13: #dcb0ff;
+  --ansi-14: #7fe8f0;
+  --ansi-15: #ffffff;
+}
+
+* {
+  box-sizing: border-box;
+  -webkit-tap-highlight-color: transparent;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  background: var(--bg);
+  color: var(--fg);
+  overscroll-behavior: none;
+}
+
+body {
+  font-family: "JetBrains Mono", "Roboto Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 13px;
+  line-height: 1.55;
+  font-variant-ligatures: none;
+}
+
+#scroller {
+  height: 100%;
+  overflow-y: auto;
+  overflow-x: auto;
+  padding: 12px 14px 20px;
+  -webkit-overflow-scrolling: touch;
+}
+
+#output {
+  white-space: pre-wrap;
+  word-break: break-word;
+  min-height: 1px;
+}
+
+/* Long unbroken tokens (paths, tracebacks) stay readable rather than
+   forcing the whole view to scroll sideways. */
+#output.nowrap {
+  white-space: pre;
+  word-break: normal;
+}
+
+.line {
+  display: block;
+}
+
+.stderr {
+  color: var(--stderr);
+}
+
+.system {
+  color: var(--system);
+  font-style: italic;
+}
+
+.input-echo {
+  color: var(--input);
+}
+
+.input-echo::before {
+  content: ">>> ";
+  color: var(--dim);
+}
+
+.divider {
+  color: var(--dim);
+  opacity: 0.7;
+  user-select: none;
+}
+
+#empty {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--dim);
+  pointer-events: none;
+  transition: opacity 160ms ease;
+}
+
+#empty.hidden {
+  opacity: 0;
+}
+
+#tail {
+  height: 1px;
+}
+
+::selection {
+  background: var(--selection);
+}
+
+/* Bold and the eight ANSI colours, in both normal and bright variants. */
+.b { font-weight: 700; }
+.i { font-style: italic; }
+.u { text-decoration: underline; }
+.d { opacity: 0.6; }
+
+.fg0 { color: var(--ansi-0); }
+.fg1 { color: var(--ansi-1); }
+.fg2 { color: var(--ansi-2); }
+.fg3 { color: var(--ansi-3); }
+.fg4 { color: var(--ansi-4); }
+.fg5 { color: var(--ansi-5); }
+.fg6 { color: var(--ansi-6); }
+.fg7 { color: var(--ansi-7); }
+.fg8 { color: var(--ansi-8); }
+.fg9 { color: var(--ansi-9); }
+.fg10 { color: var(--ansi-10); }
+.fg11 { color: var(--ansi-11); }
+.fg12 { color: var(--ansi-12); }
+.fg13 { color: var(--ansi-13); }
+.fg14 { color: var(--ansi-14); }
+.fg15 { color: var(--ansi-15); }
+
+.bg0 { background: var(--ansi-0); }
+.bg1 { background: var(--ansi-1); }
+.bg2 { background: var(--ansi-2); }
+.bg3 { background: var(--ansi-3); }
+.bg4 { background: var(--ansi-4); }
+.bg5 { background: var(--ansi-5); }
+.bg6 { background: var(--ansi-6); }
+.bg7 { background: var(--ansi-7); }

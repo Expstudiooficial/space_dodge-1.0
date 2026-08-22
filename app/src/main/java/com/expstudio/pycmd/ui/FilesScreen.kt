@@ -1,0 +1,344 @@
+package com.expstudio.pycmd.ui
+
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.filled.CreateNewFolder
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Description
+import androidx.compose.material.icons.filled.DriveFileRenameOutline
+import androidx.compose.material.icons.filled.FileUpload
+import androidx.compose.material.icons.filled.Folder
+import androidx.compose.material.icons.filled.FolderOpen
+import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.NoteAdd
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
+import com.expstudio.pycmd.util.WorkspaceEntry
+import java.io.File
+
+@Composable
+fun FilesScreen(
+    state: FilesState,
+    rootPath: String,
+    relativePath: (File) -> String,
+    onOpenDirectory: (File) -> Unit,
+    onOpenFile: (File) -> Unit,
+    onRunFile: (File) -> Unit,
+    onUp: () -> Unit,
+    onNewFile: (String) -> Unit,
+    onNewFolder: (String) -> Unit,
+    onRename: (File, String) -> Unit,
+    onDelete: (File) -> Unit,
+    onImport: (android.net.Uri, String) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    var dialog by remember { mutableStateOf<FileDialog?>(null) }
+
+    val importLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument(),
+    ) { uri ->
+        if (uri != null) {
+            val name = uri.lastPathSegment?.substringAfterLast('/')?.substringAfterLast(':')
+            onImport(uri, name?.takeIf { it.isNotBlank() } ?: "imported.py")
+        }
+    }
+
+    val atRoot = state.directory?.absolutePath == rootPath
+
+    Column(modifier.fillMaxSize()) {
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .background(MaterialTheme.colorScheme.surface)
+                .padding(horizontal = 8.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            IconButton(onClick = onUp, enabled = !atRoot) {
+                Icon(
+                    Icons.Filled.ArrowBack,
+                    contentDescription = "Up one folder",
+                    tint = if (atRoot) MaterialTheme.colorScheme.outline else MaterialTheme.colorScheme.onSurface,
+                )
+            }
+            Column(Modifier.weight(1f)) {
+                Text("Workspace", style = MaterialTheme.typography.titleMedium)
+                Text(
+                    text = state.directory?.let { relativePath(it) } ?: "/",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                )
+            }
+            IconButton(onClick = { importLauncher.launch(arrayOf("*/*")) }) {
+                Icon(
+                    Icons.Filled.FileUpload,
+                    contentDescription = "Import a file",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            IconButton(onClick = { dialog = FileDialog.NewFolder }) {
+                Icon(
+                    Icons.Filled.CreateNewFolder,
+                    contentDescription = "New folder",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            IconButton(onClick = { dialog = FileDialog.NewFile }) {
+                Icon(
+                    Icons.Filled.NoteAdd,
+                    contentDescription = "New file",
+                    tint = MaterialTheme.colorScheme.primary,
+                )
+            }
+        }
+
+        Divider()
+
+        when {
+            state.loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
+            }
+
+            state.entries.isEmpty() -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                EmptyState(
+                    icon = Icons.Filled.FolderOpen,
+                    title = "This folder is empty",
+                    hint = "Create a script or import one from your device.",
+                )
+            }
+
+            else -> LazyColumn(
+                Modifier.fillMaxSize(),
+                contentPadding = PaddingValues(bottom = 24.dp),
+            ) {
+                items(state.entries, key = { it.file.absolutePath }) { entry ->
+                    FileRow(
+                        entry = entry,
+                        onOpen = {
+                            if (entry.isDirectory) onOpenDirectory(entry.file) else onOpenFile(entry.file)
+                        },
+                        onRun = { onRunFile(entry.file) },
+                        onRename = { dialog = FileDialog.Rename(entry.file) },
+                        onDelete = { dialog = FileDialog.ConfirmDelete(entry.file) },
+                    )
+                }
+            }
+        }
+    }
+
+    when (val current = dialog) {
+        FileDialog.NewFile -> TextPromptDialog(
+            title = "New file",
+            label = "File name",
+            initial = "script.py",
+            confirmLabel = "Create",
+            onDismiss = { dialog = null },
+            onConfirm = {
+                dialog = null
+                onNewFile(it)
+            },
+        )
+
+        FileDialog.NewFolder -> TextPromptDialog(
+            title = "New folder",
+            label = "Folder name",
+            initial = "",
+            confirmLabel = "Create",
+            onDismiss = { dialog = null },
+            onConfirm = {
+                dialog = null
+                onNewFolder(it)
+            },
+        )
+
+        is FileDialog.Rename -> TextPromptDialog(
+            title = "Rename",
+            label = "New name",
+            initial = current.file.name,
+            confirmLabel = "Rename",
+            onDismiss = { dialog = null },
+            onConfirm = {
+                dialog = null
+                onRename(current.file, it)
+            },
+        )
+
+        is FileDialog.ConfirmDelete -> ConfirmDialog(
+            title = "Delete ${current.file.name}?",
+            message = if (current.file.isDirectory) {
+                "The folder and everything inside it will be removed. This cannot be undone."
+            } else {
+                "This cannot be undone."
+            },
+            confirmLabel = "Delete",
+            destructive = true,
+            onDismiss = { dialog = null },
+            onConfirm = {
+                dialog = null
+                onDelete(current.file)
+            },
+        )
+
+        null -> Unit
+    }
+}
+
+private sealed interface FileDialog {
+    data object NewFile : FileDialog
+    data object NewFolder : FileDialog
+    data class Rename(val file: File) : FileDialog
+    data class ConfirmDelete(val file: File) : FileDialog
+}
+
+@Composable
+private fun FileRow(
+    entry: WorkspaceEntry,
+    onOpen: () -> Unit,
+    onRun: () -> Unit,
+    onRename: () -> Unit,
+    onDelete: () -> Unit,
+) {
+    var menuOpen by remember { mutableStateOf(false) }
+
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onOpen)
+            .padding(horizontal = 14.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(
+            imageVector = if (entry.isDirectory) Icons.Filled.Folder else Icons.Filled.Description,
+            contentDescription = null,
+            tint = when {
+                entry.isDirectory -> MaterialTheme.colorScheme.secondary
+                entry.isPython -> MaterialTheme.colorScheme.primary
+                else -> MaterialTheme.colorScheme.onSurfaceVariant
+            },
+            modifier = Modifier.size(22.dp),
+        )
+        Spacer(Modifier.width(14.dp))
+
+        Column(Modifier.weight(1f)) {
+            Text(
+                text = entry.name,
+                style = MaterialTheme.typography.bodyLarge,
+                fontWeight = if (entry.isDirectory) FontWeight.Medium else FontWeight.Normal,
+                maxLines = 1,
+            )
+            Text(
+                text = buildString {
+                    append(entry.readableDate)
+                    if (!entry.isDirectory) {
+                        append("  -  ")
+                        append(entry.readableSize)
+                    }
+                },
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+
+        if (entry.isPython) {
+            IconButton(onClick = onRun, modifier = Modifier.size(38.dp)) {
+                Icon(
+                    Icons.Filled.PlayArrow,
+                    contentDescription = "Run ${entry.name}",
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(20.dp),
+                )
+            }
+        }
+
+        Box {
+            IconButton(onClick = { menuOpen = true }, modifier = Modifier.size(38.dp)) {
+                Icon(
+                    Icons.Filled.MoreVert,
+                    contentDescription = "More actions",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(20.dp),
+                )
+            }
+            DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                DropdownMenuItem(
+                    text = { Text("Rename") },
+                    leadingIcon = { Icon(Icons.Filled.DriveFileRenameOutline, contentDescription = null) },
+                    onClick = {
+                        menuOpen = false
+                        onRename()
+                    },
+                )
+                DropdownMenuItem(
+                    text = { Text("Delete", color = MaterialTheme.colorScheme.error) },
+                    leadingIcon = {
+                        Icon(
+                            Icons.Filled.Delete,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.error,
+                        )
+                    },
+                    onClick = {
+                        menuOpen = false
+                        onDelete()
+                    },
+                )
+            }
+        }
+    }
+    Box(
+        Modifier
+            .padding(start = 50.dp)
+            .fillMaxWidth()
+            .height(1.dp)
+            .background(MaterialTheme.colorScheme.outlineVariant),
+    )
+}
+
+/** Row of quick actions above the list; kept here so Files owns its own chrome. */
+@Composable
+fun FilesQuickActions(
+    onNewFile: () -> Unit,
+    onImport: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Row(
+        modifier.fillMaxWidth().padding(12.dp),
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        ActionButton("New script", Icons.Filled.NoteAdd, onNewFile, Modifier.weight(1f))
+        GhostButton("Import", Icons.Filled.FileUpload, onImport, Modifier.weight(1f))
+    }
+}

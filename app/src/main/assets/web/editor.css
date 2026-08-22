@@ -1,0 +1,137 @@
+:root {
+  --bg: #0b0f14;
+  --gutter-bg: #0e141b;
+  --gutter-fg: #46566b;
+  --gutter-active: #7aa2f7;
+  --fg: #d7e0ea;
+  --caret: #4dd0a0;
+  --selection: rgba(122, 162, 247, 0.35);
+  --current-line: rgba(122, 162, 247, 0.08);
+
+  --kw: #c792ea;
+  --builtin: #7aa2f7;
+  --str: #4dd0a0;
+  --num: #f2c97d;
+  --comment: #5a6b80;
+  --decorator: #ffd98a;
+  --def: #56d4dd;
+  --self: #ff8a8a;
+
+  --font-size: 13px;
+  --line-height: 21px;
+}
+
+* {
+  box-sizing: border-box;
+  -webkit-tap-highlight-color: transparent;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  background: var(--bg);
+  color: var(--fg);
+  overscroll-behavior: none;
+}
+
+#frame {
+  display: flex;
+  height: 100%;
+  width: 100%;
+}
+
+#gutter {
+  flex: 0 0 auto;
+  min-width: 42px;
+  background: var(--gutter-bg);
+  color: var(--gutter-fg);
+  text-align: right;
+  user-select: none;
+  overflow: hidden;
+  border-right: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+/* Translated rather than scrolled, so it tracks the surface exactly. */
+#gutter-inner {
+  padding: 10px 8px 60px 10px;
+  will-change: transform;
+}
+
+#gutter-inner .num {
+  display: block;
+}
+
+#gutter .num.active {
+  color: var(--gutter-active);
+}
+
+#surface {
+  position: relative;
+  flex: 1 1 auto;
+  overflow: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+#highlight,
+#input {
+  margin: 0;
+  padding: 10px 16px 60px 12px;
+  border: 0;
+  font-family: "JetBrains Mono", "Roboto Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: var(--font-size);
+  line-height: var(--line-height);
+  font-variant-ligatures: none;
+  tab-size: 4;
+  -moz-tab-size: 4;
+  white-space: pre;
+  word-wrap: normal;
+  overflow-wrap: normal;
+}
+
+#gutter {
+  font-family: "JetBrains Mono", "Roboto Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: var(--font-size);
+  line-height: var(--line-height);
+}
+
+/* The highlighted layer sits under a transparent textarea: the textarea owns
+   the caret, selection and IME, the pre owns the colours. Their metrics must
+   match exactly or the two drift apart. */
+#highlight {
+  position: absolute;
+  top: 0;
+  left: 0;
+  pointer-events: none;
+  min-width: 100%;
+  min-height: 100%;
+}
+
+#input {
+  position: relative;
+  display: block;
+  min-width: 100%;
+  min-height: 100%;
+  background: transparent;
+  color: transparent;
+  caret-color: var(--caret);
+  resize: none;
+  outline: none;
+  overflow: hidden;
+}
+
+#input::selection {
+  background: var(--selection);
+}
+
+/* Token colours */
+.tok-kw { color: var(--kw); }
+.tok-builtin { color: var(--builtin); }
+.tok-str { color: var(--str); }
+.tok-num { color: var(--num); }
+.tok-comment { color: var(--comment); font-style: italic; }
+.tok-decorator { color: var(--decorator); }
+.tok-def { color: var(--def); }
+.tok-self { color: var(--self); font-style: italic; }
+.tok-op { color: #9db2c9; }

@@ -1,0 +1,193 @@
+package com.expstudio.pycmd.util
+
+import android.content.Context
+import android.net.Uri
+import java.io.File
+import java.io.IOException
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+
+/** A file or folder shown in the Files tab. */
+data class WorkspaceEntry(
+    val file: File,
+    val name: String,
+    val isDirectory: Boolean,
+    val sizeBytes: Long,
+    val modifiedMillis: Long,
+) {
+    val isPython: Boolean get() = !isDirectory && name.endsWith(".py", ignoreCase = true)
+
+    val readableSize: String
+        get() = when {
+            isDirectory -> ""
+            sizeBytes < 1024 -> "$sizeBytes B"
+            sizeBytes < 1024 * 1024 -> "%.1f KB".format(Locale.US, sizeBytes / 1024.0)
+            else -> "%.1f MB".format(Locale.US, sizeBytes / (1024.0 * 1024.0))
+        }
+
+    val readableDate: String
+        get() = SimpleDateFormat("dd MMM yyyy HH:mm", Locale.US).format(Date(modifiedMillis))
+}
+
+/**
+ * Everything file-related, kept inside the app's private storage.
+ *
+ * Staying in `filesDir` means no storage permissions, no scoped-storage
+ * surprises, and the workspace travels with the app's backup.
+ */
+class Workspace(context: Context) {
+
+    private val appContext = context.applicationContext
+    val root: File = File(appContext.filesDir, "workspace").apply { mkdirs() }
+
+    /** Guards against traversal walking out of the workspace. */
+    fun isInsideWorkspace(file: File): Boolean {
+        val canonicalRoot = runCatching { root.canonicalPath }.getOrNull() ?: return false
+        val canonicalFile = runCatching { file.canonicalPath }.getOrNull() ?: return false
+        return canonicalFile == canonicalRoot || canonicalFile.startsWith(canonicalRoot + File.separator)
+    }
+
+    fun relativePath(file: File): String {
+        val prefix = root.absolutePath
+        val path = file.absolutePath
+        return when {
+            path == prefix -> "/"
+            path.startsWith(prefix + File.separator) -> path.removePrefix(prefix + File.separator)
+            else -> file.name
+        }
+    }
+
+    suspend fun list(directory: File): List<WorkspaceEntry> = withContext(Dispatchers.IO) {
+        if (!isInsideWorkspace(directory) || !directory.isDirectory) return@withContext emptyList()
+        directory.listFiles().orEmpty()
+            .filterNot { it.name.startsWith(".") }
+            .map {
+                WorkspaceEntry(
+                    file = it,
+                    name = it.name,
+                    isDirectory = it.isDirectory,
+                    sizeBytes = if (it.isDirectory) 0L else it.length(),
+                    modifiedMillis = it.lastModified(),
+                )
+            }
+            // Folders first, then alphabetical - the ordering people expect.
+            .sortedWith(compareByDescending<WorkspaceEntry> { it.isDirectory }.thenBy { it.name.lowercase() })
+    }
+
+    suspend fun read(file: File): Result<String> = withContext(Dispatchers.IO) {
+        if (!isInsideWorkspace(file)) return@withContext Result.failure(IOException("Outside the workspace."))
+        runCatching { file.readText() }
+    }
+
+    suspend fun write(file: File, content: String): Result<Unit> = withContext(Dispatchers.IO) {
+        if (!isInsideWorkspace(file)) return@withContext Result.failure(IOException("Outside the workspace."))
+        runCatching {
+            file.parentFile?.mkdirs()
+            file.writeText(content)
+        }
+    }
+
+    suspend fun createFile(directory: File, name: String): Result<File> = withContext(Dispatchers.IO) {
+        val safe = sanitise(name) ?: return@withContext Result.failure(IOException("Invalid name."))
+        val target = File(directory, safe)
+        if (!isInsideWorkspace(target)) return@withContext Result.failure(IOException("Outside the workspace."))
+        if (target.exists()) return@withContext Result.failure(IOException("'$safe' already exists."))
+        runCatching {
+            target.parentFile?.mkdirs()
+            if (!target.createNewFile()) throw IOException("Could not create '$safe'.")
+            target
+        }
+    }
+
+    suspend fun createFolder(directory: File, name: String): Result<File> = withContext(Dispatchers.IO) {
+        val safe = sanitise(name) ?: return@withContext Result.failure(IOException("Invalid name."))
+        val target = File(directory, safe)
+        if (!isInsideWorkspace(target)) return@withContext Result.failure(IOException("Outside the workspace."))
+        if (target.exists()) return@withContext Result.failure(IOException("'$safe' already exists."))
+        runCatching {
+            if (!target.mkdirs()) throw IOException("Could not create '$safe'.")
+            target
+        }
+    }
+
+    suspend fun rename(file: File, newName: String): Result<File> = withContext(Dispatchers.IO) {
+        val safe = sanitise(newName) ?: return@withContext Result.failure(IOException("Invalid name."))
+        val parent = file.parentFile ?: return@withContext Result.failure(IOException("No parent folder."))
+        val target = File(parent, safe)
+        if (!isInsideWorkspace(file) || !isInsideWorkspace(target)) {
+            return@withContext Result.failure(IOException("Outside the workspace."))
+        }
+        if (target.exists()) return@withContext Result.failure(IOException("'$safe' already exists."))
+        runCatching {
+            if (!file.renameTo(target)) throw IOException("Could not rename '${file.name}'.")
+            target
+        }
+    }
+
+    suspend fun delete(file: File): Result<Unit> = withContext(Dispatchers.IO) {
+        if (!isInsideWorkspace(file) || file.absolutePath == root.absolutePath) {
+            return@withContext Result.failure(IOException("Refusing to delete that."))
+        }
+        runCatching {
+            if (!file.deleteRecursively()) throw IOException("Could not delete '${file.name}'.")
+        }
+    }
+
+    /** Copies a document the user picked with the system file picker. */
+    suspend fun importFrom(uri: Uri, directory: File, suggestedName: String): Result<File> =
+        withContext(Dispatchers.IO) {
+            val safe = sanitise(suggestedName) ?: "imported.py"
+            val target = uniqueTarget(directory, safe)
+            if (!isInsideWorkspace(target)) return@withContext Result.failure(IOException("Outside the workspace."))
+            runCatching {
+                appContext.contentResolver.openInputStream(uri).use { input ->
+                    requireNotNull(input) { "Could not open the selected file." }
+                    target.outputStream().use { output -> input.copyTo(output) }
+                }
+                target
+            }
+        }
+
+    private fun uniqueTarget(directory: File, name: String): File {
+        var candidate = File(directory, name)
+        if (!candidate.exists()) return candidate
+        val stem = name.substringBeforeLast('.', name)
+        val extension = name.substringAfterLast('.', "")
+        var index = 2
+        while (candidate.exists() && index < 1000) {
+            val suffix = if (extension.isEmpty()) "" else ".$extension"
+            candidate = File(directory, "$stem-$index$suffix")
+            index += 1
+        }
+        return candidate
+    }
+
+    /** Rejects separators and traversal; keeps names usable as Python modules. */
+    private fun sanitise(name: String): String? {
+        val trimmed = name.trim()
+        if (trimmed.isEmpty() || trimmed == "." || trimmed == "..") return null
+        val illegal = charArrayOf('/', 0x5C.toChar(), ':', '*', '?', '"', '<', '>', '|')
+        if (trimmed.any { it in illegal || it.isISOControl() }) return null
+        return trimmed.take(120)
+    }
+
+    /** Drops the bundled examples in on first launch so the app is never empty. */
+    suspend fun seedExamples(): Int = withContext(Dispatchers.IO) {
+        val examplesDir = File(root, "examples")
+        if (examplesDir.exists()) return@withContext 0
+        examplesDir.mkdirs()
+        var copied = 0
+        runCatching {
+            appContext.assets.list("examples").orEmpty().forEach { name ->
+                appContext.assets.open("examples/$name").use { input ->
+                    File(examplesDir, name).outputStream().use { output -> input.copyTo(output) }
+                }
+                copied += 1
+            }
+        }
+        copied
+    }
+}

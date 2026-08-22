@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+<title>PyCmd editor</title>
+<link rel="stylesheet" href="editor.css" />
+</head>
+<body>
+<div id="frame">
+  <div id="gutter" aria-hidden="true"><div id="gutter-inner"></div></div>
+  <div id="surface">
+    <pre id="highlight" aria-hidden="true"><code id="highlight-code"></code></pre>
+    <textarea id="input"
+              spellcheck="false"
+              autocapitalize="off"
+              autocomplete="off"
+              autocorrect="off"
+              wrap="off"
+              aria-label="Python source code"></textarea>
+  </div>
+</div>
+<script src="highlight.js"></script>
+<script src="editor.js"></script>
+</body>
+</html>
