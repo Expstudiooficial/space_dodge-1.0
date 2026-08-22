@@ -2,6 +2,9 @@
 build/
 .gradle/
 *.apk
+
+# ...except the prebuilt debug APK that ships with the repo.
+!dist/*.apk
 *.aab
 *.ap_
 *.dex
