@@ -116,29 +116,9 @@
       empty.classList.remove('hidden');
     },
 
-    /** Separator drawn between runs so output blocks stay distinguishable. */
-    divider: function (label) {
-      var text = label ? ' ' + label + ' ' : '';
-      var filler = '-'.repeat(Math.max(4, 28 - text.length));
-      this.append('system', '\n' + filler + text + filler + '\n');
-    },
-
+    /** Long lines either wrap or scroll sideways; the console offers both. */
     setWrap: function (wrap) {
       output.classList.toggle('nowrap', !wrap);
-    },
-
-    setFontSize: function (px) {
-      document.body.style.fontSize = px + 'px';
-    },
-
-    scrollToBottom: function () {
-      stickToBottom = true;
-      scroller.scrollTop = scroller.scrollHeight;
-    },
-
-    /** Used by the "copy output" action in the toolbar. */
-    getText: function () {
-      return output.textContent || '';
     }
   };
 
@@ -149,9 +129,5 @@
       global.PyConsole.append(queued.stream, queued.text);
     }
     global.PyConsoleQueue = [];
-  }
-
-  if (global.PyBridge && global.PyBridge.onConsoleReady) {
-    global.PyBridge.onConsoleReady();
   }
 })(window);

@@ -97,7 +97,9 @@ class _SinkInput(io.TextIOBase):
         if not self._buffer:
             line = self._sink.onReadLine()
             if line is None:
-                return ""  # EOF: the run was stopped.
+                # The only reason the sink refuses a line is that the run was
+                # stopped, so report it the same way any other stop is.
+                raise KeyboardInterrupt("execution stopped")
             self._buffer = line
         if size is not None and size >= 0:
             chunk, self._buffer = self._buffer[:size], self._buffer[size:]
@@ -135,6 +137,82 @@ _state_lock = threading.RLock()
 _stop_flag = threading.Event()
 _namespace: dict = {}
 _run_counter = 0
+_active_thread_id: int | None = None
+
+# Interrupt machinery, decided once by _select_interrupt().
+_set_async_exc = None
+_use_async_exc = False
+
+
+def _resolve_async_exc():
+    """The CPython entry point for raising an exception in another thread."""
+    try:
+        import ctypes
+
+        set_async = ctypes.pythonapi.PyThreadState_SetAsyncExc
+        set_async.argtypes = (ctypes.c_ulong, ctypes.py_object)
+        set_async.restype = ctypes.c_int
+        return set_async
+    except Exception:  # noqa: BLE001 - ctypes may be unavailable or restricted
+        return None
+
+
+def _probe_async_exc(set_async) -> bool:
+    """Prove the call actually interrupts a thread before relying on it.
+
+    ctypes can import cleanly and still be unable to reach the interpreter's
+    symbols. Stopping a runaway loop is not something to find out about later,
+    so it is tested here, once, against a throwaway thread.
+    """
+    import ctypes
+
+    keep_spinning = threading.Event()
+
+    def spin() -> None:
+        try:
+            while not keep_spinning.is_set():
+                pass
+        except KeyboardInterrupt:
+            pass
+
+    thread = threading.Thread(target=spin, name="pycmd-probe", daemon=True)
+    thread.start()
+    time.sleep(0.05)
+    try:
+        set_async(ctypes.c_ulong(thread.ident), ctypes.py_object(KeyboardInterrupt))
+    except Exception:  # noqa: BLE001
+        keep_spinning.set()
+        return False
+    thread.join(timeout=1.0)
+    interrupted = not thread.is_alive()
+    keep_spinning.set()  # Release the thread if the interrupt never landed.
+    return interrupted
+
+
+def _select_interrupt() -> str:
+    """Pick the interrupt mechanism and report which one is in use.
+
+    Async exceptions cost nothing while code runs. The trace-hook fallback
+    works everywhere but makes every line of Python roughly twice as slow, so
+    it is only used when the fast path cannot be verified.
+    """
+    global _set_async_exc, _use_async_exc
+
+    _set_async_exc = _resolve_async_exc()
+    _use_async_exc = _set_async_exc is not None and _probe_async_exc(_set_async_exc)
+    return "async-exc" if _use_async_exc else "trace-hook"
+
+
+def _clear_pending_async_exc(thread_id: int) -> None:
+    """Drop an interrupt that was requested after the run already finished."""
+    if not _use_async_exc or _set_async_exc is None:
+        return
+    import ctypes
+
+    try:
+        _set_async_exc(ctypes.c_ulong(thread_id), ctypes.py_object())
+    except Exception:  # noqa: BLE001
+        pass
 
 
 def _fresh_namespace() -> dict:
@@ -182,6 +260,7 @@ def configure(sink, workspace_dir: str, site_packages_dir: str) -> str:
 
         _namespace = _fresh_namespace()
 
+    _select_interrupt()
     return sys.version
 
 
@@ -193,8 +272,19 @@ def reset_namespace() -> None:
 
 
 def request_stop() -> None:
-    """Ask the running code to stop at its next bytecode line."""
+    """Ask the running code to stop at its next bytecode boundary."""
     _stop_flag.set()
+
+    thread_id = _active_thread_id
+    if thread_id is None or not _use_async_exc or _set_async_exc is None:
+        return  # The trace hook will pick the flag up instead.
+
+    import ctypes
+
+    try:
+        _set_async_exc(ctypes.c_ulong(thread_id), ctypes.py_object(KeyboardInterrupt))
+    except Exception:  # noqa: BLE001
+        pass
 
 
 def _make_tracer():
@@ -240,7 +330,7 @@ def _split_last_expression(source: str, filename: str):
 
 def run_source(source: str, source_name: str = "<console>", echo_result: bool = True) -> str:
     """Execute a chunk of code. Returns "ok", "error" or "stopped"."""
-    global _run_counter
+    global _run_counter, _active_thread_id
 
     if _sink is None:
         raise RuntimeError("pycmd_runtime.configure() has not been called")
@@ -254,8 +344,11 @@ def run_source(source: str, source_name: str = "<console>", echo_result: bool = 
     started = time.monotonic()
     status = "ok"
 
-    sys.settrace(_make_tracer())
-    threading.settrace(_make_tracer())
+    thread_id = threading.get_ident()
+    _active_thread_id = thread_id
+    if not _use_async_exc:
+        sys.settrace(_make_tracer())
+        threading.settrace(_make_tracer())
     try:
         try:
             body, tail = _split_last_expression(source, source_name)
@@ -286,8 +379,13 @@ def run_source(source: str, source_name: str = "<console>", echo_result: bool = 
             status = "error"
             sys.stderr.write(_format_exception(exc, source_name))
     finally:
-        sys.settrace(None)
-        threading.settrace(None)
+        if not _use_async_exc:
+            sys.settrace(None)
+            threading.settrace(None)
+        # A stop requested in the last instants of a run must not land on the
+        # next one.
+        _clear_pending_async_exc(thread_id)
+        _active_thread_id = None
         _stop_flag.clear()
         try:
             sys.stdout.flush()
@@ -373,4 +471,5 @@ def runtime_info() -> dict:
         "executable": sys.executable or "(embedded)",
         "path": list(sys.path),
         "cwd": os.getcwd(),
+        "interrupt": "async-exc" if _use_async_exc else "trace-hook",
     }

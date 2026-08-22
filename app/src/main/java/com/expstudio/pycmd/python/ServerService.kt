@@ -8,6 +8,7 @@ import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
+import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import com.expstudio.pycmd.MainActivity
@@ -59,24 +60,27 @@ class ServerService : Service() {
             .build()
     }
 
+    /**
+     * Android 12+ refuses a foreground start from the background. The servers
+     * keep running either way - they just lose the keep-alive guarantee - so a
+     * refusal is logged rather than allowed to take the process down.
+     */
     private fun startForegroundCompat(notification: Notification) {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
-        } else {
-            startForeground(NOTIFICATION_ID, notification)
-        }
+        runCatching {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
+            } else {
+                startForeground(NOTIFICATION_ID, notification)
+            }
+        }.onFailure { Log.w(TAG, "foreground start refused", it) }
     }
 
-    @Suppress("DEPRECATION")
     private fun stopForegroundCompat() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-            stopForeground(STOP_FOREGROUND_REMOVE)
-        } else {
-            stopForeground(true)
-        }
+        stopForeground(STOP_FOREGROUND_REMOVE)
     }
 
     companion object {
+        private const val TAG = "ServerService"
         const val CHANNEL_ID = "pycmd-servers"
         private const val NOTIFICATION_ID = 4201
         private const val ACTION_STOP = "com.expstudio.pycmd.STOP_SERVERS"

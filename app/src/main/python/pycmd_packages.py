@@ -94,36 +94,6 @@ def _pick_wheel(release_files: list) -> dict | None:
     return best
 
 
-def search(name: str) -> dict:
-    """Look a distribution up on PyPI without installing it."""
-    name = name.strip()
-    if not name:
-        return {"ok": False, "error": "Enter a package name."}
-    try:
-        payload = json.loads(_fetch(PYPI_JSON.format(name=urllib.parse.quote(name))))
-    except urllib.error.HTTPError as exc:
-        if exc.code == 404:
-            return {"ok": False, "error": f"No package named '{name}' on PyPI."}
-        return {"ok": False, "error": f"PyPI returned HTTP {exc.code}."}
-    except (urllib.error.URLError, TimeoutError) as exc:
-        return {"ok": False, "error": f"Network error: {exc.reason if hasattr(exc, 'reason') else exc}"}
-    except ValueError:
-        return {"ok": False, "error": "PyPI sent a malformed response."}
-
-    info = payload.get("info", {})
-    version = info.get("version", "")
-    wheel = _pick_wheel(payload.get("urls", []))
-    return {
-        "ok": True,
-        "name": info.get("name", name),
-        "version": version,
-        "summary": (info.get("summary") or "").strip(),
-        "home_page": info.get("home_page") or info.get("project_url") or "",
-        "pure_python": wheel is not None,
-        "requires_python": info.get("requires_python") or "",
-    }
-
-
 def install(name: str, version: str | None = None, progress=None) -> dict:
     """Download and unpack a universal wheel into the writable site-packages."""
     target = _require_configured()
@@ -293,19 +263,3 @@ def bundled() -> list:
             unique.append(name)
     return unique
 
-
-def clear_all() -> dict:
-    """Wipe every on-device install (used by 'reset packages')."""
-    target = _require_configured()
-    try:
-        for entry in os.listdir(target):
-            path = os.path.join(target, entry)
-            if os.path.isdir(path):
-                shutil.rmtree(path, ignore_errors=True)
-            else:
-                os.remove(path)
-    except OSError as exc:
-        return {"ok": False, "error": str(exc)}
-    _write_manifest({})
-    importlib.invalidate_caches()
-    return {"ok": True}

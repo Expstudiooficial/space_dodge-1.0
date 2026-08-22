@@ -2,6 +2,7 @@ package com.expstudio.pycmd.util
 
 import android.content.Context
 import android.net.Uri
+import android.provider.OpenableColumns
 import java.io.File
 import java.io.IOException
 import java.text.SimpleDateFormat
@@ -136,10 +137,15 @@ class Workspace(context: Context) {
         }
     }
 
-    /** Copies a document the user picked with the system file picker. */
-    suspend fun importFrom(uri: Uri, directory: File, suggestedName: String): Result<File> =
+    /**
+     * Copies a document the user picked with the system file picker.
+     *
+     * The name comes from the provider rather than the URI: a content URI's
+     * last segment is usually an opaque id like "msf:42", not a filename.
+     */
+    suspend fun importFrom(uri: Uri, directory: File): Result<File> =
         withContext(Dispatchers.IO) {
-            val safe = sanitise(suggestedName) ?: "imported.py"
+            val safe = sanitise(displayName(uri)) ?: "imported.py"
             val target = uniqueTarget(directory, safe)
             if (!isInsideWorkspace(target)) return@withContext Result.failure(IOException("Outside the workspace."))
             runCatching {
@@ -150,6 +156,26 @@ class Workspace(context: Context) {
                 target
             }
         }
+
+    /** Asks the content provider what the file is called, with sane fallbacks. */
+    private fun displayName(uri: Uri): String {
+        val fromProvider = runCatching {
+            appContext.contentResolver.query(
+                uri,
+                arrayOf(OpenableColumns.DISPLAY_NAME),
+                null,
+                null,
+                null,
+            )?.use { cursor ->
+                val column = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                if (column >= 0 && cursor.moveToFirst()) cursor.getString(column) else null
+            }
+        }.getOrNull()
+
+        val name = fromProvider
+            ?: uri.lastPathSegment?.substringAfterLast('/')?.substringAfterLast(':')
+        return name?.takeIf { it.isNotBlank() } ?: "imported.py"
+    }
 
     private fun uniqueTarget(directory: File, name: String): File {
         var candidate = File(directory, name)

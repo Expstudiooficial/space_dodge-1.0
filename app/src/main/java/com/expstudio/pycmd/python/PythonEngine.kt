@@ -10,7 +10,9 @@ import java.util.concurrent.ArrayBlockingQueue
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicLong
 import kotlinx.coroutines.asCoroutineDispatcher
+import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -68,6 +70,10 @@ object PythonEngine {
     private val _output = MutableSharedFlow<OutputChunk>(
         replay = OUTPUT_BUFFER,
         extraBufferCapacity = OUTPUT_BUFFER,
+        // A script that floods stdout must not stall the interpreter thread
+        // waiting for the UI: the oldest output scrolls away instead, which is
+        // what a terminal does anyway.
+        onBufferOverflow = BufferOverflow.DROP_OLDEST,
     )
     val output: SharedFlow<OutputChunk> = _output.asSharedFlow()
 
@@ -80,16 +86,14 @@ object PythonEngine {
     /** Hand-off point between the console's input box and Python's `input()`. */
     private val stdinQueue = ArrayBlockingQueue<String>(16)
     private val stopRequested = AtomicBoolean(false)
-    private var chunkId = 0L
+    private val chunkId = AtomicLong(0)
 
     private lateinit var runtime: PyObject
     private lateinit var packages: PyObject
     private lateinit var servers: PyObject
 
-    lateinit var workspaceDir: File
-        private set
-    lateinit var sitePackagesDir: File
-        private set
+    private lateinit var workspaceDir: File
+    private lateinit var sitePackagesDir: File
 
     /** Receives stdout/stderr from Python and supplies stdin. Called on the Python thread. */
     @Suppress("unused") // Called from pycmd_runtime.py
@@ -171,8 +175,8 @@ object PythonEngine {
 
     private fun emit(stream: OutputChunk.Stream, text: String) {
         if (text.isEmpty()) return
-        chunkId += 1
-        _output.tryEmit(OutputChunk(stream, text, chunkId))
+        // emit() is reached from the Python thread and the UI thread alike.
+        _output.tryEmit(OutputChunk(stream, text, chunkId.incrementAndGet()))
     }
 
     /** Echo something into the console without going through Python. */
@@ -312,26 +316,6 @@ object PythonEngine {
             .getOrDefault(emptyList())
     }
 
-    suspend fun searchPackage(name: String): PackageSearchResult = withContext(pythonDispatcher) {
-        if (!_status.value.ready) {
-            return@withContext PackageSearchResult(false, error = "Interpreter is not ready.")
-        }
-        runCatching {
-            val map = packages.callAttr("search", name).asMap()
-            if (map.str("ok") != "True") {
-                PackageSearchResult(false, error = map.str("error"))
-            } else {
-                PackageSearchResult(
-                    ok = true,
-                    name = map.str("name"),
-                    version = map.str("version"),
-                    summary = map.str("summary"),
-                    purePython = map.str("pure_python") == "True",
-                )
-            }
-        }.getOrElse { PackageSearchResult(false, error = it.friendlyMessage()) }
-    }
-
     // ------------------------------------------------------------------
     // Servers
     // ------------------------------------------------------------------
@@ -410,15 +394,6 @@ data class PackageResult(
     val ok: Boolean,
     val name: String = "",
     val version: String = "",
-    val error: String = "",
-)
-
-data class PackageSearchResult(
-    val ok: Boolean,
-    val name: String = "",
-    val version: String = "",
-    val summary: String = "",
-    val purePython: Boolean = false,
     val error: String = "",
 )
 

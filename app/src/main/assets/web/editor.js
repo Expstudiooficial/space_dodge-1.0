@@ -380,22 +380,10 @@
       suppressChangeEvent = false;
     },
 
-    getContent: function () {
-      return input.value;
-    },
-
     insert: function (text) {
       insertText(text);
       onInput();
       notifyCursor();
-    },
-
-    /** Inserts a newline-safe snippet at the start of the current line. */
-    insertLine: function (text) {
-      var start = lineStartIndex(input.selectionStart);
-      input.setSelectionRange(start, start);
-      insertText(text + '\n');
-      onInput();
     },
 
     indent: function () {
@@ -430,40 +418,6 @@
 
     focus: function () {
       input.focus();
-    },
-
-    blur: function () {
-      input.blur();
-    },
-
-    setFontSize: function (px) {
-      document.documentElement.style.setProperty('--font-size', px + 'px');
-      document.documentElement.style.setProperty('--line-height', Math.round(px * 1.6) + 'px');
-      render();
-    },
-
-    /** Scrolls a 1-based line into view, roughly a third down the viewport. */
-    goToLine: function (line) {
-      var lines = input.value.split('\n');
-      var target = Math.max(1, Math.min(line, lines.length));
-      var position = 0;
-      for (var i = 0; i < target - 1; i += 1) {
-        position += lines[i].length + 1;
-      }
-      input.focus();
-      input.setSelectionRange(position, position);
-      var lineHeight = parseInt(global.getComputedStyle(input).lineHeight, 10) || 21;
-      surface.scrollTop = Math.max(0, (target - 1) * lineHeight - surface.clientHeight / 3);
-      highlightActiveLine();
-    },
-
-    stats: function () {
-      return JSON.stringify({
-        lines: countLines(input.value),
-        characters: input.value.length,
-        line: currentLine(),
-        column: currentColumn()
-      });
     }
   };
 

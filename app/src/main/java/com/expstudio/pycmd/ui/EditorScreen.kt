@@ -12,13 +12,13 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.FormatIndentDecrease
-import androidx.compose.material.icons.filled.FormatIndentIncrease
-import androidx.compose.material.icons.filled.NoteAdd
+import androidx.compose.material.icons.automirrored.filled.FormatIndentDecrease
+import androidx.compose.material.icons.automirrored.filled.FormatIndentIncrease
+import androidx.compose.material.icons.automirrored.filled.NoteAdd
 import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material.icons.filled.Redo
+import androidx.compose.material.icons.automirrored.filled.Redo
 import androidx.compose.material.icons.filled.Save
-import androidx.compose.material.icons.filled.Undo
+import androidx.compose.material.icons.automirrored.filled.Undo
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -52,6 +52,7 @@ fun EditorScreen(
     modifier: Modifier = Modifier,
 ) {
     val currentContent by rememberUpdatedState(state.content)
+    val currentEpoch by rememberUpdatedState(state.epoch)
 
     // Bridge callbacks arrive on the WebView's JS thread; hopping to the main
     // thread keeps state updates on the thread Compose expects.
@@ -63,6 +64,9 @@ fun EditorScreen(
             host.webView.post { onCursorMoved(line, column) }
         }
         host.bridge.editorReadyHandler = {
+            // The page reloaded (first load, or the system reclaimed it), so
+            // whatever is in the buffer has to be put back.
+            host.loadedEpoch = currentEpoch
             host.eval("PyEditor.setContent(${jsString(currentContent)});")
         }
         onDispose {
@@ -73,8 +77,11 @@ fun EditorScreen(
     }
 
     // Push content into the WebView only when a different document is loaded;
-    // pushing on every keystroke would fight the editor for the caret.
+    // pushing on every keystroke would fight the editor for the caret, and
+    // pushing on every tab switch would reset it.
     LaunchedEffect(state.epoch, host) {
+        if (host.loadedEpoch == state.epoch) return@LaunchedEffect
+        host.loadedEpoch = state.epoch
         host.eval("if (window.PyEditor) { PyEditor.setContent(${jsString(currentContent)}); }")
     }
 
@@ -108,7 +115,7 @@ fun EditorScreen(
 
             IconButton(onClick = onNew) {
                 Icon(
-                    Icons.Filled.NoteAdd,
+                    Icons.AutoMirrored.Filled.NoteAdd,
                     contentDescription = "New file",
                     tint = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -147,10 +154,10 @@ fun EditorScreen(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(2.dp),
         ) {
-            EditorToolButton(Icons.Filled.Undo, "Undo") { host.eval("PyEditor.undo();") }
-            EditorToolButton(Icons.Filled.Redo, "Redo") { host.eval("PyEditor.redo();") }
-            EditorToolButton(Icons.Filled.FormatIndentIncrease, "Indent") { host.eval("PyEditor.indent();") }
-            EditorToolButton(Icons.Filled.FormatIndentDecrease, "Outdent") { host.eval("PyEditor.outdent();") }
+            EditorToolButton(Icons.AutoMirrored.Filled.Undo, "Undo") { host.eval("PyEditor.undo();") }
+            EditorToolButton(Icons.AutoMirrored.Filled.Redo, "Redo") { host.eval("PyEditor.redo();") }
+            EditorToolButton(Icons.AutoMirrored.Filled.FormatIndentIncrease, "Indent") { host.eval("PyEditor.indent();") }
+            EditorToolButton(Icons.AutoMirrored.Filled.FormatIndentDecrease, "Outdent") { host.eval("PyEditor.outdent();") }
         }
 
         KeyStrip(

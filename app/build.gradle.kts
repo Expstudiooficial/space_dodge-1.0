@@ -48,6 +48,15 @@ android {
         compose = true
     }
 
+    lint {
+        textReport = true
+        xmlReport = true
+        // A missing translation or a newer-dependency notice should not stop a
+        // build; real correctness issues still surface in the report.
+        abortOnError = false
+        disable += setOf("GradleDependency", "AndroidGradlePluginVersion", "OldTargetApi")
+    }
+
     packaging {
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"

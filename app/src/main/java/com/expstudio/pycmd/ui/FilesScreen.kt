@@ -4,7 +4,6 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -19,7 +18,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.CreateNewFolder
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Description
@@ -28,7 +27,7 @@ import androidx.compose.material.icons.filled.FileUpload
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.MoreVert
-import androidx.compose.material.icons.filled.NoteAdd
+import androidx.compose.material.icons.automirrored.filled.NoteAdd
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
@@ -62,19 +61,14 @@ fun FilesScreen(
     onNewFolder: (String) -> Unit,
     onRename: (File, String) -> Unit,
     onDelete: (File) -> Unit,
-    onImport: (android.net.Uri, String) -> Unit,
+    onImport: (android.net.Uri) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     var dialog by remember { mutableStateOf<FileDialog?>(null) }
 
     val importLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocument(),
-    ) { uri ->
-        if (uri != null) {
-            val name = uri.lastPathSegment?.substringAfterLast('/')?.substringAfterLast(':')
-            onImport(uri, name?.takeIf { it.isNotBlank() } ?: "imported.py")
-        }
-    }
+    ) { uri -> if (uri != null) onImport(uri) }
 
     val atRoot = state.directory?.absolutePath == rootPath
 
@@ -88,7 +82,7 @@ fun FilesScreen(
         ) {
             IconButton(onClick = onUp, enabled = !atRoot) {
                 Icon(
-                    Icons.Filled.ArrowBack,
+                    Icons.AutoMirrored.Filled.ArrowBack,
                     contentDescription = "Up one folder",
                     tint = if (atRoot) MaterialTheme.colorScheme.outline else MaterialTheme.colorScheme.onSurface,
                 )
@@ -118,7 +112,7 @@ fun FilesScreen(
             }
             IconButton(onClick = { dialog = FileDialog.NewFile }) {
                 Icon(
-                    Icons.Filled.NoteAdd,
+                    Icons.AutoMirrored.Filled.NoteAdd,
                     contentDescription = "New file",
                     tint = MaterialTheme.colorScheme.primary,
                 )
@@ -325,20 +319,4 @@ private fun FileRow(
             .height(1.dp)
             .background(MaterialTheme.colorScheme.outlineVariant),
     )
-}
-
-/** Row of quick actions above the list; kept here so Files owns its own chrome. */
-@Composable
-fun FilesQuickActions(
-    onNewFile: () -> Unit,
-    onImport: () -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    Row(
-        modifier.fillMaxWidth().padding(12.dp),
-        horizontalArrangement = Arrangement.spacedBy(10.dp),
-    ) {
-        ActionButton("New script", Icons.Filled.NoteAdd, onNewFile, Modifier.weight(1f))
-        GhostButton("Import", Icons.Filled.FileUpload, onImport, Modifier.weight(1f))
-    }
 }

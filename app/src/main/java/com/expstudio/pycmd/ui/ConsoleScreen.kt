@@ -1,6 +1,9 @@
 package com.expstudio.pycmd.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -21,6 +24,7 @@ import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Stop
+import androidx.compose.material.icons.automirrored.filled.WrapText
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
@@ -30,6 +34,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -41,12 +46,16 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.unit.dp
 import com.expstudio.pycmd.python.EngineStatus
+import kotlinx.coroutines.delay
 
 /** Characters the on-screen keyboard buries but Python needs constantly. */
 private val CONSOLE_KEYS = listOf(
     ":", "(", ")", "[", "]", "{", "}", "=", "\"", "'", ".", ",", "_", "+", "-",
     "*", "/", "%", "<", ">", "|", "#",
 )
+
+/** The identifier (possibly dotted) immediately before the caret. */
+private val WORD_BEFORE_CARET = Regex("[A-Za-z_][A-Za-z0-9_.]*$")
 
 @Composable
 fun ConsoleScreen(
@@ -57,10 +66,14 @@ fun ConsoleScreen(
     onStdin: (String) -> Unit,
     onStop: () -> Unit,
     onClear: () -> Unit,
+    onWrapChanged: (Boolean) -> Unit,
+    onCompletions: suspend (String) -> List<String>,
     modifier: Modifier = Modifier,
 ) {
     var field by remember { mutableStateOf(TextFieldValue("")) }
     var historyOpen by remember { mutableStateOf(false) }
+    var suggestions by remember { mutableStateOf<List<String>>(emptyList()) }
+    var wrapLines by remember { mutableStateOf(true) }
 
     val awaitingInput = status.awaitingInput
     val canSubmit = field.text.isNotBlank()
@@ -76,6 +89,30 @@ fun ConsoleScreen(
         field = TextFieldValue("")
     }
 
+    // The word the caret sits in, which is what completion should act on.
+    val prefix = remember(field) {
+        val caret = field.selection.end.coerceIn(0, field.text.length)
+        WORD_BEFORE_CARET.find(field.text.substring(0, caret))?.value.orEmpty()
+    }
+
+    LaunchedEffect(prefix, awaitingInput) {
+        suggestions = if (awaitingInput || prefix.length < 2) {
+            emptyList()
+        } else {
+            // A short pause keeps the interpreter out of the way while typing.
+            delay(140)
+            onCompletions(prefix).filterNot { it == prefix }.take(12)
+        }
+    }
+
+    fun applyCompletion(completion: String) {
+        val caret = field.selection.end.coerceIn(0, field.text.length)
+        val start = caret - prefix.length
+        if (start < 0) return
+        val updated = field.text.substring(0, start) + completion + field.text.substring(caret)
+        field = TextFieldValue(updated, TextRange(start + completion.length))
+    }
+
     fun insertKey(key: String) {
         val start = field.selection.start.coerceIn(0, field.text.length)
         val end = field.selection.end.coerceIn(start, field.text.length)
@@ -86,6 +123,26 @@ fun ConsoleScreen(
     Column(modifier.fillMaxSize()) {
         Box(Modifier.weight(1f).fillMaxWidth()) {
             PersistentWebView(host, Modifier.fillMaxSize())
+        }
+
+        if (suggestions.isNotEmpty()) {
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .background(MaterialTheme.colorScheme.surfaceVariant)
+                    .horizontalScroll(rememberScrollState())
+                    .padding(horizontal = 8.dp, vertical = 6.dp),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                suggestions.forEach { suggestion ->
+                    StatusChip(
+                        text = suggestion,
+                        color = MaterialTheme.colorScheme.secondary,
+                        modifier = Modifier.clickable { applyCompletion(suggestion) },
+                    )
+                }
+            }
         }
 
         KeyStrip(keys = CONSOLE_KEYS, onKey = ::insertKey)
@@ -205,13 +262,34 @@ fun ConsoleScreen(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(start = 6.dp),
                 )
-                IconButton(onClick = onClear, modifier = Modifier.size(34.dp)) {
-                    Icon(
-                        Icons.Filled.Clear,
-                        contentDescription = "Clear output",
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.size(17.dp),
-                    )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    IconButton(
+                        onClick = {
+                            wrapLines = !wrapLines
+                            onWrapChanged(wrapLines)
+                        },
+                        modifier = Modifier.size(34.dp),
+                    ) {
+                        Icon(
+                            Icons.AutoMirrored.Filled.WrapText,
+                            contentDescription = if (wrapLines) "Stop wrapping lines" else "Wrap lines",
+                            tint = if (wrapLines) {
+                                MaterialTheme.colorScheme.primary
+                            } else {
+                                MaterialTheme.colorScheme.onSurfaceVariant
+                            },
+                            modifier = Modifier.size(17.dp),
+                        )
+                    }
+                    Spacer(Modifier.width(4.dp))
+                    IconButton(onClick = onClear, modifier = Modifier.size(34.dp)) {
+                        Icon(
+                            Icons.Filled.Clear,
+                            contentDescription = "Clear output",
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.size(17.dp),
+                        )
+                    }
                 }
             }
         }

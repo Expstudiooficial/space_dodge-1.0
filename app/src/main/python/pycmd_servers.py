@@ -64,9 +64,11 @@ def port_available(port: int) -> bool:
 
 
 class _QuietHandler(http.server.SimpleHTTPRequestHandler):
-    """SimpleHTTPRequestHandler that logs through the entry instead of stderr."""
+    """SimpleHTTPRequestHandler without the per-request stderr logging.
 
-    entry: _Entry | None = None
+    The default handler writes a line to stderr for every hit, which would fill
+    the console with noise while the user is trying to work in it.
+    """
 
     def log_message(self, fmt: str, *args) -> None:  # noqa: A003
         return None

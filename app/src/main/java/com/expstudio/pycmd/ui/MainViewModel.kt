@@ -114,6 +114,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     val workspaceRoot: File get() = workspace.root
 
+    /** Path shown in the UI, relative to the workspace root. */
+    fun relativePath(file: File): String = workspace.relativePath(file)
+
     init {
         viewModelScope.launch {
             workspace.seedExamples()
@@ -339,10 +342,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun importFile(uri: Uri, suggestedName: String) {
+    fun importFile(uri: Uri) {
         val directory = _files.value.directory ?: workspace.root
         viewModelScope.launch {
-            workspace.importFrom(uri, directory, suggestedName)
+            workspace.importFrom(uri, directory)
                 .onSuccess {
                     refreshFiles(directory)
                     showToast("Imported ${it.name}")
@@ -452,7 +455,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    /** The notification exists exactly while something is listening. */
+    /** Last summary handed to the service, so an unchanged state is left alone. */
+    private var serviceSummary: String? = null
+
+    /**
+     * The notification exists exactly while something is listening.
+     *
+     * refreshServers() runs often, so this only touches the service when the
+     * state it would show actually changed.
+     */
     private fun syncForegroundService(list: List<RunningServer>) {
         val running = list.count { it.status == "running" }
         val context = getApplication<Application>()
@@ -464,8 +475,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             } else {
                 "$running servers running"
             }
-            ServerService.start(context, summary)
-        } else {
+            if (summary != serviceSummary) {
+                serviceSummary = summary
+                ServerService.start(context, summary)
+            }
+        } else if (serviceSummary != null) {
+            serviceSummary = null
             ServerService.stop(context)
         }
     }

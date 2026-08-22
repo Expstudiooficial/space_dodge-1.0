@@ -53,6 +53,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.expstudio.pycmd.python.OutputChunk
+import kotlinx.coroutines.delay
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -95,6 +96,15 @@ fun PyCmdRoot(viewModel: MainViewModel = viewModel()) {
 
     LaunchedEffect(aboutOpen) {
         if (aboutOpen) runtimeInfo = viewModel.runtimeInfo()
+    }
+
+    // A script server can exit on its own, so the list needs polling while it
+    // is on screen; nothing polls when the tab is not visible.
+    LaunchedEffect(tab) {
+        while (tab == Tab.SERVERS) {
+            delay(3000)
+            viewModel.refreshServers()
+        }
     }
 
     // Back inside Files walks up the tree before leaving the app; anywhere
@@ -187,6 +197,8 @@ fun PyCmdRoot(viewModel: MainViewModel = viewModel()) {
                     onStdin = viewModel::submitStdin,
                     onStop = viewModel::stopExecution,
                     onClear = { consoleHost.eval("PyConsole.clear();") },
+                    onWrapChanged = { wrap -> consoleHost.eval("PyConsole.setWrap($wrap);") },
+                    onCompletions = viewModel::completionsFor,
                 )
 
                 Tab.EDITOR -> EditorScreen(
@@ -205,11 +217,7 @@ fun PyCmdRoot(viewModel: MainViewModel = viewModel()) {
                 Tab.FILES -> FilesScreen(
                     state = filesState,
                     rootPath = viewModel.workspaceRoot.absolutePath,
-                    relativePath = { file ->
-                        file.absolutePath.removePrefix(viewModel.workspaceRoot.absolutePath)
-                            .removePrefix("/")
-                            .ifEmpty { "/" }
-                    },
+                    relativePath = viewModel::relativePath,
                     onOpenDirectory = viewModel::openDirectory,
                     onOpenFile = viewModel::openInEditor,
                     onRunFile = viewModel::runFile,
@@ -230,10 +238,7 @@ fun PyCmdRoot(viewModel: MainViewModel = viewModel()) {
 
                 Tab.SERVERS -> ServersScreen(
                     state = serversState,
-                    currentFolder = (filesState.directory ?: viewModel.workspaceRoot).absolutePath
-                        .removePrefix(viewModel.workspaceRoot.absolutePath)
-                        .removePrefix("/")
-                        .ifEmpty { "workspace root" },
+                    currentFolder = viewModel.relativePath(filesState.directory ?: viewModel.workspaceRoot),
                     onStartFileServer = viewModel::startFileServer,
                     onStop = viewModel::stopServer,
                     onStopAll = viewModel::stopAllServers,

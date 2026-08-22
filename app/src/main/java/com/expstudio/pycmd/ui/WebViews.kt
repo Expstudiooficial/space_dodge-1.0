@@ -2,7 +2,6 @@ package com.expstudio.pycmd.ui
 
 import android.annotation.SuppressLint
 import android.content.Context
-import android.graphics.Color as AndroidColor
 import android.view.ViewGroup
 import android.webkit.JavascriptInterface
 import android.webkit.WebView
@@ -11,9 +10,13 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.core.graphics.toColorInt
 import org.json.JSONObject
 
 private const val ASSET_BASE = "file:///android_asset/web/"
+
+/** Must match --bg in console.css and editor.css, or the page flashes on load. */
+private const val WEB_BACKGROUND = "#0B0F14"
 
 /**
  * Callbacks the JS layer can reach.
@@ -26,7 +29,6 @@ class PyBridge {
     var editorChangedHandler: (String) -> Unit = {}
     var cursorMovedHandler: (Int, Int) -> Unit = { _, _ -> }
     var editorReadyHandler: () -> Unit = {}
-    var consoleReadyHandler: () -> Unit = {}
 
     // Every method below runs on the WebView's JS thread, never the main
     // thread, so the handlers must not touch views directly.
@@ -38,15 +40,21 @@ class PyBridge {
 
     @JavascriptInterface
     fun onEditorReady() = editorReadyHandler()
-
-    @JavascriptInterface
-    fun onConsoleReady() = consoleReadyHandler()
 }
 
 /** A WebView plus the bridge wired into it. */
 class WebHost(val webView: WebView, val bridge: PyBridge) {
 
     private var loaded = false
+
+    /**
+     * Which document the page currently holds.
+     *
+     * Lives on the host, not in a composable's `remember`: the WebView outlives
+     * the composition, and re-pushing the same document on every tab switch
+     * would throw the caret back to the top of the file.
+     */
+    var loadedEpoch: Long = -1L
 
     fun load(page: String) {
         if (loaded) return
@@ -63,7 +71,7 @@ class WebHost(val webView: WebView, val bridge: PyBridge) {
 @SuppressLint("SetJavaScriptEnabled")
 private fun createWebView(context: Context, bridge: PyBridge): WebView =
     WebView(context).apply {
-        setBackgroundColor(AndroidColor.parseColor("#0B0F14"))
+        setBackgroundColor(WEB_BACKGROUND.toColorInt())
         // No remote content is ever loaded, so the usual JS caveats do not
         // apply: every page is an asset shipped inside the APK.
         settings.javaScriptEnabled = true
