@@ -1,0 +1,262 @@
+package com.expstudio.pycmd.ui
+
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.graphics.vector.addPathNodes
+import androidx.compose.ui.unit.dp
+
+/**
+ * The icons this app draws, defined here rather than pulled from a library.
+ *
+ * `material-icons-extended` ships five complete icon styles - thousands of
+ * vectors - and accounted for 13.7 MB of the 24 MB dex, well over half, to
+ * supply the twenty-nine glyphs below. Since a debug build does no shrinking,
+ * every one of those icons rode along into the APK people have to download.
+ *
+ * Each entry is standard Material path data on the usual 24x24 viewport, built
+ * once and reused. Tinting still works normally: `Icon(tint = ...)` applies a
+ * colour filter over the black fill.
+ */
+object PyIcons {
+
+    private fun icon(
+        name: String,
+        pathData: String,
+        autoMirror: Boolean = false,
+    ): ImageVector = ImageVector.Builder(
+        name = name,
+        defaultWidth = 24.dp,
+        defaultHeight = 24.dp,
+        viewportWidth = 24f,
+        viewportHeight = 24f,
+        autoMirror = autoMirror,
+    ).apply {
+        addPath(pathData = addPathNodes(pathData), fill = SolidColor(Color.Black))
+    }.build()
+
+    val Add: ImageVector by lazy {
+        icon("Add", "M19,13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z")
+    }
+
+    val ArrowUpward: ImageVector by lazy {
+        icon("ArrowUpward", "M4,12l1.41,1.41L11,7.83V20h2V7.83l5.58,5.59L20,12l-8,-8 -8,8z")
+    }
+
+    val Clear: ImageVector by lazy {
+        icon(
+            "Clear",
+            "M19,6.41L17.59,5 12,10.59 6.41,5 5,6.41 10.59,12 5,17.59 6.41,19 12,13.41 " +
+                "17.59,19 19,17.59 13.41,12z",
+        )
+    }
+
+    val ContentCopy: ImageVector by lazy {
+        icon(
+            "ContentCopy",
+            "M16,1H4C2.9,1 2,1.9 2,3v14h2V3h12V1zM19,5H8C6.9,5 6,5.9 6,7v14c0,1.1 0.9,2 2,2h11" +
+                "c1.1,0 2,-0.9 2,-2V7C21,5.9 20.1,5 19,5zM19,21H8V7h11V21z",
+        )
+    }
+
+    val CreateNewFolder: ImageVector by lazy {
+        icon(
+            "CreateNewFolder",
+            "M20,6h-8l-2,-2H4C2.9,4 2.01,4.9 2.01,6L2,18c0,1.1 0.9,2 2,2h16c1.1,0 2,-0.9 2,-2V8" +
+                "c0,-1.1 -0.9,-2 -2,-2zM19,14h-3v3h-2v-3h-3v-2h3V9h2v3h3V14z",
+        )
+    }
+
+    val Delete: ImageVector by lazy {
+        icon(
+            "Delete",
+            "M6,19c0,1.1 0.9,2 2,2h8c1.1,0 2,-0.9 2,-2V7H6v12zM19,4h-3.5l-1,-1h-5l-1,1H5v2h14V4z",
+        )
+    }
+
+    val Description: ImageVector by lazy {
+        icon(
+            "Description",
+            "M14,2H6c-1.1,0 -1.99,0.9 -1.99,2L4,20c0,1.1 0.89,2 1.99,2H18c1.1,0 2,-0.9 2,-2V8l-6,-6z" +
+                "M16,18H8v-2h8v2zM16,14H8v-2h8v2zM13,9V3.5L18.5,9H13z",
+        )
+    }
+
+    val Dns: ImageVector by lazy {
+        icon(
+            "Dns",
+            "M20,13H4c-0.55,0 -1,0.45 -1,1v6c0,0.55 0.45,1 1,1h16c0.55,0 1,-0.45 1,-1v-6" +
+                "c0,-0.55 -0.45,-1 -1,-1zM7,19c-1.1,0 -2,-0.9 -2,-2s0.9,-2 2,-2 2,0.9 2,2 -0.9,2 -2,2z" +
+                "M20,3H4c-0.55,0 -1,0.45 -1,1v6c0,0.55 0.45,1 1,1h16c0.55,0 1,-0.45 1,-1V4" +
+                "c0,-0.55 -0.45,-1 -1,-1zM7,9c-1.1,0 -2,-0.9 -2,-2s0.9,-2 2,-2 2,0.9 2,2 -0.9,2 -2,2z",
+        )
+    }
+
+    val DriveFileRenameOutline: ImageVector by lazy {
+        icon(
+            "DriveFileRenameOutline",
+            "M15,16l-4,4h10v-4H15zM12.06,7.19L3,16.25V20h3.75l9.06,-9.06 -3.75,-3.75z" +
+                "M18.88,8.37c0.39,-0.39 0.39,-1.02 0,-1.41l-2.34,-2.34c-0.39,-0.39 -1.02,-0.39 -1.41,0" +
+                "l-1.83,1.83 3.75,3.75 1.83,-1.83z",
+        )
+    }
+
+    val Edit: ImageVector by lazy {
+        icon(
+            "Edit",
+            "M3,17.25V21h3.75L17.81,9.94l-3.75,-3.75L3,17.25zM20.71,7.04c0.39,-0.39 0.39,-1.02 0,-1.41" +
+                "l-2.34,-2.34c-0.39,-0.39 -1.02,-0.39 -1.41,0l-1.83,1.83 3.75,3.75 1.83,-1.83z",
+        )
+    }
+
+    val FileUpload: ImageVector by lazy {
+        icon("FileUpload", "M9,16h6v-6h4l-7,-7 -7,7h4zM5,18h14v2H5z")
+    }
+
+    val Folder: ImageVector by lazy {
+        icon(
+            "Folder",
+            "M10,4H4c-1.1,0 -1.99,0.9 -1.99,2L2,18c0,1.1 0.9,2 2,2h16c1.1,0 2,-0.9 2,-2V8" +
+                "c0,-1.1 -0.9,-2 -2,-2h-8l-2,-2z",
+        )
+    }
+
+    val FolderOpen: ImageVector by lazy {
+        icon(
+            "FolderOpen",
+            "M20,6h-8l-2,-2H4c-1.1,0 -1.99,0.9 -1.99,2L2,18c0,1.1 0.9,2 2,2h16c1.1,0 2,-0.9 2,-2V8" +
+                "c0,-1.1 -0.9,-2 -2,-2zM20,18H4V8h16v10z",
+        )
+    }
+
+    val History: ImageVector by lazy {
+        icon(
+            "History",
+            "M13,3c-4.97,0 -9,4.03 -9,9H1l3.89,3.89 0.07,0.14L9,12H6c0,-3.87 3.13,-7 7,-7s7,3.13 7,7" +
+                " -3.13,7 -7,7c-1.93,0 -3.68,-0.79 -4.94,-2.06l-1.42,1.42C8.27,19.99 10.51,21 13,21" +
+                "c4.97,0 9,-4.03 9,-9s-4.03,-9 -9,-9zM12,8v5l4.28,2.54 0.72,-1.21 -3.5,-2.08V8H12z",
+        )
+    }
+
+    val Info: ImageVector by lazy {
+        icon(
+            "Info",
+            "M12,2C6.48,2 2,6.48 2,12s4.48,10 10,10 10,-4.48 10,-10S17.52,2 12,2zM13,17h-2v-6h2v6z" +
+                "M13,9h-2V7h2v2z",
+        )
+    }
+
+    val Inventory2: ImageVector by lazy {
+        icon(
+            "Inventory2",
+            "M20,2H4C3,2 2,2.9 2,4v3.01C2,7.73 2.43,8.35 3,8.7V20c0,1.1 1.1,2 2,2h14c0.9,0 2,-0.9 2,-2" +
+                "V8.7c0.57,-0.35 1,-0.97 1,-1.69V4C22,2.9 21,2 20,2zM15,14H9v-2h6V14zM20,7H4V4h16V7z",
+        )
+    }
+
+    val MoreVert: ImageVector by lazy {
+        icon(
+            "MoreVert",
+            "M12,8c1.1,0 2,-0.9 2,-2s-0.9,-2 -2,-2 -2,0.9 -2,2 0.9,2 2,2zM12,10c-1.1,0 -2,0.9 -2,2" +
+                "s0.9,2 2,2 2,-0.9 2,-2 -0.9,-2 -2,-2zM12,16c-1.1,0 -2,0.9 -2,2s0.9,2 2,2 2,-0.9 2,-2" +
+                " -0.9,-2 -2,-2z",
+        )
+    }
+
+    val PlayArrow: ImageVector by lazy {
+        icon("PlayArrow", "M8,5v14l11,-7z")
+    }
+
+    val RestartAlt: ImageVector by lazy {
+        icon(
+            "RestartAlt",
+            "M12,5V2L8,6l4,4V7c3.31,0 6,2.69 6,6 0,2.97 -2.17,5.43 -5,5.91v2.02c3.95,-0.49 7,-3.85 7,-7.93" +
+                "c0,-4.42 -3.58,-8 -8,-8zM6,13c0,-1.65 0.67,-3.15 1.76,-4.24L6.34,7.34C4.9,8.79 4,10.79 4,13" +
+                "c0,4.08 3.05,7.44 7,7.93v-2.02c-2.83,-0.48 -5,-2.94 -5,-5.91z",
+        )
+    }
+
+    val Save: ImageVector by lazy {
+        icon(
+            "Save",
+            "M17,3H5c-1.11,0 -2,0.9 -2,2v14c0,1.1 0.89,2 2,2h14c1.1,0 2,-0.9 2,-2V7l-4,-4z" +
+                "M12,19c-1.66,0 -3,-1.34 -3,-3s1.34,-3 3,-3 3,1.34 3,3 -1.34,3 -3,3zM15,9H5V5h10v4z",
+        )
+    }
+
+    val Stop: ImageVector by lazy {
+        icon("Stop", "M6,6h12v12H6z")
+    }
+
+    val Terminal: ImageVector by lazy {
+        icon(
+            "Terminal",
+            "M20,4H4C2.89,4 2,4.9 2,6v12c0,1.1 0.89,2 2,2h16c1.1,0 2,-0.9 2,-2V6C22,4.9 21.11,4 20,4z" +
+                "M20,18H4V8h16V18zM18,17h-6v-2h6V17zM7.5,17l-1.41,-1.41L8.67,13l-2.59,-2.59L7.5,9l4,4L7.5,17z",
+        )
+    }
+
+    // ---- Direction-sensitive: these flip in a right-to-left layout. ----
+
+    val ArrowBack: ImageVector by lazy {
+        icon(
+            "ArrowBack",
+            "M20,11H7.83l5.59,-5.59L12,4l-8,8 8,8 1.41,-1.41L7.83,13H20v-2z",
+            autoMirror = true,
+        )
+    }
+
+    val FormatIndentIncrease: ImageVector by lazy {
+        icon(
+            "FormatIndentIncrease",
+            "M3,21h18v-2H3v2zM3,8v8l4,-4 -4,-4zM9,9h12V7H9v2zM3,3v2h18V3H3zM9,13h12v-2H9v2z" +
+                "M9,17h12v-2H9v2z",
+            autoMirror = true,
+        )
+    }
+
+    val FormatIndentDecrease: ImageVector by lazy {
+        icon(
+            "FormatIndentDecrease",
+            "M11,17h10v-2H11v2zM3,12l4,4V8l-4,4zM3,21h18v-2H3v2zM3,3v2h18V3H3zM11,9h10V7H11v2z" +
+                "M11,13h10v-2H11v2z",
+            autoMirror = true,
+        )
+    }
+
+    val NoteAdd: ImageVector by lazy {
+        icon(
+            "NoteAdd",
+            "M14,2H6c-1.1,0 -1.99,0.9 -1.99,2L4,20c0,1.1 0.89,2 1.99,2H18c1.1,0 2,-0.9 2,-2V8l-6,-6z" +
+                "M17,15h-3v3h-2v-3H9v-2h3v-3h2v3h3v2zM13,9V3.5L18.5,9H13z",
+            autoMirror = true,
+        )
+    }
+
+    val Redo: ImageVector by lazy {
+        icon(
+            "Redo",
+            "M18.4,10.6C16.55,8.99 14.15,8 11.5,8c-4.65,0 -8.58,3.03 -9.96,7.22L3.9,16" +
+                "c1.05,-3.19 4.05,-5.5 7.6,-5.5 1.95,0 3.73,0.72 5.12,1.88L13,16h9V7l-3.6,3.6z",
+            autoMirror = true,
+        )
+    }
+
+    val Undo: ImageVector by lazy {
+        icon(
+            "Undo",
+            "M12.5,8c-2.65,0 -5.05,0.99 -6.9,2.6L2,7v9h9l-3.62,-3.62c1.39,-1.16 3.16,-1.88 5.12,-1.88" +
+                "c3.54,0 6.55,2.31 7.6,5.5l2.37,-0.78C21.08,11.03 17.15,8 12.5,8z",
+            autoMirror = true,
+        )
+    }
+
+    val WrapText: ImageVector by lazy {
+        icon(
+            "WrapText",
+            "M4,19h6v-2H4V19zM20,5H4v2h16V5zM17,11H4v2h13.25c1.1,0 2,0.9 2,2s-0.9,2 -2,2H15v-2l-3,3 3,3" +
+                "v-2h2c2.21,0 4,-1.79 4,-4S19.21,11 17,11z",
+            autoMirror = true,
+        )
+    }
+}

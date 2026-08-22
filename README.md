@@ -80,8 +80,10 @@ Android 7.0 (API 24) or newer, on **arm64-v8a or x86_64**. Chaquopy's Python 3.1
 runtime does not ship 32-bit binaries, which matters only for phones from before
 about 2016.
 
-The APK is large — roughly 49 MB — because a complete CPython interpreter and
-standard library are inside it, twice, once per ABI.
+The APK is large because a complete CPython interpreter and standard library are
+inside it. The default build produces one APK per ABI plus a universal one
+(36 MB each, 46 MB universal); `-Ppycmd.abi=arm64-v8a` drops the x86_64 runtime
+that no phone can use and gives a single 32 MB APK, which is what `dist/` ships.
 
 ---
 
@@ -103,6 +105,22 @@ The suites can also be run on their own:
 python3.13 tools/test_runtime.py
 node tools/test_js.js
 ```
+
+### What has been checked on a device
+
+The shipped build was installed on an Android 11 x86_64 emulator and driven
+through the UI. Confirmed there: the app launches without crashing, CPython
+3.13.9 starts and reports itself in the title bar, the console and editor
+WebViews render, the editor highlights Python and reports the caret position
+back through the JS bridge, and pressing Run executes the buffer and streams
+its output into the console.
+
+That is a long way from exhaustive. The emulator ran under software
+translation with no hardware acceleration, so nothing about performance there
+means anything, and the tabs beyond Console and Editor were only opened, not
+exercised. Installing a package, serving a folder over Wi-Fi, and the
+background-server notification have been tested only against host CPython, not
+on a device.
 
 ---
 
@@ -149,10 +167,20 @@ things a hand-rolled editor gets subtly wrong — while the layer underneath
 supplies the colour. The two only line up because both take their font metrics
 and padding from the same CSS variables.
 
+**The icons are hand-defined, not a library.** `material-icons-extended` ships
+five complete icon styles and accounted for 13.7 MB of the 24 MB dex - over half
+- to supply the twenty-nine glyphs this app draws. A debug build does no
+shrinking, so all of that rode along into the download. `ui/PyIcons.kt` defines
+those twenty-nine as Material path data instead.
+
 **Both WebViews outlive their tab.** They are created once and re-attached on
 each tab switch, so console history and editor scroll position survive. The
 editor tracks which document it currently holds so returning to the tab does not
-throw the caret back to the top.
+throw the caret back to the top. They are also given explicit match-parent
+layout params: without them the view is added as wrap-content, the page's
+`height: 100%` resolves against a strip a couple of hundred pixels tall, and the
+console scrolls nearly all of its output off the top of a viewport barely one
+line high.
 
 ---
 

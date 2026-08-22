@@ -17,18 +17,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.CreateNewFolder
-import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.Description
-import androidx.compose.material.icons.filled.DriveFileRenameOutline
-import androidx.compose.material.icons.filled.FileUpload
-import androidx.compose.material.icons.filled.Folder
-import androidx.compose.material.icons.filled.FolderOpen
-import androidx.compose.material.icons.filled.MoreVert
-import androidx.compose.material.icons.automirrored.filled.NoteAdd
-import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -82,7 +70,7 @@ fun FilesScreen(
         ) {
             IconButton(onClick = onUp, enabled = !atRoot) {
                 Icon(
-                    Icons.AutoMirrored.Filled.ArrowBack,
+                    PyIcons.ArrowBack,
                     contentDescription = "Up one folder",
                     tint = if (atRoot) MaterialTheme.colorScheme.outline else MaterialTheme.colorScheme.onSurface,
                 )
@@ -98,21 +86,21 @@ fun FilesScreen(
             }
             IconButton(onClick = { importLauncher.launch(arrayOf("*/*")) }) {
                 Icon(
-                    Icons.Filled.FileUpload,
+                    PyIcons.FileUpload,
                     contentDescription = "Import a file",
                     tint = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
             IconButton(onClick = { dialog = FileDialog.NewFolder }) {
                 Icon(
-                    Icons.Filled.CreateNewFolder,
+                    PyIcons.CreateNewFolder,
                     contentDescription = "New folder",
                     tint = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
             IconButton(onClick = { dialog = FileDialog.NewFile }) {
                 Icon(
-                    Icons.AutoMirrored.Filled.NoteAdd,
+                    PyIcons.NoteAdd,
                     contentDescription = "New file",
                     tint = MaterialTheme.colorScheme.primary,
                 )
@@ -128,7 +116,7 @@ fun FilesScreen(
 
             state.entries.isEmpty() -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 EmptyState(
-                    icon = Icons.Filled.FolderOpen,
+                    icon = PyIcons.FolderOpen,
                     title = "This folder is empty",
                     hint = "Create a script or import one from your device.",
                 )
@@ -235,7 +223,7 @@ private fun FileRow(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Icon(
-            imageVector = if (entry.isDirectory) Icons.Filled.Folder else Icons.Filled.Description,
+            imageVector = if (entry.isDirectory) PyIcons.Folder else PyIcons.Description,
             contentDescription = null,
             tint = when {
                 entry.isDirectory -> MaterialTheme.colorScheme.secondary
@@ -269,7 +257,7 @@ private fun FileRow(
         if (entry.isPython) {
             IconButton(onClick = onRun, modifier = Modifier.size(38.dp)) {
                 Icon(
-                    Icons.Filled.PlayArrow,
+                    PyIcons.PlayArrow,
                     contentDescription = "Run ${entry.name}",
                     tint = MaterialTheme.colorScheme.primary,
                     modifier = Modifier.size(20.dp),
@@ -280,7 +268,7 @@ private fun FileRow(
         Box {
             IconButton(onClick = { menuOpen = true }, modifier = Modifier.size(38.dp)) {
                 Icon(
-                    Icons.Filled.MoreVert,
+                    PyIcons.MoreVert,
                     contentDescription = "More actions",
                     tint = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.size(20.dp),
@@ -289,7 +277,7 @@ private fun FileRow(
             DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
                 DropdownMenuItem(
                     text = { Text("Rename") },
-                    leadingIcon = { Icon(Icons.Filled.DriveFileRenameOutline, contentDescription = null) },
+                    leadingIcon = { Icon(PyIcons.DriveFileRenameOutline, contentDescription = null) },
                     onClick = {
                         menuOpen = false
                         onRename()
@@ -299,7 +287,7 @@ private fun FileRow(
                     text = { Text("Delete", color = MaterialTheme.colorScheme.error) },
                     leadingIcon = {
                         Icon(
-                            Icons.Filled.Delete,
+                            PyIcons.Delete,
                             contentDescription = null,
                             tint = MaterialTheme.colorScheme.error,
                         )

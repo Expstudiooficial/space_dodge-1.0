@@ -1,1 +1,1 @@
-ade21c75dc705e1f52eb6bdfe242291093fb6be4f9810db8853adc33169343ea  PyCmd-1.0-debug.apk
+8f1fc8775197aeae4a183acaa325c6bc2e237242175d6e77da941a201d8f88aa  PyCmd-1.0-debug.apk

@@ -15,14 +15,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.Row
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Dns
-import androidx.compose.material.icons.filled.Edit
-import androidx.compose.material.icons.filled.Folder
-import androidx.compose.material.icons.filled.Info
-import androidx.compose.material.icons.filled.Inventory2
-import androidx.compose.material.icons.filled.RestartAlt
-import androidx.compose.material.icons.filled.Terminal
 import androidx.compose.material3.Badge
 import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.CircularProgressIndicator
@@ -157,14 +149,14 @@ fun PyCmdRoot(viewModel: MainViewModel = viewModel()) {
                 actions = {
                     IconButton(onClick = { viewModel.clearNamespace() }, enabled = status.ready) {
                         Icon(
-                            Icons.Filled.RestartAlt,
+                            PyIcons.RestartAlt,
                             contentDescription = "Reset variables",
                             tint = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
                     IconButton(onClick = { aboutOpen = true }) {
                         Icon(
-                            Icons.Filled.Info,
+                            PyIcons.Info,
                             contentDescription = "About",
                             tint = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -174,11 +166,11 @@ fun PyCmdRoot(viewModel: MainViewModel = viewModel()) {
         },
         bottomBar = {
             NavigationBar(containerColor = MaterialTheme.colorScheme.surface) {
-                TabItem(Tab.CONSOLE, Icons.Filled.Terminal, tab, viewModel::selectTab)
-                TabItem(Tab.EDITOR, Icons.Filled.Edit, tab, viewModel::selectTab, dot = editorState.isDirty)
-                TabItem(Tab.FILES, Icons.Filled.Folder, tab, viewModel::selectTab)
-                TabItem(Tab.PACKAGES, Icons.Filled.Inventory2, tab, viewModel::selectTab)
-                TabItem(Tab.SERVERS, Icons.Filled.Dns, tab, viewModel::selectTab, count = serverCount)
+                TabItem(Tab.CONSOLE, PyIcons.Terminal, tab, viewModel::selectTab)
+                TabItem(Tab.EDITOR, PyIcons.Edit, tab, viewModel::selectTab, dot = editorState.isDirty)
+                TabItem(Tab.FILES, PyIcons.Folder, tab, viewModel::selectTab)
+                TabItem(Tab.PACKAGES, PyIcons.Inventory2, tab, viewModel::selectTab)
+                TabItem(Tab.SERVERS, PyIcons.Dns, tab, viewModel::selectTab, count = serverCount)
             }
         },
     ) { padding ->

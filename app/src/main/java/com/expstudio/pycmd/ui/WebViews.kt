@@ -71,6 +71,14 @@ class WebHost(val webView: WebView, val bridge: PyBridge) {
 @SuppressLint("SetJavaScriptEnabled")
 private fun createWebView(context: Context, bridge: PyBridge): WebView =
     WebView(context).apply {
+        // Without this the view is added with wrap-content and lays the page
+        // out in a strip a couple of hundred pixels tall: the page's `height:
+        // 100%` then resolves against that, and the console scrolls almost all
+        // of its output off the top of a viewport that is barely one line high.
+        layoutParams = ViewGroup.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.MATCH_PARENT,
+        )
         setBackgroundColor(WEB_BACKGROUND.toColorInt())
         // No remote content is ever loaded, so the usual JS caveats do not
         // apply: every page is an asset shipped inside the APK.

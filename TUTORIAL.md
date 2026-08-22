@@ -180,9 +180,16 @@ JSON API, not just static files.
 
 ## If something looks wrong
 
-This build has been tested with 139 automated checks against the Python
-engine and the JavaScript console/editor (see `tools/` in the repo), but it
-has **not** been run on a real Android device or emulator before reaching
-you — the build environment had no way to launch one. If you hit something
-that doesn't work as described above, that's the most useful kind of bug
-report: what you ran, what tab, what you expected vs. what happened.
+This build has 139 automated checks behind it against the Python engine and
+the JavaScript console/editor (see `tools/` in the repo), and it was
+installed and driven on an Android 11 emulator: the app launches, Python
+3.13.9 starts, and pressing Run in the editor prints its output to the
+console.
+
+What has *not* been verified on a device is most of what this page asks you
+to try — installing a package, serving a folder over Wi-Fi, the Stop button,
+`input()` prompts, and the background-server notification all work against
+host CPython in the test suite but have not been tapped through on real
+hardware. So if something here doesn't behave as described, that is worth
+reporting rather than assuming you did it wrong: say what you ran, which
+tab, and what happened instead.

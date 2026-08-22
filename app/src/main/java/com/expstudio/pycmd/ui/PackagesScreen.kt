@@ -21,10 +21,6 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.Inventory2
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -111,7 +107,7 @@ fun PackagesScreen(
                 Spacer(Modifier.width(8.dp))
                 ActionButton(
                     text = "Install",
-                    icon = Icons.Filled.Add,
+                    icon = PyIcons.Add,
                     onClick = ::install,
                     enabled = !state.busy && query.isNotBlank(),
                 )
@@ -180,7 +176,7 @@ fun PackagesScreen(
             if (state.installed.isEmpty()) {
                 item {
                     EmptyState(
-                        icon = Icons.Filled.Inventory2,
+                        icon = PyIcons.Inventory2,
                         title = "Nothing installed yet",
                         hint = "Search for a package above, or tap a suggestion.",
                     )
@@ -261,7 +257,7 @@ private fun InstalledRow(
             }
             IconButton(onClick = onRemove, enabled = enabled) {
                 Icon(
-                    Icons.Filled.Delete,
+                    PyIcons.Delete,
                     contentDescription = "Remove ${entry.name}",
                     tint = MaterialTheme.colorScheme.error,
                     modifier = Modifier.size(19.dp),

@@ -6,10 +6,15 @@
 |---|---|
 | Package | `com.expstudio.pycmd.debug` |
 | Version | 1.0-debug |
-| Size | 53 MB |
+| Size | 32 MB |
 | Signed with | the standard Android debug key |
-| Works on | Android 7.0 (API 24) and newer, **arm64-v8a or x86_64** |
+| Works on | Android 7.0 (API 24) and newer, **arm64-v8a** (every phone since about 2016) |
 | SHA-256 | see [SHA256SUMS.txt](SHA256SUMS.txt) |
+
+This exact build was installed and run on an Android 11 emulator before being
+committed: the app launches, CPython 3.13.9 starts, and running the editor's
+starter script prints its output to the console. See the main README for what
+that check does and does not cover.
 
 It is a debug build, so it is already signed and installs without any keystore
 or Play Store involvement. It also carries the `.debug` package suffix, which
@@ -46,16 +51,26 @@ sha256sum -c dist/SHA256SUMS.txt
 
 ## A note on the device requirement
 
-The APK contains binaries for **arm64-v8a** and **x86_64** only. Chaquopy's
-Python 3.13 runtime ships no 32-bit builds, so a phone from before roughly 2016
-running a 32-bit-only Android will refuse to install it. Everything current is
-arm64.
+This APK carries **arm64-v8a** binaries only, which is what keeps it to 32 MB
+rather than 46 MB. Every Android phone sold in roughly the last decade is
+arm64, so this is the right build for a real device.
+
+Two cases need a different build. A 32-bit-only phone from before about 2016
+cannot run it at all: Chaquopy's Python 3.13 runtime ships no 32-bit binaries.
+An **x86_64 emulator** needs the x86_64 slice, which the default build
+produces:
+
+```bash
+./gradlew :app:assembleDebug      # both ABIs, one APK per ABI plus a universal one
+```
 
 ## Rebuilding it yourself
 
 ```bash
-./gradlew :app:assembleDebug
+./gradlew :app:assembleDebug -Ppycmd.abi=arm64-v8a
 # -> app/build/outputs/apk/debug/app-debug.apk
 ```
+
+Leave the property off to build for both ABIs instead.
 
 See the [main README](../README.md) for what the build needs.

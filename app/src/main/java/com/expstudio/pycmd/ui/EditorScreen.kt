@@ -11,14 +11,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.FormatIndentDecrease
-import androidx.compose.material.icons.automirrored.filled.FormatIndentIncrease
-import androidx.compose.material.icons.automirrored.filled.NoteAdd
-import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material.icons.automirrored.filled.Redo
-import androidx.compose.material.icons.filled.Save
-import androidx.compose.material.icons.automirrored.filled.Undo
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -115,14 +107,14 @@ fun EditorScreen(
 
             IconButton(onClick = onNew) {
                 Icon(
-                    Icons.AutoMirrored.Filled.NoteAdd,
+                    PyIcons.NoteAdd,
                     contentDescription = "New file",
                     tint = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
             IconButton(onClick = onSave, enabled = ready) {
                 Icon(
-                    Icons.Filled.Save,
+                    PyIcons.Save,
                     contentDescription = "Save",
                     tint = if (state.isDirty) {
                         MaterialTheme.colorScheme.tertiary
@@ -133,7 +125,7 @@ fun EditorScreen(
             }
             IconButton(onClick = onRun, enabled = ready) {
                 Icon(
-                    Icons.Filled.PlayArrow,
+                    PyIcons.PlayArrow,
                     contentDescription = "Run",
                     tint = if (ready) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline,
                 )
@@ -154,10 +146,10 @@ fun EditorScreen(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(2.dp),
         ) {
-            EditorToolButton(Icons.AutoMirrored.Filled.Undo, "Undo") { host.eval("PyEditor.undo();") }
-            EditorToolButton(Icons.AutoMirrored.Filled.Redo, "Redo") { host.eval("PyEditor.redo();") }
-            EditorToolButton(Icons.AutoMirrored.Filled.FormatIndentIncrease, "Indent") { host.eval("PyEditor.indent();") }
-            EditorToolButton(Icons.AutoMirrored.Filled.FormatIndentDecrease, "Outdent") { host.eval("PyEditor.outdent();") }
+            EditorToolButton(PyIcons.Undo, "Undo") { host.eval("PyEditor.undo();") }
+            EditorToolButton(PyIcons.Redo, "Redo") { host.eval("PyEditor.redo();") }
+            EditorToolButton(PyIcons.FormatIndentIncrease, "Indent") { host.eval("PyEditor.indent();") }
+            EditorToolButton(PyIcons.FormatIndentDecrease, "Outdent") { host.eval("PyEditor.outdent();") }
         }
 
         KeyStrip(

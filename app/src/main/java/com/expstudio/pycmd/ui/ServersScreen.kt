@@ -14,11 +14,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ContentCopy
-import androidx.compose.material.icons.filled.Dns
-import androidx.compose.material.icons.filled.Folder
-import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -81,14 +76,14 @@ fun ServersScreen(
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 ActionButton(
                     text = "Serve folder",
-                    icon = Icons.Filled.Folder,
+                    icon = PyIcons.Folder,
                     onClick = { portDialogOpen = true },
                     enabled = !state.busy,
                     modifier = Modifier.weight(1f),
                 )
                 GhostButton(
                     text = "Stop all",
-                    icon = Icons.Filled.Stop,
+                    icon = PyIcons.Stop,
                     onClick = onStopAll,
                     enabled = running > 0,
                     modifier = Modifier.weight(1f),
@@ -113,7 +108,7 @@ fun ServersScreen(
 
         if (state.servers.isEmpty()) {
             EmptyState(
-                icon = Icons.Filled.Dns,
+                icon = PyIcons.Dns,
                 title = "No servers running",
                 hint = "Serve the current folder, or run a script that listens on a port.",
                 modifier = Modifier.padding(top = 40.dp),
@@ -208,7 +203,7 @@ private fun ServerRow(
             if (server.url.isNotBlank()) {
                 IconButton(onClick = { onCopy(server.url) }, modifier = Modifier.size(38.dp)) {
                     Icon(
-                        Icons.Filled.ContentCopy,
+                        PyIcons.ContentCopy,
                         contentDescription = "Copy address",
                         tint = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.size(18.dp),
@@ -217,7 +212,7 @@ private fun ServerRow(
             }
             IconButton(onClick = onStop, modifier = Modifier.size(38.dp)) {
                 Icon(
-                    Icons.Filled.Stop,
+                    PyIcons.Stop,
                     contentDescription = "Stop ${server.label}",
                     tint = MaterialTheme.colorScheme.error,
                     modifier = Modifier.size(20.dp),

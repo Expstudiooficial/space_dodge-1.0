@@ -18,13 +18,6 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ArrowUpward
-import androidx.compose.material.icons.filled.Clear
-import androidx.compose.material.icons.filled.History
-import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material.icons.filled.Stop
-import androidx.compose.material.icons.automirrored.filled.WrapText
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
@@ -169,7 +162,7 @@ fun ConsoleScreen(
                         enabled = history.isNotEmpty(),
                     ) {
                         Icon(
-                            Icons.Filled.History,
+                            PyIcons.History,
                             contentDescription = "Command history",
                             tint = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -226,7 +219,7 @@ fun ConsoleScreen(
                 if (status.running && !awaitingInput) {
                     IconButton(onClick = onStop) {
                         Icon(
-                            Icons.Filled.Stop,
+                            PyIcons.Stop,
                             contentDescription = "Stop",
                             tint = MaterialTheme.colorScheme.error,
                         )
@@ -234,7 +227,7 @@ fun ConsoleScreen(
                 } else {
                     IconButton(onClick = ::submit, enabled = canSubmit && status.ready) {
                         Icon(
-                            if (awaitingInput) Icons.Filled.ArrowUpward else Icons.Filled.PlayArrow,
+                            if (awaitingInput) PyIcons.ArrowUpward else PyIcons.PlayArrow,
                             contentDescription = if (awaitingInput) "Send input" else "Run",
                             tint = if (canSubmit && status.ready) {
                                 MaterialTheme.colorScheme.primary
@@ -271,7 +264,7 @@ fun ConsoleScreen(
                         modifier = Modifier.size(34.dp),
                     ) {
                         Icon(
-                            Icons.AutoMirrored.Filled.WrapText,
+                            PyIcons.WrapText,
                             contentDescription = if (wrapLines) "Stop wrapping lines" else "Wrap lines",
                             tint = if (wrapLines) {
                                 MaterialTheme.colorScheme.primary
@@ -284,7 +277,7 @@ fun ConsoleScreen(
                     Spacer(Modifier.width(4.dp))
                     IconButton(onClick = onClear, modifier = Modifier.size(34.dp)) {
                         Icon(
-                            Icons.Filled.Clear,
+                            PyIcons.Clear,
                             contentDescription = "Clear output",
                             tint = MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier.size(17.dp),

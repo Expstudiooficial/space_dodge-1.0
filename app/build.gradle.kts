@@ -5,6 +5,22 @@ plugins {
     alias(libs.plugins.chaquopy)
 }
 
+/**
+ * Which ABIs to build for.
+ *
+ * Chaquopy's Python 3.13 runtime is 64-bit only, which matches every device
+ * Play still accepts uploads for. x86_64 is included by default so the app also
+ * runs on an emulator. Pass -Ppycmd.abi=arm64-v8a for a build aimed only at
+ * real phones: Chaquopy bundles its Python assets for every ABI listed here and
+ * does not take part in the APK splits, so dropping x86_64 saves about 3 MB
+ * that no phone can use.
+ */
+val targetAbis: List<String> = (findProperty("pycmd.abi") as String?)
+    ?.split(",")
+    ?.map { it.trim() }
+    ?.filter { it.isNotEmpty() }
+    ?: listOf("arm64-v8a", "x86_64")
+
 android {
     namespace = "com.expstudio.pycmd"
     compileSdk = 35
@@ -17,10 +33,7 @@ android {
         versionName = "1.0"
 
         ndk {
-            // Chaquopy's Python 3.13 runtime is 64-bit only, which matches
-            // every device Play still accepts uploads for. x86_64 is here so
-            // the app runs on emulators.
-            abiFilters += listOf("arm64-v8a", "x86_64")
+            abiFilters += targetAbis
         }
     }
 
@@ -48,13 +61,33 @@ android {
         compose = true
     }
 
+    // One APK per ABI, plus a universal one, so a phone downloads only the
+    // slice it can run. The split list is driven by the same targetAbis as the
+    // native filters above: splitting on an ABI that was filtered out would
+    // emit an APK with no native libraries in it at all.
+    splits {
+        abi {
+            isEnable = targetAbis.size > 1
+            reset()
+            include(*targetAbis.toTypedArray())
+            isUniversalApk = true
+        }
+    }
+
     lint {
         textReport = true
         xmlReport = true
         // A missing translation or a newer-dependency notice should not stop a
         // build; real correctness issues still surface in the report.
         abortOnError = false
-        disable += setOf("GradleDependency", "AndroidGradlePluginVersion", "OldTargetApi")
+        // ChromeOsAbiSupport: dropping x86_64 is a deliberate choice for the
+        // phone-only build (-Ppycmd.abi=arm64-v8a); the default build keeps it.
+        disable += setOf(
+            "GradleDependency",
+            "AndroidGradlePluginVersion",
+            "OldTargetApi",
+            "ChromeOsAbiSupport",
+        )
     }
 
     packaging {
@@ -96,7 +129,6 @@ dependencies {
     implementation(libs.androidx.ui.graphics)
     implementation(libs.androidx.ui.tooling.preview)
     implementation(libs.androidx.material3)
-    implementation(libs.androidx.material.icons.extended)
     implementation(libs.androidx.datastore.preferences)
     implementation(libs.androidx.documentfile)
     implementation(libs.kotlinx.coroutines.android)
