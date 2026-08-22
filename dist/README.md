@@ -29,6 +29,9 @@ The first launch takes a few seconds longer than later ones: the Python
 interpreter and its standard library are unpacked on that first run. The title
 bar shows `starting` until it is ready, then switches to `Python 3.13.x`.
 
+Once it's running, see [../TUTORIAL.md](../TUTORIAL.md) for a walkthrough of
+every tab with things to paste in and try.
+
 ## Installing over USB
 
 ```bash

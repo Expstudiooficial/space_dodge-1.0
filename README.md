@@ -21,8 +21,8 @@ auto-indent, bracket matching, and a shortcut row for the characters phone
 keyboards hide. Run the open file straight from the toolbar.
 
 **Files** — a private workspace you can browse, create in, rename, delete, and
-import into from anywhere on the device. Five example scripts are there on first
-launch.
+import into from anywhere on the device. Ten example scripts are there on
+first launch, covering the console, the editor, packages and servers.
 
 **Packages** — install pure-Python libraries from PyPI onto the device at
 runtime. `requests`, `flask` and `rich` are already built in.
@@ -39,6 +39,13 @@ A ready-to-install debug APK is in [`dist/`](dist/) - download
 allow the install when Android asks. It is signed with the standard debug key,
 so no keystore or store account is involved. See [dist/README.md](dist/README.md)
 for the details.
+
+Once it's installed, **[TUTORIAL.md](TUTORIAL.md)** walks through every tab
+with ready-to-paste snippets — console one-liners, a script that uses the
+Stop button, one that reads and writes a file, one that hits the network,
+one with colour output, and how to serve a folder over Wi-Fi. Ten example
+scripts covering the same ground also ship inside the app under
+`Files → examples/`.
 
 ---
 
