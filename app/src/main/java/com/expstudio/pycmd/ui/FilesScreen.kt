@@ -24,6 +24,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -51,6 +52,9 @@ fun FilesScreen(
     onDelete: (File) -> Unit,
     onImport: (android.net.Uri) -> Unit,
     modifier: Modifier = Modifier,
+    pickingFor: ServerKind? = null,
+    onUseAsTarget: (File) -> Unit = {},
+    onCancelPicking: () -> Unit = {},
 ) {
     var dialog by remember { mutableStateOf<FileDialog?>(null) }
 
@@ -107,6 +111,15 @@ fun FilesScreen(
             }
         }
 
+        if (pickingFor != null) {
+            PickerBanner(
+                kind = pickingFor,
+                directory = state.directory,
+                onUse = { dir -> onUseAsTarget(dir) },
+                onCancel = onCancelPicking,
+            )
+        }
+
         Divider()
 
         when {
@@ -130,7 +143,11 @@ fun FilesScreen(
                     FileRow(
                         entry = entry,
                         onOpen = {
-                            if (entry.isDirectory) onOpenDirectory(entry.file) else onOpenFile(entry.file)
+                            when {
+                                entry.isDirectory -> onOpenDirectory(entry.file)
+                                pickingFor == ServerKind.SCRIPT -> onUseAsTarget(entry.file)
+                                else -> onOpenFile(entry.file)
+                            }
                         },
                         onRun = { onRunFile(entry.file) },
                         onRename = { dialog = FileDialog.Rename(entry.file) },
@@ -307,4 +324,47 @@ private fun FileRow(
             .height(1.dp)
             .background(MaterialTheme.colorScheme.outlineVariant),
     )
+}
+
+/**
+ * Shown while the Servers tab is waiting for a folder or script.
+ *
+ * A folder is confirmed with the button (you have to be standing in it); a
+ * script is picked by tapping it in the list.
+ */
+@Composable
+private fun PickerBanner(
+    kind: ServerKind,
+    directory: File?,
+    onUse: (File) -> Unit,
+    onCancel: () -> Unit,
+) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .background(MaterialTheme.colorScheme.primaryContainer)
+            .padding(horizontal = 12.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text(
+                text = if (kind == ServerKind.STATIC) "Choose a folder to serve" else "Tap the script to run",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onPrimaryContainer,
+            )
+            Text(
+                text = if (kind == ServerKind.STATIC) {
+                    "Open the folder you want, then confirm."
+                } else {
+                    "Any .py file in this workspace."
+                },
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onPrimaryContainer,
+            )
+        }
+        if (kind == ServerKind.STATIC && directory != null) {
+            TextButton(onClick = { onUse(directory) }) { Text("Use this folder") }
+        }
+        TextButton(onClick = onCancel) { Text("Cancel") }
+    }
 }

@@ -3,6 +3,11 @@
 Everything the user types goes through :func:`run_source`. Output is pushed to a
 Java/Kotlin sink object as it is produced, so the console can stream instead of
 waiting for the script to finish.
+
+Output is *channelled*. `sys.stdout` is a single global object, but a server
+running on its own thread needs its output to land in its own console rather
+than the main one, so every write is tagged with the channel registered for the
+writing thread. Threads with no registration write to ``"console"``.
 """
 
 from __future__ import annotations
@@ -25,7 +30,38 @@ __all__ = [
     "reset_namespace",
     "completions",
     "runtime_info",
+    "register_channel",
+    "unregister_channel",
+    "current_channel",
+    "interrupt_thread",
+    "emit",
 ]
+
+CONSOLE = "console"
+
+# ---------------------------------------------------------------------------
+# Channels
+# ---------------------------------------------------------------------------
+
+_channels: dict[int, str] = {}
+_channel_lock = threading.RLock()
+
+
+def register_channel(channel: str) -> None:
+    """Route this thread's output to `channel`. Called from the thread itself."""
+    with _channel_lock:
+        _channels[threading.get_ident()] = channel
+
+
+def unregister_channel() -> None:
+    with _channel_lock:
+        _channels.pop(threading.get_ident(), None)
+
+
+def current_channel() -> str:
+    with _channel_lock:
+        return _channels.get(threading.get_ident(), CONSOLE)
+
 
 # ---------------------------------------------------------------------------
 # Streams
@@ -62,7 +98,7 @@ class _SinkStream(io.TextIOBase):
         if not isinstance(text, str):
             raise TypeError(f"write() argument must be str, not {type(text).__name__}")
         if text:
-            self._sink.onOutput(self._name, text)
+            self._sink.onOutput(self._name, text, current_channel())
         return len(text)
 
     def flush(self) -> None:  # pragma: no cover - nothing is buffered
@@ -72,13 +108,15 @@ class _SinkStream(io.TextIOBase):
 class _SinkInput(io.TextIOBase):
     """stdin backed by the console's input box.
 
-    ``readline`` blocks the Python worker thread until the UI supplies a line,
-    which is exactly the semantics ``input()`` expects.
+    ``readline`` blocks the calling thread until the UI supplies a line, which
+    is exactly the semantics ``input()`` expects. Each channel has its own
+    input queue on the Kotlin side, so a server prompting for input does not
+    steal what the user typed into the main console.
     """
 
     def __init__(self, sink) -> None:
         self._sink = sink
-        self._buffer = ""
+        self._buffers: dict[int, str] = {}
 
     def readable(self) -> bool:
         return True
@@ -94,17 +132,23 @@ class _SinkInput(io.TextIOBase):
         return "utf-8"
 
     def readline(self, size: int = -1) -> str:
-        if not self._buffer:
-            line = self._sink.onReadLine()
+        key = threading.get_ident()
+        buffered = self._buffers.get(key, "")
+        if not buffered:
+            line = self._sink.onReadLine(current_channel())
             if line is None:
                 # The only reason the sink refuses a line is that the run was
                 # stopped, so report it the same way any other stop is.
                 raise KeyboardInterrupt("execution stopped")
-            self._buffer = line
+            buffered = line
         if size is not None and size >= 0:
-            chunk, self._buffer = self._buffer[:size], self._buffer[size:]
-            return chunk
-        chunk, self._buffer = self._buffer, ""
+            chunk, rest = buffered[:size], buffered[size:]
+        else:
+            chunk, rest = buffered, ""
+        if rest:
+            self._buffers[key] = rest
+        else:
+            self._buffers.pop(key, None)
         return chunk
 
     def read(self, size: int = -1) -> str:
@@ -169,24 +213,41 @@ def _probe_async_exc(set_async) -> bool:
     keep_spinning = threading.Event()
 
     def spin() -> None:
+        # BaseException, not KeyboardInterrupt: the interrupt is delivered at an
+        # arbitrary bytecode boundary and must not escape into threading's
+        # excepthook, which would print a traceback to stderr on every startup.
         try:
             while not keep_spinning.is_set():
                 pass
-        except KeyboardInterrupt:
+        except BaseException:  # noqa: BLE001
             pass
 
     thread = threading.Thread(target=spin, name="pycmd-probe", daemon=True)
-    thread.start()
-    time.sleep(0.05)
+
+    # Belt and braces: if the exception still lands outside spin()'s try - during
+    # thread teardown, say - swallow it here rather than let it be reported.
+    previous_hook = threading.excepthook
+
+    def quiet_hook(args):
+        if args.thread is thread:
+            return
+        previous_hook(args)
+
+    threading.excepthook = quiet_hook
     try:
-        set_async(ctypes.c_ulong(thread.ident), ctypes.py_object(KeyboardInterrupt))
-    except Exception:  # noqa: BLE001
-        keep_spinning.set()
-        return False
-    thread.join(timeout=1.0)
-    interrupted = not thread.is_alive()
-    keep_spinning.set()  # Release the thread if the interrupt never landed.
-    return interrupted
+        thread.start()
+        time.sleep(0.05)
+        try:
+            set_async(ctypes.c_ulong(thread.ident), ctypes.py_object(KeyboardInterrupt))
+        except Exception:  # noqa: BLE001
+            keep_spinning.set()
+            return False
+        thread.join(timeout=1.0)
+        interrupted = not thread.is_alive()
+        keep_spinning.set()  # Release the thread if the interrupt never landed.
+        return interrupted
+    finally:
+        threading.excepthook = previous_hook
 
 
 def _select_interrupt() -> str:
@@ -201,6 +262,24 @@ def _select_interrupt() -> str:
     _set_async_exc = _resolve_async_exc()
     _use_async_exc = _set_async_exc is not None and _probe_async_exc(_set_async_exc)
     return "async-exc" if _use_async_exc else "trace-hook"
+
+
+def interrupt_thread(thread_id: int, exception=KeyboardInterrupt) -> bool:
+    """Raise `exception` inside another thread. Used by the server kill switch.
+
+    Returns False when the fast path is unavailable, in which case the caller
+    has to fall back on closing whatever the thread is blocked on.
+    """
+    if not _use_async_exc or _set_async_exc is None or thread_id is None:
+        return False
+
+    import ctypes
+
+    try:
+        raised = _set_async_exc(ctypes.c_ulong(thread_id), ctypes.py_object(exception))
+        return raised > 0
+    except Exception:  # noqa: BLE001
+        return False
 
 
 def _clear_pending_async_exc(thread_id: int) -> None:
@@ -226,6 +305,12 @@ def _fresh_namespace() -> dict:
     # Keep the module alive so pickle/dataclasses can resolve __main__.
     sys.modules["__main__"] = module
     return ns
+
+
+def emit(stream: str, text: str, channel: str = CONSOLE) -> None:
+    """Push a line to a channel without going through Python's streams."""
+    if _sink is not None and text:
+        _sink.onOutput(stream, text, channel)
 
 
 def configure(sink, workspace_dir: str, site_packages_dir: str) -> str:
@@ -272,27 +357,18 @@ def reset_namespace() -> None:
 
 
 def request_stop() -> None:
-    """Ask the running code to stop at its next bytecode boundary."""
+    """Ask the console's running code to stop at its next bytecode boundary."""
     _stop_flag.set()
 
     thread_id = _active_thread_id
-    if thread_id is None or not _use_async_exc or _set_async_exc is None:
-        return  # The trace hook will pick the flag up instead.
-
-    import ctypes
-
-    try:
-        _set_async_exc(ctypes.c_ulong(thread_id), ctypes.py_object(KeyboardInterrupt))
-    except Exception:  # noqa: BLE001
-        pass
+    if thread_id is None:
+        return
+    if not interrupt_thread(thread_id, KeyboardInterrupt):
+        pass  # The trace hook will pick the flag up instead.
 
 
 def _make_tracer():
-    """Cooperative interrupt.
-
-    CPython cannot kill a thread outright, so a trace hook raises
-    KeyboardInterrupt in the user's code the moment the stop flag is set.
-    """
+    """Cooperative interrupt used when async exceptions are unavailable."""
 
     def tracer(frame, event, arg):
         if _stop_flag.is_set():
@@ -311,6 +387,11 @@ def _format_exception(exc: BaseException, source_name: str) -> str:
     lines = traceback.format_exception(type(exc), exc, tb)
     text = "".join(lines)
     return text.replace('File "<string>"', f'File "{source_name}"')
+
+
+def format_exception(exc: BaseException, source_name: str = "<script>") -> str:
+    """Public wrapper so other modules report errors the same way."""
+    return _format_exception(exc, source_name)
 
 
 def _split_last_expression(source: str, filename: str):
@@ -419,6 +500,41 @@ def run_file(path: str, args=None) -> str:
         _namespace["__file__"] = path
     try:
         return run_source(source, source_name=os.path.basename(path), echo_result=False)
+    finally:
+        sys.argv = previous_argv
+        if added_path:
+            try:
+                sys.path.remove(directory)
+            except ValueError:
+                pass
+
+
+def exec_isolated(path: str, args=None, channel: str = CONSOLE) -> None:
+    """Run a file in a fresh namespace, without touching the console's state.
+
+    Servers use this: a background script must not reset the variables the user
+    is working with in the console, and its traceback belongs in its own log.
+    """
+    with open(path, "r", encoding="utf-8") as handle:
+        source = handle.read()
+
+    module = types.ModuleType("__main__")
+    namespace = module.__dict__
+    namespace["__builtins__"] = builtins
+    namespace["__name__"] = "__main__"
+    namespace["__file__"] = path
+
+    directory = os.path.dirname(os.path.abspath(path))
+    added_path = False
+    if directory and directory not in sys.path:
+        sys.path.insert(0, directory)
+        added_path = True
+
+    previous_argv = sys.argv
+    sys.argv = [path] + [str(a) for a in (args or [])]
+    try:
+        code = compile(source, os.path.basename(path), "exec")
+        exec(code, namespace)
     finally:
         sys.argv = previous_argv
         if added_path:

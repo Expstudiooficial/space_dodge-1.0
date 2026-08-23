@@ -26,29 +26,41 @@ FAILURES = []
 
 
 class FakeSink:
+    """Stands in for the Kotlin sink, including its per-channel routing."""
+
     def __init__(self):
-        self.chunks = []
-        self.stdin = queue.Queue()
+        self.chunks = []  # (stream, text, channel)
+        self.queues = {}
         self.finished = []
 
-    def onOutput(self, stream, text):  # noqa: N802 - mirrors the Kotlin name
-        self.chunks.append((stream, text))
+    def queue_for(self, channel):
+        return self.queues.setdefault(channel, queue.Queue())
 
-    def onReadLine(self):  # noqa: N802
+    def onOutput(self, stream, text, channel="console"):  # noqa: N802
+        self.chunks.append((stream, text, channel))
+
+    def onReadLine(self, channel="console"):  # noqa: N802
         try:
-            return self.stdin.get(timeout=2)
+            return self.queue_for(channel).get(timeout=2)
         except queue.Empty:
             return None
 
     def onFinished(self, run_id, status, millis):  # noqa: N802
         self.finished.append((run_id, status, millis))
 
-    def text(self, stream=None):
-        return "".join(t for s, t in self.chunks if stream is None or s == stream)
+    def text(self, stream=None, channel="console"):
+        return "".join(
+            t for s, t, c in self.chunks
+            if (stream is None or s == stream) and (channel is None or c == channel)
+        )
 
     def reset(self):
         self.chunks.clear()
         self.finished.clear()
+
+    @property
+    def stdin(self):
+        return self.queue_for("console")
 
 
 def _report_uncaught(exc_type, exc, tb):
@@ -324,44 +336,156 @@ check(
     result,
 )
 
-report("\n== servers ==")
+report("\n== servers: helpers ==")
 ip = pycmd_servers.local_ip()
 check("local_ip returns something", isinstance(ip, str) and ip.count(".") == 3, ip)
+check("suggest_port finds a free port", pycmd_servers.suggest_port(8300) >= 8300, "none")
+check("port 0 is rejected", pycmd_servers.port_available(0) is False, "accepted")
+check("port 99999 is rejected", pycmd_servers.port_available(99999) is False, "accepted")
 
-started = pycmd_servers.start_file_server(workspace, 8123)
-check("file server starts", started.get("ok") is True, started)
+report("\n== servers: static ==")
+started = pycmd_servers.start_static(workspace, 8123, label="test folder")
+check("static server starts", started.get("ok") is True, started)
+handle = started.get("handle", "")
+
 if started.get("ok"):
-    time.sleep(0.4)
+    time.sleep(0.5)
     import urllib.request
 
     try:
         with urllib.request.urlopen("http://127.0.0.1:8123/sample.py", timeout=5) as response:
             body = response.read().decode()
-        check("file server serves the workspace", "file says" in body, body[:80])
+        check("static server serves the workspace", "file says" in body, body[:60])
     except Exception as exc:  # noqa: BLE001
-        check("file server serves the workspace", False, repr(exc))
+        check("static server serves the workspace", False, repr(exc))
 
-    listing = pycmd_servers.listing()
-    check("listing shows the server", len(listing) == 1 and listing[0]["status"] == "running", listing)
+    rows = pycmd_servers.listing()
+    check("listing shows it running", len(rows) == 1 and rows[0]["status"] == "running", rows)
+    check("listing carries a url", rows[0]["url"].startswith("http://"), rows[0])
+    check("listing carries the target", rows[0]["target"] == workspace, rows[0])
+    check("label is used", rows[0]["label"] == "test folder", rows[0])
     check("count is 1", pycmd_servers.count() == 1, pycmd_servers.count())
+    check("requests were counted", rows[0]["requests"] >= 1, rows[0])
 
-    duplicate = pycmd_servers.start_file_server(workspace, 8123)
-    check("port clash is reported", duplicate.get("ok") is False, duplicate)
+    check(
+        "output went to the server channel",
+        "Serving" in sink.text(channel=handle),
+        sink.text(channel=handle)[:120],
+    )
+    check(
+        "server output stayed out of the console",
+        "Serving" not in sink.text(channel="console"),
+        sink.text(channel="console")[-120:],
+    )
 
-    stopped = pycmd_servers.stop(started["handle"])
-    check("stop succeeds", stopped.get("ok") is True, stopped)
-    time.sleep(0.4)
+    logged = pycmd_servers.log_lines(handle)
+    check("log_lines replays the server log", any("Serving" in r["text"] for r in logged), logged[:2])
+
+    duplicate = pycmd_servers.start_static(workspace, 8123)
+    check("port clash is refused", duplicate.get("ok") is False, duplicate)
+    check("clash message suggests another port", "in use" in duplicate.get("error", ""), duplicate)
+
+    stopped = pycmd_servers.stop(handle)
+    check("graceful stop works", stopped.get("ok") is True, stopped)
+    time.sleep(0.3)
     check("count returns to 0", pycmd_servers.count() == 0, pycmd_servers.count())
 
-    again = pycmd_servers.start_file_server(workspace, 8123)
-    check("port is reusable after stop", again.get("ok") is True, again)
+    again = pycmd_servers.start_static(workspace, 8123)
+    check("port is reusable after a stop", again.get("ok") is True, again)
     if again.get("ok"):
-        pycmd_servers.stop(again["handle"])
+        pycmd_servers.kill(again["handle"])
 
-bad = pycmd_servers.start_file_server(os.path.join(workspace, "nope"), 8124)
-check("missing directory is rejected", bad.get("ok") is False, bad)
+report("\n== servers: validation ==")
+check(
+    "missing folder is refused",
+    pycmd_servers.start_static(os.path.join(workspace, "nope"), 8124).get("ok") is False,
+    "accepted",
+)
+check(
+    "privileged port is refused with a reason",
+    "reserved" in pycmd_servers.start_static(workspace, 80).get("error", ""),
+    pycmd_servers.start_static(workspace, 80),
+)
+check(
+    "missing script is refused",
+    pycmd_servers.start_script(os.path.join(workspace, "nope.py")).get("ok") is False,
+    "accepted",
+)
+check("stop of an unknown handle is refused", pycmd_servers.stop("srv999")["ok"] is False, "accepted")
+check("kill of an unknown handle is refused", pycmd_servers.kill("srv999")["ok"] is False, "accepted")
 
-check("stop of unknown handle is rejected", pycmd_servers.stop("srv999")["ok"] is False, "accepted")
+report("\n== servers: script ==")
+script_server = os.path.join(workspace, "server_script.py")
+with open(script_server, "w", encoding="utf-8") as handle_file:
+    handle_file.write(
+        "import time\n"
+        "print('script server up')\n"
+        "while True:\n"
+        "    time.sleep(0.05)\n"
+    )
+started = pycmd_servers.start_script(script_server, label="looping script")
+check("script server starts", started.get("ok") is True, started)
+script_handle = started.get("handle", "")
+time.sleep(0.6)
+check(
+    "script output went to its own channel",
+    "script server up" in sink.text(channel=script_handle),
+    sink.text(channel=script_handle)[:120],
+)
+rows = pycmd_servers.listing()
+check("script server is listed as running", any(r["status"] == "running" for r in rows), rows)
+
+report("\n== servers: the kill switch ==")
+killed = pycmd_servers.kill(script_handle)
+check("kill reports success", killed.get("ok") is True, killed)
+time.sleep(0.5)
+check("killed script is gone from the listing", pycmd_servers.listing() == [], pycmd_servers.listing())
+check("count is 0 after the kill", pycmd_servers.count() == 0, pycmd_servers.count())
+
+report("\n== servers: kill a server that ignores a stop ==")
+stubborn = os.path.join(workspace, "stubborn.py")
+with open(stubborn, "w", encoding="utf-8") as handle_file:
+    # Swallows KeyboardInterrupt, so only a kill (SystemExit) can end it.
+    handle_file.write(
+        "import time\n"
+        "print('stubborn up')\n"
+        "while True:\n"
+        "    try:\n"
+        "        time.sleep(0.05)\n"
+        "    except KeyboardInterrupt:\n"
+        "        pass\n"
+    )
+started = pycmd_servers.start_script(stubborn, label="stubborn")
+stubborn_handle = started.get("handle", "")
+time.sleep(0.6)
+result = pycmd_servers.stop(stubborn_handle, timeout=1.0)
+check("a stop that fails says so", result.get("ok") is False, result)
+check("and asks for a kill", result.get("needs_kill") is True, result)
+killed = pycmd_servers.kill(stubborn_handle)
+check("kill stops the stubborn script", killed.get("ok") is True, killed)
+time.sleep(0.4)
+check("stubborn server is untracked", pycmd_servers.count() == 0, pycmd_servers.listing())
+
+report("\n== servers: kill_all ==")
+pycmd_servers.start_static(workspace, 8131)
+pycmd_servers.start_static(workspace, 8132)
+time.sleep(0.4)
+check("two servers are running", pycmd_servers.count() == 2, pycmd_servers.count())
+result = pycmd_servers.kill_all()
+check("kill_all reports both", result.get("killed") == 2, result)
+time.sleep(0.4)
+check("nothing is left running", pycmd_servers.count() == 0, pycmd_servers.listing())
+check("ports were freed", pycmd_servers.port_available(8131), "8131 still bound")
+
+report("\n== channels ==")
+sink.reset()
+pycmd_runtime.run_source("print('console line')")
+check(
+    "console output carries the console channel",
+    all(c == "console" for _, _, c in sink.chunks),
+    {c for _, _, c in sink.chunks},
+)
+check("current_channel defaults to console", pycmd_runtime.current_channel() == "console", "not console")
 
 print()
 if FAILURES:

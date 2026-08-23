@@ -4,13 +4,19 @@ import android.annotation.SuppressLint
 import android.content.Context
 import android.view.ViewGroup
 import android.webkit.JavascriptInterface
+import android.webkit.ConsoleMessage
+import android.webkit.WebChromeClient
+import android.webkit.WebResourceError
+import android.webkit.WebResourceRequest
 import android.webkit.WebView
+import android.webkit.WebViewClient
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.graphics.toColorInt
+import com.expstudio.pycmd.util.DebugLog
 import org.json.JSONObject
 
 private const val ASSET_BASE = "file:///android_asset/web/"
@@ -94,6 +100,36 @@ private fun createWebView(context: Context, bridge: PyBridge): WebView =
         isHorizontalScrollBarEnabled = false
         overScrollMode = WebView.OVER_SCROLL_NEVER
         addJavascriptInterface(bridge, "PyBridge")
+
+        // Anything the page logs or throws lands in the debug console, which is
+        // the only way a JavaScript error in a WebView is ever visible on a
+        // phone.
+        webChromeClient = object : WebChromeClient() {
+            override fun onConsoleMessage(message: ConsoleMessage): Boolean {
+                val where = "${message.sourceId().substringAfterLast('/')}:${message.lineNumber()}"
+                val text = "${message.message()}  ($where)"
+                when (message.messageLevel()) {
+                    ConsoleMessage.MessageLevel.ERROR -> DebugLog.error("webview", text)
+                    ConsoleMessage.MessageLevel.WARNING -> DebugLog.warn("webview", text)
+                    else -> DebugLog.debug("webview", text)
+                }
+                return true
+            }
+        }
+
+        webViewClient = object : WebViewClient() {
+            override fun onReceivedError(
+                view: WebView,
+                request: WebResourceRequest,
+                error: WebResourceError,
+            ) {
+                DebugLog.error(
+                    "webview",
+                    "failed to load ${request.url}",
+                    "${error.errorCode}: ${error.description}",
+                )
+            }
+        }
     }
 
 @Composable

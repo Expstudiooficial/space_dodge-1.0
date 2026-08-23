@@ -5,11 +5,16 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.os.Build
 import com.expstudio.pycmd.python.ServerService
+import com.expstudio.pycmd.util.DebugLog
 
 class PyCmdApp : Application() {
 
     override fun onCreate() {
         super.onCreate()
+        // Installed before anything else so a crash during start-up is still
+        // recorded for the debug console.
+        DebugLog.installCrashHandler()
+        DebugLog.info("app", "PyCmd starting")
         createNotificationChannel()
     }
 

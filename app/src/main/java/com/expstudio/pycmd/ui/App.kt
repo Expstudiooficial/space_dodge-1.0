@@ -45,6 +45,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.expstudio.pycmd.python.OutputChunk
+import java.io.File
 import kotlinx.coroutines.delay
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -62,6 +63,11 @@ fun PyCmdRoot(viewModel: MainViewModel = viewModel()) {
     val history by viewModel.history.collectAsState()
     val toast by viewModel.toast.collectAsState()
     val serverCount by viewModel.serverCount.collectAsState()
+    val serverConsoles by viewModel.serverConsoles.collectAsState()
+    val awaitingInput by viewModel.awaitingInput.collectAsState()
+    val debugEntries by viewModel.debugEntries.collectAsState()
+    val debugErrors by viewModel.debugErrorCount.collectAsState()
+    val pickingFor by viewModel.pickingFor.collectAsState()
 
     // Both WebViews are created once and reused for the life of the screen, so
     // console history and editor state survive tab switches.
@@ -154,6 +160,21 @@ fun PyCmdRoot(viewModel: MainViewModel = viewModel()) {
                             tint = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
+                    IconButton(onClick = { viewModel.selectTab(Tab.DEBUG) }) {
+                        BadgedBox(
+                            badge = { if (debugErrors > 0) Badge { Text(debugErrors.toString()) } },
+                        ) {
+                            Icon(
+                                PyIcons.BugReport,
+                                contentDescription = "Debug console",
+                                tint = if (tab == Tab.DEBUG) {
+                                    MaterialTheme.colorScheme.primary
+                                } else {
+                                    MaterialTheme.colorScheme.onSurfaceVariant
+                                },
+                            )
+                        }
+                    }
                     IconButton(onClick = { aboutOpen = true }) {
                         Icon(
                             PyIcons.Info,
@@ -204,6 +225,13 @@ fun PyCmdRoot(viewModel: MainViewModel = viewModel()) {
                         if (editorState.file == null) saveAsOpen = true else viewModel.saveEditor()
                     },
                     onNew = viewModel::newFile,
+                    onSaveAs = { saveAsOpen = true },
+                    onRunAsServer = viewModel::runEditorAsServer,
+                    onOpenDebug = { viewModel.selectTab(Tab.DEBUG) },
+                    onCopyAll = { text ->
+                        copyToClipboard(context, text)
+                        viewModel.showToast("Copied the file")
+                    },
                 )
 
                 Tab.FILES -> FilesScreen(
@@ -219,6 +247,9 @@ fun PyCmdRoot(viewModel: MainViewModel = viewModel()) {
                     onRename = viewModel::renameEntry,
                     onDelete = viewModel::deleteEntry,
                     onImport = viewModel::importFile,
+                    pickingFor = pickingFor,
+                    onUseAsTarget = viewModel::useAsLaunchTarget,
+                    onCancelPicking = viewModel::cancelPicking,
                 )
 
                 Tab.PACKAGES -> PackagesScreen(
@@ -230,14 +261,37 @@ fun PyCmdRoot(viewModel: MainViewModel = viewModel()) {
 
                 Tab.SERVERS -> ServersScreen(
                     state = serversState,
-                    currentFolder = viewModel.relativePath(filesState.directory ?: viewModel.workspaceRoot),
-                    onStartFileServer = viewModel::startFileServer,
+                    consoles = serverConsoles,
+                    awaitingInput = awaitingInput,
+                    workspaceRootName = "workspace root",
+                    relativePath = { path -> viewModel.relativePath(File(path)) },
+                    onFormChange = viewModel::updateLaunchForm,
+                    onPickTarget = viewModel::pickLaunchTarget,
+                    onSuggestPort = viewModel::suggestPort,
+                    onLaunch = viewModel::launchServer,
+                    onOpenConsole = viewModel::openServerConsole,
+                    onCloseConsole = viewModel::closeServerConsole,
+                    onServerInput = viewModel::submitServerInput,
+                    onClearConsole = viewModel::clearServerConsole,
                     onStop = viewModel::stopServer,
+                    onKill = viewModel::killServer,
                     onStopAll = viewModel::stopAllServers,
+                    onKillAll = viewModel::killAllServers,
                     onCopy = { text ->
                         copyToClipboard(context, text)
                         viewModel.showToast("Copied $text")
                     },
+                )
+
+                Tab.DEBUG -> DebugScreen(
+                    entries = debugEntries,
+                    onClear = viewModel::clearDebugLog,
+                    onCopy = { text ->
+                        copyToClipboard(context, text)
+                        viewModel.showToast("Copied to the clipboard")
+                    },
+                    onSave = viewModel::saveDebugLog,
+                    exportText = viewModel::debugLogText,
                 )
             }
         }

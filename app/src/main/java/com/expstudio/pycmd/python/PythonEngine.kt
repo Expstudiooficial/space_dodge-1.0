@@ -1,15 +1,16 @@
 package com.expstudio.pycmd.python
 
 import android.content.Context
-import android.util.Log
 import com.chaquo.python.PyObject
 import com.chaquo.python.Python
 import com.chaquo.python.android.AndroidPlatform
+import com.expstudio.pycmd.util.DebugLog
 import java.io.File
-import java.util.concurrent.ArrayBlockingQueue
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.Executors
+import java.util.concurrent.LinkedBlockingQueue
+import java.util.concurrent.ScheduledFuture
 import java.util.concurrent.TimeUnit
-import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.channels.BufferOverflow
@@ -21,11 +22,15 @@ import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.withContext
 
+/** The main console's channel name. Servers use their own handle. */
+const val CONSOLE_CHANNEL = "console"
+
 /** One line of console output, tagged with where it came from. */
 data class OutputChunk(
     val stream: Stream,
     val text: String,
     val id: Long,
+    val channel: String = CONSOLE_CHANNEL,
 ) {
     enum class Stream { STDOUT, STDERR, INPUT, SYSTEM }
 }
@@ -46,26 +51,33 @@ data class EngineStatus(
  * per-thread state, and Chaquopy is happiest when calls come from a consistent
  * thread. Everything the UI asks for is funnelled onto that thread, and output
  * comes back through [output].
+ *
+ * Stopping and killing servers deliberately do *not* use that thread. If a
+ * script has wedged the interpreter, a stop request queued behind it would
+ * never arrive — which is exactly when the user needs it most — so those calls
+ * go through [controlDispatcher] and reach Python by taking the GIL from a
+ * second thread.
  */
 object PythonEngine {
 
-    private const val TAG = "PythonEngine"
+    private const val TAG = "engine"
     private const val OUTPUT_BUFFER = 512
 
-    /** The single thread every Python call runs on. */
+    /** The single thread every ordinary Python call runs on. */
     private val pythonExecutor = Executors.newSingleThreadExecutor { runnable ->
         Thread(runnable, "python-main").apply { isDaemon = true }
     }
     private val pythonDispatcher = pythonExecutor.asCoroutineDispatcher()
 
     /**
-     * Stop requests cannot queue behind the code they are trying to stop, and
-     * they must not block the UI thread waiting for the GIL, so they get their
-     * own thread.
+     * Control operations — stop, kill, listing — that must not queue behind the
+     * code they are trying to control, nor block the UI thread waiting for the
+     * GIL.
      */
-    private val controlExecutor = Executors.newSingleThreadExecutor { runnable ->
+    private val controlExecutor = Executors.newFixedThreadPool(2) { runnable ->
         Thread(runnable, "python-control").apply { isDaemon = true }
     }
+    private val controlDispatcher = controlExecutor.asCoroutineDispatcher()
 
     private val _output = MutableSharedFlow<OutputChunk>(
         replay = OUTPUT_BUFFER,
@@ -83,10 +95,23 @@ object PythonEngine {
     private val _serverCount = MutableStateFlow(0)
     val serverCount: StateFlow<Int> = _serverCount.asStateFlow()
 
-    /** Hand-off point between the console's input box and Python's `input()`. */
-    private val stdinQueue = ArrayBlockingQueue<String>(16)
-    private val stopRequested = AtomicBoolean(false)
+    /** Channels currently blocked inside `input()`. */
+    private val _awaitingInput = MutableStateFlow<Set<String>>(emptySet())
+    val awaitingInput: StateFlow<Set<String>> = _awaitingInput.asStateFlow()
+
+    /** Hand-off between each channel's input box and its `input()` call. */
+    private val stdinQueues = ConcurrentHashMap<String, LinkedBlockingQueue<String>>()
+    private val cancelledChannels = ConcurrentHashMap<String, Boolean>()
     private val chunkId = AtomicLong(0)
+
+    /** Groups stderr fragments arriving in quick succession into one entry. */
+    private const val STDERR_COALESCE_MS = 180L
+    private val stderrLock = Any()
+    private val stderrBuffers = HashMap<String, StringBuilder>()
+    private val stderrFlushes = HashMap<String, ScheduledFuture<*>>()
+    private val stderrFlusher = Executors.newSingleThreadScheduledExecutor { runnable ->
+        Thread(runnable, "python-stderr").apply { isDaemon = true }
+    }
 
     private lateinit var runtime: PyObject
     private lateinit var packages: PyObject
@@ -95,32 +120,92 @@ object PythonEngine {
     private lateinit var workspaceDir: File
     private lateinit var sitePackagesDir: File
 
-    /** Receives stdout/stderr from Python and supplies stdin. Called on the Python thread. */
+    private fun queueFor(channel: String): LinkedBlockingQueue<String> =
+        stdinQueues.getOrPut(channel) { LinkedBlockingQueue(64) }
+
+    /** Receives stdout/stderr from Python and supplies stdin. Called on Python threads. */
     @Suppress("unused") // Called from pycmd_runtime.py
     private val sink = object {
-        fun onOutput(stream: String, text: String) {
-            val kind = if (stream == "stderr") OutputChunk.Stream.STDERR else OutputChunk.Stream.STDOUT
-            emit(kind, text)
+        fun onOutput(stream: String, text: String, channel: String) {
+            val kind = when (stream) {
+                "stderr" -> OutputChunk.Stream.STDERR
+                "system" -> OutputChunk.Stream.SYSTEM
+                else -> OutputChunk.Stream.STDOUT
+            }
+            emit(kind, text, channel)
+            if (kind == OutputChunk.Stream.STDERR) {
+                // Tracebacks are the single most useful thing in the debug log,
+                // but they can arrive one line per write. Buffer the burst so a
+                // traceback becomes one entry rather than a dozen.
+                bufferStderr(channel, text)
+            }
         }
 
-        fun onReadLine(): String? {
-            _status.value = _status.value.copy(awaitingInput = true)
+        fun onReadLine(channel: String): String? {
+            markAwaiting(channel, true)
             try {
+                val queue = queueFor(channel)
                 while (true) {
-                    if (stopRequested.get()) return null
-                    val line = stdinQueue.poll(150, TimeUnit.MILLISECONDS)
+                    if (cancelledChannels.remove(channel) != null) return null
+                    val line = queue.poll(150, TimeUnit.MILLISECONDS)
                     if (line != null) return line
                 }
             } catch (interrupted: InterruptedException) {
                 Thread.currentThread().interrupt()
                 return null
             } finally {
-                _status.value = _status.value.copy(awaitingInput = false)
+                markAwaiting(channel, false)
             }
         }
 
         fun onFinished(runId: Int, status: String, millis: Int) {
-            Log.d(TAG, "run $runId finished: $status in ${millis}ms")
+            DebugLog.debug(TAG, "run $runId finished: $status in ${millis}ms")
+        }
+    }
+
+    /**
+     * Collects stderr into one debug entry per burst.
+     *
+     * `sys.stderr.write` is called once per traceback by our own runner, but
+     * anything writing line by line - threading's excepthook, a third-party
+     * logger - would otherwise fill the debug console with fragments and
+     * inflate the error count. A short quiet period marks the end of a burst.
+     */
+    private fun bufferStderr(channel: String, text: String) {
+        synchronized(stderrLock) {
+            stderrBuffers.getOrPut(channel) { StringBuilder() }.append(text)
+            stderrFlushes.remove(channel)?.cancel(false)
+            stderrFlushes[channel] = stderrFlusher.schedule(
+                { flushStderr(channel) },
+                STDERR_COALESCE_MS,
+                TimeUnit.MILLISECONDS,
+            )
+        }
+    }
+
+    private fun flushStderr(channel: String) {
+        val text = synchronized(stderrLock) {
+            stderrFlushes.remove(channel)
+            stderrBuffers.remove(channel)?.toString()
+        } ?: return
+        val trimmed = text.trim()
+        if (trimmed.isEmpty()) return
+        val tag = if (channel == CONSOLE_CHANNEL) "python" else "server:$channel"
+        // The first line is the headline; a traceback's body is the detail.
+        val lines = trimmed.lineSequence().toList()
+        if (lines.size <= 1) {
+            DebugLog.error(tag, trimmed)
+        } else {
+            DebugLog.error(tag, lines.last().ifBlank { lines.first() }, trimmed)
+        }
+    }
+
+    private fun markAwaiting(channel: String, waiting: Boolean) {
+        _awaitingInput.value = _awaitingInput.value.toMutableSet().apply {
+            if (waiting) add(channel) else remove(channel)
+        }
+        if (channel == CONSOLE_CHANNEL) {
+            _status.value = _status.value.copy(awaitingInput = waiting)
         }
     }
 
@@ -142,6 +227,8 @@ object PythonEngine {
         workspaceDir = File(appContext.filesDir, "workspace").apply { mkdirs() }
         sitePackagesDir = File(appContext.filesDir, "site-packages").apply { mkdirs() }
 
+        val startedAt = System.currentTimeMillis()
+        DebugLog.info(TAG, "starting interpreter")
         try {
             if (!Python.isStarted()) {
                 Python.start(AndroidPlatform(appContext))
@@ -162,25 +249,38 @@ object PythonEngine {
             val short = version.trim().split(" ").firstOrNull().orEmpty()
             _status.value = EngineStatus(ready = true, pythonVersion = short)
             emit(OutputChunk.Stream.SYSTEM, "Python $short ready. Type code and press Run.\n")
+            DebugLog.info(
+                TAG,
+                "interpreter ready in ${System.currentTimeMillis() - startedAt}ms",
+                "Python $short",
+            )
         } catch (error: Throwable) {
-            Log.e(TAG, "interpreter failed to start", error)
             _status.value = EngineStatus(
                 ready = false,
                 startupError = error.message ?: error.javaClass.simpleName,
             )
             emit(OutputChunk.Stream.STDERR, "Interpreter failed to start: ${error.message}\n")
+            DebugLog.error(TAG, "interpreter failed to start", error)
         }
         _status.value
     }
 
-    private fun emit(stream: OutputChunk.Stream, text: String) {
+    private fun emit(
+        stream: OutputChunk.Stream,
+        text: String,
+        channel: String = CONSOLE_CHANNEL,
+    ) {
         if (text.isEmpty()) return
-        // emit() is reached from the Python thread and the UI thread alike.
-        _output.tryEmit(OutputChunk(stream, text, chunkId.incrementAndGet()))
+        // emit() is reached from the Python threads and the UI thread alike.
+        _output.tryEmit(OutputChunk(stream, text, chunkId.incrementAndGet(), channel))
     }
 
-    /** Echo something into the console without going through Python. */
-    fun echo(text: String, stream: OutputChunk.Stream = OutputChunk.Stream.SYSTEM) = emit(stream, text)
+    /** Echo something into a channel without going through Python. */
+    fun echo(
+        text: String,
+        stream: OutputChunk.Stream = OutputChunk.Stream.SYSTEM,
+        channel: String = CONSOLE_CHANNEL,
+    ) = emit(stream, text, channel)
 
     // ------------------------------------------------------------------
     // Running code
@@ -189,13 +289,14 @@ object PythonEngine {
     /**
      * Runs [source] and suspends until it completes.
      *
-     * Because every Python call shares one thread, a second run can only begin
-     * once the first has returned — which is the behaviour a console wants.
+     * Because every ordinary Python call shares one thread, a second run can
+     * only begin once the first has returned — which is the behaviour a console
+     * wants.
      */
     suspend fun run(source: String, sourceName: String = "<console>", echoResult: Boolean = true): String {
         if (!_status.value.ready) return "error"
-        stopRequested.set(false)
-        stdinQueue.clear()
+        cancelledChannels.remove(CONSOLE_CHANNEL)
+        queueFor(CONSOLE_CHANNEL).clear()
         _status.value = _status.value.copy(running = true)
         return try {
             withContext(pythonDispatcher) {
@@ -203,6 +304,7 @@ object PythonEngine {
             }
         } catch (error: Throwable) {
             emit(OutputChunk.Stream.STDERR, "Internal error: ${error.message}\n")
+            DebugLog.error(TAG, "run failed", error)
             "error"
         } finally {
             _status.value = _status.value.copy(running = false, awaitingInput = false)
@@ -212,13 +314,14 @@ object PythonEngine {
 
     suspend fun runFile(path: String): String {
         if (!_status.value.ready) return "error"
-        stopRequested.set(false)
-        stdinQueue.clear()
+        cancelledChannels.remove(CONSOLE_CHANNEL)
+        queueFor(CONSOLE_CHANNEL).clear()
         _status.value = _status.value.copy(running = true)
         return try {
             withContext(pythonDispatcher) { runtime.callAttr("run_file", path).toString() }
         } catch (error: Throwable) {
             emit(OutputChunk.Stream.STDERR, "Internal error: ${error.message}\n")
+            DebugLog.error(TAG, "run_file failed: $path", error)
             "error"
         } finally {
             _status.value = _status.value.copy(running = false, awaitingInput = false)
@@ -227,33 +330,35 @@ object PythonEngine {
     }
 
     /**
-     * Asks the running code to stop.
+     * Asks the console's running code to stop.
      *
-     * This does not go through [pythonDispatcher] — that thread is busy running
-     * the user's code, so a queued call would never arrive. Setting the flag
-     * from here is what makes Stop responsive.
+     * Never goes through [pythonDispatcher] — that thread is busy running the
+     * user's code, so a queued call would never arrive.
      */
     fun requestStop() {
-        stopRequested.set(true)
-        stdinQueue.clear()
+        cancelledChannels[CONSOLE_CHANNEL] = true
+        queueFor(CONSOLE_CHANNEL).clear()
         if (!_status.value.ready) return
+        DebugLog.info(TAG, "stop requested")
         controlExecutor.execute {
             runCatching { runtime.callAttr("request_stop") }
-                .onFailure { Log.w(TAG, "stop request failed", it) }
+                .onFailure { DebugLog.warn(TAG, "stop request failed", it.stackTraceToString()) }
         }
     }
 
-    /** Feeds a line to a waiting `input()` call. */
-    fun submitInput(line: String) {
-        emit(OutputChunk.Stream.INPUT, line + "\n")
-        if (!stdinQueue.offer(line + "\n")) {
-            emit(OutputChunk.Stream.STDERR, "Input buffer is full; nothing is reading stdin.\n")
+    /** Feeds a line to a waiting `input()` on the given channel. */
+    fun submitInput(line: String, channel: String = CONSOLE_CHANNEL) {
+        emit(OutputChunk.Stream.INPUT, line + "\n", channel)
+        if (!queueFor(channel).offer(line + "\n")) {
+            emit(OutputChunk.Stream.STDERR, "Input buffer is full; nothing is reading stdin.\n", channel)
         }
     }
 
     suspend fun resetNamespace() = withContext(pythonDispatcher) {
         runCatching { runtime.callAttr("reset_namespace") }
+            .onFailure { DebugLog.error(TAG, "namespace reset failed", it) }
         emit(OutputChunk.Stream.SYSTEM, "Namespace cleared.\n")
+        DebugLog.info(TAG, "namespace cleared")
     }
 
     suspend fun completions(prefix: String): List<String> = withContext(pythonDispatcher) {
@@ -278,6 +383,7 @@ object PythonEngine {
     suspend fun installPackage(name: String, version: String?, onProgress: (String) -> Unit): PackageResult =
         withContext(pythonDispatcher) {
             if (!_status.value.ready) return@withContext PackageResult(false, error = "Interpreter is not ready.")
+            DebugLog.info(TAG, "installing $name${version?.let { "==$it" } ?: ""}")
             runCatching {
                 val result = packages.callAttr(
                     "install",
@@ -286,13 +392,21 @@ object PythonEngine {
                     ProgressSink(onProgress),
                 ).asMap()
                 result.toPackageResult()
-            }.getOrElse { PackageResult(false, error = it.friendlyMessage()) }
+            }.getOrElse {
+                DebugLog.error(TAG, "install of $name failed", it)
+                PackageResult(false, error = it.friendlyMessage())
+            }.also {
+                if (!it.ok) DebugLog.warn(TAG, "install of $name failed: ${it.error}")
+            }
         }
 
     suspend fun uninstallPackage(name: String): PackageResult = withContext(pythonDispatcher) {
         if (!_status.value.ready) return@withContext PackageResult(false, error = "Interpreter is not ready.")
         runCatching { packages.callAttr("uninstall", name).asMap().toPackageResult() }
-            .getOrElse { PackageResult(false, error = it.friendlyMessage()) }
+            .getOrElse {
+                DebugLog.error(TAG, "uninstall of $name failed", it)
+                PackageResult(false, error = it.friendlyMessage())
+            }
     }
 
     suspend fun installedPackages(): List<InstalledPackage> = withContext(pythonDispatcher) {
@@ -320,46 +434,112 @@ object PythonEngine {
     // Servers
     // ------------------------------------------------------------------
 
-    suspend fun startFileServer(directory: String, port: Int): ServerActionResult =
-        withContext(pythonDispatcher) {
-            if (!_status.value.ready) return@withContext ServerActionResult(false, "Interpreter is not ready.")
-            runCatching {
-                val map = servers.callAttr("start_file_server", directory, port).asMap()
-                if (map.str("ok") == "True") {
-                    ServerActionResult(true, url = map.str("url"))
-                } else {
-                    ServerActionResult(false, map.str("error"))
-                }
-            }.getOrElse { ServerActionResult(false, it.friendlyMessage()) }
-        }.also { refreshServerCount() }
-
-    suspend fun startScriptServer(path: String, port: Int, label: String): ServerActionResult =
-        withContext(pythonDispatcher) {
-            if (!_status.value.ready) return@withContext ServerActionResult(false, "Interpreter is not ready.")
-            runCatching {
-                val map = servers.callAttr("start_script", path, port, label).asMap()
-                if (map.str("ok") == "True") {
-                    ServerActionResult(true, url = map.str("url"))
-                } else {
-                    ServerActionResult(false, map.str("error"))
-                }
-            }.getOrElse { ServerActionResult(false, it.friendlyMessage()) }
-        }.also { refreshServerCount() }
-
-    suspend fun stopServer(handle: String): ServerActionResult = withContext(pythonDispatcher) {
+    suspend fun startStaticServer(
+        directory: String,
+        port: Int,
+        host: String,
+        label: String,
+        logRequests: Boolean,
+    ): ServerActionResult = withContext(pythonDispatcher) {
         if (!_status.value.ready) return@withContext ServerActionResult(false, "Interpreter is not ready.")
+        DebugLog.info(TAG, "starting static server on $host:$port", directory)
+        runCatching {
+            servers.callAttr("start_static", directory, port, host, label, logRequests)
+                .asMap().toServerActionResult()
+        }.getOrElse {
+            DebugLog.error(TAG, "static server failed to start", it)
+            ServerActionResult(false, it.friendlyMessage())
+        }
+    }.also { logServerResult("static", it); refreshServerCount() }
+
+    suspend fun startScriptServer(
+        path: String,
+        port: Int,
+        host: String,
+        label: String,
+    ): ServerActionResult = withContext(pythonDispatcher) {
+        if (!_status.value.ready) return@withContext ServerActionResult(false, "Interpreter is not ready.")
+        DebugLog.info(TAG, "starting script server on port $port", path)
+        runCatching {
+            servers.callAttr("start_script", path, port, host, label)
+                .asMap().toServerActionResult()
+        }.getOrElse {
+            DebugLog.error(TAG, "script server failed to start", it)
+            ServerActionResult(false, it.friendlyMessage())
+        }
+    }.also { logServerResult("script", it); refreshServerCount() }
+
+    private fun logServerResult(kind: String, result: ServerActionResult) {
+        if (result.ok) {
+            DebugLog.info(TAG, "$kind server ${result.handle} started", result.url)
+        } else {
+            DebugLog.warn(TAG, "$kind server refused to start", result.error)
+        }
+    }
+
+    /** Graceful stop. Runs off the main Python thread so it works while it is busy. */
+    suspend fun stopServer(handle: String): ServerActionResult = withContext(controlDispatcher) {
+        if (!_status.value.ready) return@withContext ServerActionResult(false, "Interpreter is not ready.")
+        DebugLog.info(TAG, "stopping server $handle")
         runCatching {
             val map = servers.callAttr("stop", handle).asMap()
-            if (map.str("ok") == "True") ServerActionResult(true) else ServerActionResult(false, map.str("error"))
-        }.getOrElse { ServerActionResult(false, it.friendlyMessage()) }
+            ServerActionResult(
+                ok = map.str("ok") == "True",
+                error = map.str("error"),
+                needsKill = map.str("needs_kill") == "True",
+            )
+        }.getOrElse {
+            DebugLog.error(TAG, "stop of $handle failed", it)
+            ServerActionResult(false, it.friendlyMessage())
+        }
     }.also { refreshServerCount() }
 
-    suspend fun stopAllServers(): Int = withContext(pythonDispatcher) {
+    /**
+     * The kill switch.
+     *
+     * Frees the port, raises SystemExit inside the server's thread, and stops
+     * tracking it either way, so a thread wedged in a blocking call can never
+     * hold the UI or the port hostage.
+     */
+    suspend fun killServer(handle: String): ServerActionResult = withContext(controlDispatcher) {
+        if (!_status.value.ready) return@withContext ServerActionResult(false, "Interpreter is not ready.")
+        DebugLog.warn(TAG, "killing server $handle")
+        cancelledChannels[handle] = true
+        runCatching {
+            val map = servers.callAttr("kill", handle).asMap()
+            ServerActionResult(
+                ok = map.str("ok") == "True",
+                error = map.str("error"),
+                detached = map.str("detached") == "True",
+            )
+        }.getOrElse {
+            DebugLog.error(TAG, "kill of $handle failed", it)
+            ServerActionResult(false, it.friendlyMessage())
+        }
+    }.also { refreshServerCount() }
+
+    suspend fun stopAllServers(): Int = withContext(controlDispatcher) {
         if (!_status.value.ready) return@withContext 0
-        runCatching { servers.callAttr("stop_all").toInt() }.getOrDefault(0)
+        runCatching { servers.callAttr("stop_all").asMap().str("stopped").toIntOrNull() ?: 0 }
+            .getOrElse {
+                DebugLog.error(TAG, "stop_all failed", it)
+                0
+            }
     }.also { refreshServerCount() }
 
-    suspend fun listServers(): List<RunningServer> = withContext(pythonDispatcher) {
+    /** Panic button: force every server down regardless of state. */
+    suspend fun killAllServers(): Int = withContext(controlDispatcher) {
+        if (!_status.value.ready) return@withContext 0
+        DebugLog.warn(TAG, "killing every server")
+        cancelledChannels.clear()
+        runCatching { servers.callAttr("kill_all").asMap().str("killed").toIntOrNull() ?: 0 }
+            .getOrElse {
+                DebugLog.error(TAG, "kill_all failed", it)
+                0
+            }
+    }.also { refreshServerCount() }
+
+    suspend fun listServers(): List<RunningServer> = withContext(controlDispatcher) {
         if (!_status.value.ready) return@withContext emptyList()
         runCatching {
             servers.callAttr("listing").asList().map { row ->
@@ -367,24 +547,53 @@ object PythonEngine {
                 RunningServer(
                     handle = map.str("handle"),
                     label = map.str("label"),
+                    kind = map.str("kind"),
                     port = map.str("port").toIntOrNull() ?: 0,
+                    host = map.str("host"),
                     status = map.str("status"),
                     url = map.str("url"),
                     error = map.str("error"),
+                    target = map.str("target"),
+                    uptimeSeconds = map.str("uptime").toIntOrNull() ?: 0,
+                    requests = map.str("requests").toIntOrNull() ?: 0,
                 )
+            }
+        }.getOrElse {
+            DebugLog.error(TAG, "server listing failed", it)
+            emptyList()
+        }
+    }
+
+    /** Replays a server's own log, so reopening its console is not blank. */
+    suspend fun serverLog(handle: String): List<OutputChunk> = withContext(controlDispatcher) {
+        if (!_status.value.ready) return@withContext emptyList()
+        runCatching {
+            servers.callAttr("log_lines", handle).asList().map { row ->
+                val map = row.asMap()
+                val stream = when (map.str("stream")) {
+                    "stderr" -> OutputChunk.Stream.STDERR
+                    "system" -> OutputChunk.Stream.SYSTEM
+                    else -> OutputChunk.Stream.STDOUT
+                }
+                OutputChunk(stream, map.str("text"), chunkId.incrementAndGet(), handle)
             }
         }.getOrDefault(emptyList())
     }
 
-    suspend fun localIp(): String = withContext(pythonDispatcher) {
+    suspend fun suggestPort(from: Int): Int = withContext(controlDispatcher) {
+        if (!_status.value.ready) return@withContext from
+        runCatching { servers.callAttr("suggest_port", from).toInt() }.getOrDefault(from)
+    }
+
+    suspend fun localIp(): String = withContext(controlDispatcher) {
         if (!_status.value.ready) return@withContext "127.0.0.1"
         runCatching { servers.callAttr("local_ip").toString() }.getOrDefault("127.0.0.1")
     }
 
-    /** Queues the refresh onto the Python thread; never blocks the caller. */
+    /** Queues the refresh onto a control thread; never blocks the caller. */
     private fun refreshServerCount() {
         if (!_status.value.ready) return
-        pythonExecutor.execute {
+        controlExecutor.execute {
             runCatching { _serverCount.value = servers.callAttr("count").toInt() }
         }
     }
@@ -407,16 +616,33 @@ data class InstalledPackage(
 data class RunningServer(
     val handle: String,
     val label: String,
+    val kind: String,
     val port: Int,
+    val host: String,
     val status: String,
     val url: String,
     val error: String,
-)
+    val target: String,
+    val uptimeSeconds: Int,
+    val requests: Int,
+) {
+    val isRunning: Boolean get() = status == "running"
+
+    val readableUptime: String
+        get() = when {
+            uptimeSeconds < 60 -> "${uptimeSeconds}s"
+            uptimeSeconds < 3600 -> "${uptimeSeconds / 60}m ${uptimeSeconds % 60}s"
+            else -> "${uptimeSeconds / 3600}h ${(uptimeSeconds % 3600) / 60}m"
+        }
+}
 
 data class ServerActionResult(
     val ok: Boolean,
     val error: String = "",
     val url: String = "",
+    val handle: String = "",
+    val needsKill: Boolean = false,
+    val detached: Boolean = false,
 )
 
 /** Chaquopy maps are `Map<PyObject, PyObject>`; missing keys must read as empty. */
@@ -429,6 +655,14 @@ private fun Map<PyObject, PyObject>.toPackageResult(): PackageResult =
         name = str("name"),
         version = str("version"),
         error = str("error"),
+    )
+
+private fun Map<PyObject, PyObject>.toServerActionResult(): ServerActionResult =
+    ServerActionResult(
+        ok = str("ok") == "True",
+        error = str("error"),
+        url = str("url"),
+        handle = str("handle"),
     )
 
 /** Chaquopy wraps Python exceptions; the raw message is long and noisy. */

@@ -11,6 +11,8 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -19,6 +21,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -42,7 +47,12 @@ fun EditorScreen(
     onSave: () -> Unit,
     onNew: () -> Unit,
     modifier: Modifier = Modifier,
+    onSaveAs: () -> Unit = {},
+    onRunAsServer: () -> Unit = {},
+    onOpenDebug: () -> Unit = {},
+    onCopyAll: (String) -> Unit = {},
 ) {
+    var menuOpen by remember { mutableStateOf(false) }
     val currentContent by rememberUpdatedState(state.content)
     val currentEpoch by rememberUpdatedState(state.epoch)
 
@@ -130,6 +140,29 @@ fun EditorScreen(
                     tint = if (ready) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline,
                 )
             }
+
+            Box {
+                IconButton(onClick = { menuOpen = true }) {
+                    Icon(
+                        PyIcons.MoreVert,
+                        contentDescription = "Commands",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                    EditorCommand("Run", PyIcons.PlayArrow) { menuOpen = false; onRun() }
+                    EditorCommand("Run as a server", PyIcons.Dns) { menuOpen = false; onRunAsServer() }
+                    EditorCommand("Save", PyIcons.Save) { menuOpen = false; onSave() }
+                    EditorCommand("Save as...", PyIcons.NoteAdd) { menuOpen = false; onSaveAs() }
+                    EditorCommand("Copy all", PyIcons.ContentCopy) {
+                        menuOpen = false
+                        onCopyAll(state.content)
+                    }
+                    EditorCommand("Undo", PyIcons.Undo) { menuOpen = false; host.eval("PyEditor.undo();") }
+                    EditorCommand("Redo", PyIcons.Redo) { menuOpen = false; host.eval("PyEditor.redo();") }
+                    EditorCommand("Debug console", PyIcons.BugReport) { menuOpen = false; onOpenDebug() }
+                }
+            }
         }
 
         Divider()
@@ -173,4 +206,24 @@ private fun EditorToolButton(
             modifier = Modifier.size(19.dp),
         )
     }
+}
+
+@Composable
+private fun EditorCommand(
+    label: String,
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    onClick: () -> Unit,
+) {
+    DropdownMenuItem(
+        text = { Text(label) },
+        leadingIcon = {
+            Icon(
+                icon,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.size(18.dp),
+            )
+        },
+        onClick = onClick,
+    )
 }
