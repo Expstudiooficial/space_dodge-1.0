@@ -27,8 +27,17 @@ first launch, covering the console, the editor, packages and servers.
 **Packages** — install pure-Python libraries from PyPI onto the device at
 runtime. `requests`, `flask` and `rich` are already built in.
 
-**Servers** — serve a folder over your Wi-Fi network, or run a script that
-listens on a port, and keep it alive in the background while you use other apps.
+**Servers** — a launch form: serve a folder or run a script, pick the port
+(with a "free one" button that finds an unused one), name it, choose whether it
+is reachable on Wi-Fi or loopback only. Every server gets its own console with
+its own scrollback and its own stdin box, and a **Kill** switch beside Stop for
+when a script hangs before it ever finishes starting. Servers stay alive in the
+background while you use other apps.
+
+**Debug console** — one tap from anywhere in the top bar. Interpreter
+lifecycle, server events, package installs, file errors, WebView JavaScript
+errors and uncaught Java exceptions, with level filters, text search,
+expandable stack traces, copy-all and save-to-workspace.
 
 ---
 
@@ -115,12 +124,17 @@ WebViews render, the editor highlights Python and reports the caret position
 back through the JS bridge, and pressing Run executes the buffer and streams
 its output into the console.
 
-That is a long way from exhaustive. The emulator ran under software
-translation with no hardware acceleration, so nothing about performance there
-means anything, and the tabs beyond Console and Editor were only opened, not
-exercised. Installing a package, serving a folder over Wi-Fi, and the
-background-server notification have been tested only against host CPython, not
-on a device.
+The Servers tab was then driven end to end on the same emulator: choosing a
+folder through the Files picker, launching it, confirming at the OS level that
+the port was in `LISTEN`, fetching a real directory listing over HTTP through
+an adb forward (200, with both requests appearing in that server's console),
+then pressing Kill and confirming the port was released.
+
+That is still not exhaustive. The emulator ran under software translation with
+no hardware acceleration, so nothing about performance there means anything.
+Installing a package from PyPI, reaching a server from another device over
+real Wi-Fi, and the background-server notification have been tested only
+against host CPython, not on a device.
 
 ---
 
@@ -128,18 +142,23 @@ on a device.
 
 ```
 Compose UI  ──┬── ConsoleScreen ──┐
-              ├── EditorScreen  ──┤     WebViews (assets/web/*.js)
-              ├── FilesScreen     │     console + ANSI renderer, code editor
+              ├── EditorScreen  ──┤   WebViews (assets/web/*.js)
+              ├── FilesScreen     │   console + ANSI renderer, code editor
               ├── PackagesScreen  │
-              └── ServersScreen ──┘
+              ├── ServersScreen   │   launch form + one console per server
+              └── DebugScreen ────┘   DebugLog (util/)
                      │
               MainViewModel
                      │
-              PythonEngine (Kotlin)  ── one dedicated thread
+              PythonEngine (Kotlin)
+                     │
+       python-main ──┴── python-control      one interpreter thread, plus a
+       runs code         stops and kills     second so stop/kill always land
                      │
        ┌─────────────┼──────────────┐
   pycmd_runtime  pycmd_packages  pycmd_servers      (src/main/python/*.py)
    execution      wheel installs   background listeners
+   + channels                      + kill switch
                      │
               CPython 3.13 (Chaquopy)
 ```
@@ -172,6 +191,18 @@ five complete icon styles and accounted for 13.7 MB of the 24 MB dex - over half
 - to supply the twenty-nine glyphs this app draws. A debug build does no
 shrinking, so all of that rode along into the download. `ui/PyIcons.kt` defines
 those twenty-nine as Material path data instead.
+
+**Output is channelled.** `sys.stdout` is one global object, so a server
+running on its own thread would otherwise print into the main console. Every
+write is tagged with the channel registered for the writing thread, and each
+channel has its own stdin queue — which is what lets a server prompt for input
+without stealing what you typed into the console.
+
+**Stop and kill run off the interpreter thread.** Queued behind the code they
+are trying to stop, they would never arrive, and that is precisely when they
+are needed. Stop asks the server to close and waits; Kill closes the socket
+(freeing the port even if the thread is wedged in a blocking call), raises
+`SystemExit` inside the thread, and stops tracking it either way.
 
 **Both WebViews outlive their tab.** They are created once and re-attached on
 each tab switch, so console history and editor scroll position survive. The
@@ -211,8 +242,9 @@ app/src/main/
     python/
       PythonEngine.kt        the interpreter bridge and its threading
       ServerService.kt       foreground service that keeps servers alive
-    ui/                      Compose screens, theme, WebView hosting
+    ui/                      Compose screens, theme, WebView hosting, icons
     util/Workspace.kt        file operations, all confined to the workspace
+    util/DebugLog.kt         the process-wide record behind the debug console
   python/
     pycmd_runtime.py         execution, streams, interrupt, completions
     pycmd_packages.py        on-device wheel installs

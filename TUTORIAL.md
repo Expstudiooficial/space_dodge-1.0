@@ -91,7 +91,7 @@ What's in there, and why:
 | `system_info.py` | Reads real device info back through Python |
 | `text_adventure.py` | Several `input()` calls in a row |
 | `quiz.py` | A scored quiz — more `input()`, with feedback per answer |
-| `loop_forever.py` | Runs forever until you tap **Stop** — try it |
+| `loop_forever.py` | Runs forever until you tap **Stop** — and a good Kill test as a script server |
 | `todo_list.py` | Reads/writes a file in your workspace — run it twice, watch the list grow |
 | `requests_demo.py` | Uses the network (needs Wi-Fi or data) |
 | `rich_demo.py` | Colour and a table, rendered properly in the console |
@@ -146,21 +146,73 @@ Python packages (the vast majority of PyPI) install fine.
 
 ## 5. Servers — serve something over your own Wi-Fi
 
-Tap **Servers**. Tap **Serve folder**, accept the default port `8000`, tap
-**Start**. You'll get an address like `http://192.168.1.42:8000/`.
+Tap **Servers**. The form at the top is the whole thing:
 
-On **any other device on the same Wi-Fi** — another phone, a laptop — open
-that address in a browser. You'll see the files in your PyCmd workspace,
-served live from your phone.
+1. Pick **Serve a folder** or **Run a script**.
+2. Tap **Choose**. You land in Files with a banner. For a folder, open the one
+   you want and tap **Use this folder**; for a script, just tap the `.py` file.
+3. Set the **port** — 8000 is fine. If it is taken, **Free one** finds the next
+   one that isn't.
+4. Optionally name it, and decide whether it is reachable on Wi-Fi or only on
+   the phone itself.
+5. Press **Run**.
 
-Switch to another app on the phone (home screen, a browser) — the server
-keeps running. You'll see an ongoing notification; that's what stops Android
-from killing the app in the background. Come back to Servers and tap **Stop**
-when you're done.
+Run stays greyed out until the form makes sense, and tells you what is missing
+underneath.
 
-**Try the Flask example too:** open `flask_api.py` from Files, run it, then
-visit `http://<your-phone-ip>:5000/` from another device — it's a small
-JSON API, not just static files.
+You land straight in that server's own **console**. It shows what the server
+printed, and with "Log each request" on you will see every hit as it happens:
+
+```
+Serving /data/.../workspace
+Listening on http://192.168.1.42:8000/
+192.168.1.58  "GET / HTTP/1.1" 200 -
+```
+
+Open that address from any other device on the same Wi-Fi and you will see your
+workspace. Tap the copy icon in the console header to grab the URL.
+
+The box at the bottom sends a line to the server's **stdin** — so a script that
+calls `input()` is actually usable while it runs.
+
+### Stop vs Kill
+
+**Stop** asks the server to close and waits a few seconds. That is the normal
+way to end one.
+
+**Kill** is for when Stop cannot help — a script that hangs before it finishes
+starting, or one that swallows interrupts. It closes the socket (freeing the
+port even if the thread is stuck), forces the thread down, and stops tracking
+it either way. Your port comes back regardless.
+
+Try it: run `loop_forever.py` as a script server, then Kill it.
+
+**Kill all** at the top of the list is the panic button, behind a confirmation.
+
+**Try the Flask example:** set **Run a script**, choose `flask_api.py`, set the
+port to 5000, Run. Then visit `http://<your-phone-ip>:5000/` from another
+device — a JSON API, served from your phone.
+
+---
+
+## 6. Debug console — when something breaks
+
+Tap the **bug icon** in the top bar, from any tab. This is not your script's
+output — it is everything around it: interpreter startup, server lifecycles,
+package installs, file errors, JavaScript errors inside the editor, and any
+crash.
+
+- The chips filter by level. Tap **Error** to see only what actually failed.
+- The box above searches text and tags.
+- Tap an entry with "tap for detail" to expand its stack trace.
+- The icons copy the whole log, save it into your workspace as a `.log` file,
+  or clear it.
+
+A red badge on the bug icon is the number of errors waiting. On a healthy
+start-up it should read three entries and no errors.
+
+If you hit a bug worth reporting, save the log and send that — it is far more
+useful than a description.
 
 ---
 

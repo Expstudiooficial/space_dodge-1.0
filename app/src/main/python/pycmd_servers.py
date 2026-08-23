@@ -220,6 +220,11 @@ def start_static(
         _log(entry, "system", f"Listening on {entry.as_dict()['url']}\n")
         try:
             httpd.serve_forever(poll_interval=0.4)
+        except (KeyboardInterrupt, SystemExit):
+            # A stop or a kill landing in the serve loop. Expected, and the
+            # user pressed the button - printing a traceback would make a
+            # deliberate shutdown look like a crash.
+            pass
         except BaseException as exc:  # noqa: BLE001 - surfaced in the server log
             entry.status = "error"
             entry.error = f"{type(exc).__name__}: {exc}"
