@@ -140,3 +140,19 @@ dependencies {
     androidTestImplementation(libs.androidx.espresso.core)
     androidTestImplementation(platform(libs.androidx.compose.bom))
 }
+
+/**
+ * Keeps the in-app copies of the documentation in step with the real ones.
+ *
+ * The app shows README, TUTORIAL and PLUGINS on the phone, and an asset copy
+ * that drifts from the file people read on GitHub is worse than no copy: one
+ * of the two is then lying. Copying at build time means there is one source.
+ */
+val syncDocs by tasks.registering(Copy::class) {
+    from(rootProject.file("README.md"))
+    from(rootProject.file("TUTORIAL.md"))
+    from(rootProject.file("PLUGINS.md"))
+    into(layout.projectDirectory.dir("src/main/assets/docs"))
+}
+
+tasks.named("preBuild") { dependsOn(syncDocs) }

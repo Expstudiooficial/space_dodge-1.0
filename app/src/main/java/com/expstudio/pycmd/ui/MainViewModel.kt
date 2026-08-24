@@ -32,8 +32,10 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /**
  * Which screen is showing.
@@ -55,6 +57,8 @@ enum class Tab(val label: String) {
     DEBUG("Debug"),
     TOOL("Tool"),
     PLUGIN_PANEL("Plugin"),
+    DOCS("Guides"),
+    SYSTEM("System"),
 }
 
 /** The five destinations in the bottom bar; the rest live behind More. */
@@ -422,6 +426,100 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    private val _system = MutableStateFlow(SystemInfo())
+    val system: StateFlow<SystemInfo> = _system.asStateFlow()
+
+    private val _systemBusy = MutableStateFlow("")
+    val systemBusy: StateFlow<String> = _systemBusy.asStateFlow()
+
+    /**
+     * Measures what the app is using.
+     *
+     * Walking the whole of private storage is not free, so it happens when the
+     * screen is opened and when the user asks, never on a timer.
+     */
+    fun refreshSystem() {
+        viewModelScope.launch {
+            _systemBusy.value = "Measuring..."
+            _system.value = withContext(Dispatchers.IO) { measureSystem() }
+            _systemBusy.value = ""
+        }
+    }
+
+    private fun measureSystem(): SystemInfo {
+        val context = getApplication<Application>()
+        val files = context.filesDir
+        val workspace = File(files, "workspace")
+        val packages = File(files, "site-packages")
+        val downloads = File(files, "downloads")
+        val plugins = File(files, "plugins")
+        val cache = context.cacheDir
+
+        val version = runCatching {
+            val info = context.packageManager.getPackageInfo(context.packageName, 0)
+            "${info.versionName} (${@Suppress("DEPRECATION") info.versionCode})"
+        }.getOrDefault("")
+
+        return SystemInfo(
+            pythonVersion = engine.status.value.pythonVersion,
+            appVersion = version,
+            abi = android.os.Build.SUPPORTED_ABIS.firstOrNull().orEmpty(),
+            androidVersion = "${android.os.Build.VERSION.RELEASE} " +
+                "(API ${android.os.Build.VERSION.SDK_INT})",
+            device = "${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL}",
+            workspaceBytes = folderSize(workspace),
+            workspaceFiles = countFiles(workspace),
+            packagesBytes = folderSize(packages),
+            downloadsBytes = folderSize(downloads),
+            pluginBytes = folderSize(plugins),
+            cacheBytes = folderSize(cache),
+            cacheFiles = countFiles(cache),
+            freeBytes = runCatching { files.usableSpace }.getOrDefault(0L),
+            servers = engine.serverCount.value,
+            plugins = CustomPlugins.installed.value.count { it.loaded },
+            threads = Thread.activeCount(),
+        )
+    }
+
+    private fun folderSize(root: File): Long =
+        root.walkTopDown().filter { it.isFile }.sumOf { it.length() }
+
+    private fun countFiles(root: File): Int =
+        root.walkTopDown().count { it.isFile }
+
+    fun clearCache() {
+        viewModelScope.launch {
+            _systemBusy.value = "Clearing..."
+            val freed = withContext(Dispatchers.IO) {
+                val cache = getApplication<Application>().cacheDir
+                val before = folderSize(cache)
+                cache.listFiles()?.forEach { it.deleteRecursively() }
+                before - folderSize(cache)
+            }
+            _systemBusy.value = ""
+            showToast("Freed ${freed / 1024} KB")
+            refreshSystem()
+        }
+    }
+
+    fun clearPycache() {
+        viewModelScope.launch {
+            _systemBusy.value = "Clearing..."
+            val removed = withContext(Dispatchers.IO) {
+                var count = 0
+                workspace.root.walkTopDown()
+                    .filter { it.isDirectory && it.name == "__pycache__" }
+                    .toList()
+                    .forEach { if (it.deleteRecursively()) count += 1 }
+                count
+            }
+            _systemBusy.value = ""
+            showToast(if (removed == 0) "Nothing to clear" else "Removed $removed __pycache__ folders")
+            refreshFiles(_files.value.directory ?: workspace.root)
+            refreshSystem()
+        }
+    }
+
     private val _pluginCandidates = MutableStateFlow<List<File>>(emptyList())
 
     /** Plugins sitting in the workspace, which the system picker cannot see. */
@@ -605,6 +703,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun selectTab(tab: Tab) {
+        // Measuring storage walks the whole of private storage, so it happens
+        // when the screen is asked for rather than on a timer.
+        if (tab == Tab.SYSTEM) refreshSystem()
+        if (tab == Tab.PLUGINS) refreshCustomPlugins(reload = false)
         _tab.value = tab
         when (tab) {
             Tab.FILES -> refreshFiles(_files.value.directory ?: workspace.root)
@@ -643,7 +745,33 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun submitStdin(line: String) = engine.submitInput(line)
+    /**
+     * A line typed into the console.
+     *
+     * If the app offered a fix and this is the yes or no, it answers that
+     * rather than becoming input for a program - and anything else falls
+     * through untouched, because a script waiting on `input()` may well want
+     * the word "yes" itself.
+     */
+    fun submitStdin(line: String) {
+        viewModelScope.launch {
+            val reply = engine.answerFix(CONSOLE_CHANNEL, line)
+            if (reply.optBoolean("handled")) {
+                applyFixSideEffects(reply)
+                return@launch
+            }
+            engine.submitInput(line)
+        }
+    }
+
+    /** A port fix has to move the launcher form; the rest are done in Python. */
+    private fun applyFixSideEffects(reply: JSONObject) {
+        val port = reply.optString("port").toIntOrNull() ?: return
+        _servers.value = _servers.value.copy(
+            form = _servers.value.form.copy(port = port.toString()),
+        )
+        showToast("Launcher moved to port $port")
+    }
 
     fun stopExecution() {
         engine.requestStop()
@@ -1209,7 +1337,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun submitServerInput(handle: String, line: String) {
-        engine.submitInput(line, handle)
+        viewModelScope.launch {
+            val reply = engine.answerFix(handle, line)
+            if (reply.optBoolean("handled")) {
+                applyFixSideEffects(reply)
+                return@launch
+            }
+            engine.submitInput(line, handle)
+        }
     }
 
     fun clearServerConsole(handle: String) {

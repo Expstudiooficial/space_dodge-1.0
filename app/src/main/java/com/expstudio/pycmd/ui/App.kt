@@ -87,6 +87,8 @@ fun PyCmdRoot(viewModel: MainViewModel = viewModel()) {
     val pluginBusy by viewModel.pluginBusy.collectAsState()
     val pluginCandidates by viewModel.pluginCandidates.collectAsState()
     val openPanel by viewModel.openPanel.collectAsState()
+    val systemInfo by viewModel.system.collectAsState()
+    val systemBusy by viewModel.systemBusy.collectAsState()
 
     // Picking a plugin from outside the app: one launcher for a file or zip,
     // one for a whole folder. Both are only reached after the warning dialog.
@@ -172,7 +174,10 @@ fun PyCmdRoot(viewModel: MainViewModel = viewModel()) {
             return@BackHandler
         }
         // A destination reached through More goes back to More first.
-        val parent = if (tab in setOf(Tab.PACKAGES, Tab.DOWNLOADS, Tab.PLUGINS)) {
+        val parent = if (tab in setOf(
+                Tab.PACKAGES, Tab.DOWNLOADS, Tab.PLUGINS, Tab.DOCS, Tab.SYSTEM,
+            )
+        ) {
             Tab.MORE
         } else {
             Tab.CONSOLE
@@ -288,7 +293,7 @@ fun PyCmdRoot(viewModel: MainViewModel = viewModel()) {
                     // that one of them is the current screen.
                     forceSelected = tab in setOf(
                         Tab.PACKAGES, Tab.DOWNLOADS, Tab.PLUGINS, Tab.TOOL,
-                        Tab.PLUGIN_PANEL,
+                        Tab.PLUGIN_PANEL, Tab.DOCS, Tab.SYSTEM,
                     ),
                 )
             }
@@ -389,6 +394,20 @@ fun PyCmdRoot(viewModel: MainViewModel = viewModel()) {
                         copyToClipboard(context, text)
                         viewModel.showToast("Copied $text")
                     },
+                )
+
+                Tab.DOCS -> DocsScreen(
+                    languages = languages,
+                    onOpen = { asset, title -> viewModel.openGuide(asset, title) },
+                )
+
+                Tab.SYSTEM -> SystemScreen(
+                    info = systemInfo,
+                    busy = systemBusy,
+                    onRefresh = viewModel::refreshSystem,
+                    onClearCache = viewModel::clearCache,
+                    onClearPycache = viewModel::clearPycache,
+                    onExportLog = viewModel::saveDebugLog,
                 )
 
                 Tab.MORE -> MoreScreen(

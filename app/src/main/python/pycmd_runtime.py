@@ -31,6 +31,7 @@ __all__ = [
     "completions",
     "runtime_info",
     "run_any",
+    "answer_fix",
     "language_catalogue",
     "language_for",
     "template_for",
@@ -428,6 +429,41 @@ def _make_tracer():
     return tracer
 
 
+def _offer_fix(report: str, source_name: str) -> None:
+    """Lets the doctor look at an error and offer to fix it.
+
+    Never raises and never acts: the most it does is print an offer, which the
+    user answers with yes or no. An error that gets quietly "fixed" is an error
+    nobody learns from.
+    """
+    try:
+        import pycmd_doctor
+
+        offer = pycmd_doctor.diagnose(report, {
+            "kind": "console",
+            "channel": current_channel(),
+            "path": source_name,
+            "directory": os.path.dirname(source_name) if os.path.sep in source_name else "",
+        })
+        if offer is not None:
+            sys.stdout.write(pycmd_doctor.describe(offer))
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def answer_fix(channel: str, text: str) -> dict:
+    """Applies or dismisses whatever the doctor offered on `channel`."""
+    try:
+        import pycmd_doctor
+
+        result = pycmd_doctor.answer(channel, text)
+    except Exception as exc:  # noqa: BLE001
+        return {"handled": False, "error": str(exc)}
+    if result.get("handled"):
+        sys.stdout.write(result.get("message", "") + "\n")
+    return result
+
+
 def _format_exception(exc: BaseException, source_name: str) -> str:
     """Traceback without the engine's own frames, so errors point at user code."""
     tb = exc.__traceback__
@@ -509,7 +545,9 @@ def run_source(source: str, source_name: str = "<console>", echo_result: bool = 
                 sys.stderr.write(f"SystemExit: {code}\n")
         except BaseException as exc:  # noqa: BLE001 - the console reports everything
             status = "error"
-            sys.stderr.write(_format_exception(exc, source_name))
+            report = _format_exception(exc, source_name)
+            sys.stderr.write(report)
+            _offer_fix(report, source_name)
     finally:
         if not _use_async_exc:
             sys.settrace(None)
@@ -564,7 +602,9 @@ def run_any(path: str) -> str:
         sys.stderr.write("\nKeyboardInterrupt: execution stopped\n")
         return "stopped"
     except BaseException as exc:  # noqa: BLE001
-        sys.stderr.write(_format_exception(exc, name))
+        report = _format_exception(exc, name)
+        sys.stderr.write(report)
+        _offer_fix(report, path)
         return "error"
 
     millis = int((time.monotonic() - started) * 1000)
@@ -577,7 +617,9 @@ def run_any(path: str) -> str:
         _sink.onFinished(0, "ok", millis)
         return "ok"
 
-    sys.stderr.write(result.get("error", "could not run this file") + "\n")
+    problem = result.get("error", "could not run this file")
+    sys.stderr.write(problem + "\n")
+    _offer_fix(problem, path)
     _sink.onFinished(0, "error", millis)
     return "error"
 

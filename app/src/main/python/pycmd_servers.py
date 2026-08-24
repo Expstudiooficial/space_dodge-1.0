@@ -59,6 +59,9 @@ class _Entry:
         self.started_at = time.time()
         self.requests = 0
         self.target = ""
+        # One offer per server: a 404 storm must not become a wall of the same
+        # question.
+        self.offered = False
         self.log: list[tuple[str, str]] = []
         self.log_lock = threading.RLock()
 
@@ -199,7 +202,14 @@ def start_static(
                 _log(entry, "stdout", f"{self.address_string()}  {fmt % args}\n")
 
         def log_error(self, fmt: str, *args) -> None:  # noqa: A003
-            _log(entry, "stderr", f"{fmt % args}\n")
+            text = f"{fmt % args}\n"
+            _log(entry, "stderr", text)
+            # A 404 on the page a browser asks for first is the most common
+            # way a static server looks broken, and it is usually one rename
+            # away from working.
+            if "404" in text and not entry.offered:
+                entry.offered = True
+                _offer_index(entry, directory)
 
     class Threaded(socketserver.ThreadingTCPServer):
         daemon_threads = True
@@ -208,7 +218,14 @@ def start_static(
     try:
         httpd = Threaded((host, port), Handler)
     except OSError as exc:
-        return {"ok": False, "error": f"Could not bind {host}:{port} - {exc}"}
+        # The launcher gets the message; the doctor gets the chance to offer a
+        # port that is actually free.
+        offer = _diagnose(str(exc), {"kind": "static", "channel": entry.handle,
+                                     "directory": directory, "port": port})
+        detail = f"Could not bind {host}:{port} - {exc}"
+        if offer is not None:
+            detail += f"\n{offer['message']} {offer['question']}"
+        return {"ok": False, "error": detail, "fix": bool(offer)}
 
     entry.httpd = httpd
     entry.status = "running"
@@ -301,7 +318,9 @@ def start_script(
         except BaseException as exc:  # noqa: BLE001
             entry.status = "error"
             entry.error = f"{type(exc).__name__}: {exc}"
-            _log(entry, "stderr", pycmd_runtime.format_exception(exc, os.path.basename(path)))
+            report = pycmd_runtime.format_exception(exc, os.path.basename(path))
+            _log(entry, "stderr", report)
+            _offer_fix(entry, report, path=path)
         else:
             if entry.status != "error":
                 entry.status = "stopped"
@@ -467,3 +486,61 @@ def log_lines(handle: str, limit: int = 500) -> list:
     with entry.log_lock:
         rows = entry.log[-limit:]
     return [{"stream": stream, "text": text} for stream, text in rows]
+
+
+# ---------------------------------------------------------------------------
+# Working out what went wrong
+# ---------------------------------------------------------------------------
+
+
+def _diagnose(text: str, context: dict):
+    """Asks the doctor, and never lets a diagnosis break the thing it looked at."""
+    try:
+        import pycmd_doctor
+
+        return pycmd_doctor.diagnose(text, context)
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _offer_fix(entry, report: str, path: str = "") -> None:
+    offer = _diagnose(report, {
+        "kind": entry.kind,
+        "channel": entry.handle,
+        "path": path or entry.target,
+        "directory": os.path.dirname(path or entry.target or ""),
+        "port": entry.port,
+    })
+    if offer is None:
+        return
+    import pycmd_doctor
+
+    _log(entry, "system", pycmd_doctor.describe(offer))
+
+
+def _offer_index(entry, directory: str) -> None:
+    try:
+        import pycmd_doctor
+
+        offer = pycmd_doctor.diagnose_missing_index(directory, {"channel": entry.handle})
+        if offer is not None:
+            _log(entry, "system", pycmd_doctor.describe(offer))
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def answer_fix(handle: str, text: str) -> dict:
+    """Answers a pending offer on a server's console. Called from the app."""
+    try:
+        import pycmd_doctor
+
+        result = pycmd_doctor.answer(handle, text)
+    except Exception as exc:  # noqa: BLE001
+        return {"handled": False, "error": str(exc)}
+
+    if result.get("handled"):
+        with _lock:
+            entry = _servers.get(handle)
+        if entry is not None:
+            _log(entry, "system", result.get("message", "") + "\n")
+    return result

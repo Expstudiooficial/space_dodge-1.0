@@ -466,6 +466,33 @@ object PythonEngine {
         }
     }
 
+    /**
+     * Answers a fix the app offered after an error.
+     *
+     * Goes through the control dispatcher so a server whose script is wedged
+     * can still be answered, and returns whether the line was consumed - a
+     * server's stdin is a real thing people type into, and "yes" might have
+     * been meant for the program rather than for us.
+     */
+    suspend fun answerFix(channel: String, text: String): JSONObject =
+        withContext(controlDispatcher) {
+            if (!_status.value.ready) return@withContext JSONObject().put("handled", false)
+            runCatching {
+                // The console's offers live in the runtime, a server's in the
+                // server module, because that is where each one's output goes.
+                val module = if (channel == CONSOLE_CHANNEL) runtime else servers
+                val map = module.callAttr("answer_fix", channel, text).asMap()
+                JSONObject()
+                    .put("handled", map.str("handled") == "True")
+                    .put("applied", map.str("applied") == "True")
+                    .put("message", map.str("message"))
+                    .put("port", map.str("port"))
+            }.getOrElse {
+                DebugLog.debug(TAG, "no fix was pending", it.message.orEmpty())
+                JSONObject().put("handled", false)
+            }
+        }
+
     /** Every extension the preview can show, so the file list knows. */
     suspend fun previewableExtensions(): Set<String> = withContext(controlDispatcher) {
         if (!_status.value.ready) return@withContext emptySet()

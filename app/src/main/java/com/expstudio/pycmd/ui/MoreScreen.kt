@@ -76,6 +76,24 @@ fun MoreScreen(
         }
         item {
             DestinationRow(
+                icon = PyIcons.Description,
+                title = "Guides",
+                subtitle = "How to write a plugin, the tutorial, and what each file type does",
+                badge = null,
+                onClick = { onSelect(Tab.DOCS) },
+            )
+        }
+        item {
+            DestinationRow(
+                icon = PyIcons.Tune,
+                title = "System",
+                subtitle = "Storage, versions, what is running, and the housekeeping buttons",
+                badge = null,
+                onClick = { onSelect(Tab.SYSTEM) },
+            )
+        }
+        item {
+            DestinationRow(
                 icon = PyIcons.BugReport,
                 title = "Debug console",
                 subtitle = "Errors, server events and everything else the app did",
