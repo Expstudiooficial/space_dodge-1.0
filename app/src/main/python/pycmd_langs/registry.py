@@ -11,7 +11,9 @@ Three honest categories:
 The last group is not a cop-out: Android has forbidden an app from making
 memory executable or loading a library it wrote itself since API 29, so a
 compiler for C, Rust or Go could produce correct machine code and never run a
-byte of it. That is why C is *interpreted* here instead.
+byte of it. That is why those three are *interpreted* here instead - the
+interpreters live in ``c_interp``, ``go_interp`` and ``rust_interp`` - and why
+JavaScript is handed to the engine the device already has.
 """
 
 from __future__ import annotations
@@ -96,11 +98,21 @@ LANGUAGES = [
              template="export function main(): void {\n  console.log('hello');\n}\n",
              note="Editable and highlighted. Running it needs a TypeScript compiler, "
                   "which is not on the device - save it as .js to run it."),
-    Language("rust", "Rust", [".rs"], EDIT, "rust", "//",
-             template='fn main() {\n    println!("hello");\n}\n', note=NO_TOOLCHAIN),
-    Language("go", "Go", [".go"], EDIT, "go", "//",
+    Language("rust", "Rust", [".rs"], RUN, "rust", "//",
+             template='fn main() {\n    println!("hello, world");\n}\n',
+             note="Runs on a Rust interpreter built into the app: traits, impl blocks, "
+                  "enums with payloads, match, closures, iterator chains, Option, Result "
+                  "and the ? operator all work, along with Vec, HashMap, HashSet and the "
+                  "String methods. Ownership and borrowing are not checked - there is no "
+                  "borrow checker here - so a program rustc accepts will run, and one it "
+                  "would reject may also run."),
+    Language("go", "Go", [".go"], RUN, "go", "//",
              template='package main\n\nimport "fmt"\n\nfunc main() {\n\tfmt.Println("hello")\n}\n',
-             note=NO_TOOLCHAIN),
+             note="Runs on a Go interpreter built into the app: goroutines, channels, "
+                  "structs, methods, interfaces, defer, panic and recover all work, along "
+                  "with fmt, strings, strconv, math, sort, errors, time, os, bufio, unicode "
+                  "and sync. Types are parsed but not enforced, so this runs a program the "
+                  "real compiler would accept - it will not reject one it would refuse."),
     Language("cpp", "C++", [".cpp", ".cc", ".hpp"], EDIT, "c", "//",
              template='#include <iostream>\n\nint main() {\n    std::cout << "hello\\n";\n'
                       '    return 0;\n}\n',
@@ -255,6 +267,46 @@ def run_file(path: str, stdout=None, stdin=None) -> dict:
             return {"ok": False, "error": f"C syntax error, {exc}", "language": "C"}
         except c_interp.CRuntimeError as exc:
             return {"ok": False, "error": f"C error, {exc}", "language": "C"}
+
+    if language["id"] == "go":
+        from . import go_interp
+        from .clike_lexer import LangSyntaxError
+
+        try:
+            with open(path, "r", encoding="utf-8") as handle:
+                source = handle.read()
+        except OSError as exc:
+            return {"ok": False, "error": f"cannot open {path}: {exc}", "language": "Go"}
+
+        try:
+            code = go_interp.run_source(
+                source, stdout=stdout, stdin=stdin, argv=[os.path.basename(path)]
+            )
+            return {"ok": True, "exit": code, "language": "Go"}
+        except LangSyntaxError as exc:
+            return {"ok": False, "error": f"Go syntax error, {exc}", "language": "Go"}
+        except go_interp.GoError as exc:
+            return {"ok": False, "error": f"Go error, {exc}", "language": "Go"}
+
+    if language["id"] == "rust":
+        from . import rust_interp
+        from .clike_lexer import LangSyntaxError
+
+        try:
+            with open(path, "r", encoding="utf-8") as handle:
+                source = handle.read()
+        except OSError as exc:
+            return {"ok": False, "error": f"cannot open {path}: {exc}", "language": "Rust"}
+
+        try:
+            code = rust_interp.run_source(
+                source, stdout=stdout, stdin=stdin, argv=[os.path.basename(path)]
+            )
+            return {"ok": True, "exit": code, "language": "Rust"}
+        except LangSyntaxError as exc:
+            return {"ok": False, "error": f"Rust syntax error, {exc}", "language": "Rust"}
+        except rust_interp.RustError as exc:
+            return {"ok": False, "error": f"Rust error, {exc}", "language": "Rust"}
 
     if language["id"] == "javascript":
         # Only reachable if something calls this directly: the Kotlin side
