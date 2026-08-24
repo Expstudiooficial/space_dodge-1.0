@@ -54,12 +54,14 @@ fun EditorScreen(
     onCopyAll: (String) -> Unit = {},
     languageId: String = "python",
     languageName: String = "",
+    highlightAs: String = "python",
     snippetsOn: Boolean = false,
     snippetsPoweredUp: Boolean = false,
 ) {
     var menuOpen by remember { mutableStateOf(false) }
     val currentContent by rememberUpdatedState(state.content)
     val currentEpoch by rememberUpdatedState(state.epoch)
+    val currentHighlight by rememberUpdatedState(highlightAs)
 
     // Bridge callbacks arrive on the WebView's JS thread; hopping to the main
     // thread keeps state updates on the thread Compose expects.
@@ -74,6 +76,7 @@ fun EditorScreen(
             // The page reloaded (first load, or the system reclaimed it), so
             // whatever is in the buffer has to be put back.
             host.loadedEpoch = currentEpoch
+            host.eval("PyEditor.setLanguage(${jsString(currentHighlight)});")
             host.eval("PyEditor.setContent(${jsString(currentContent)});")
         }
         onDispose {
@@ -90,6 +93,12 @@ fun EditorScreen(
         if (host.loadedEpoch == state.epoch) return@LaunchedEffect
         host.loadedEpoch = state.epoch
         host.eval("if (window.PyEditor) { PyEditor.setContent(${jsString(currentContent)}); }")
+    }
+
+    // The grammar follows the file, not the document: switching from a .py to
+    // a .go file has to repaint even though both are just text to the editor.
+    LaunchedEffect(highlightAs, host) {
+        host.eval("if (window.PyEditor) { PyEditor.setLanguage(${jsString(highlightAs)}); }")
     }
 
     Column(modifier.fillMaxSize()) {

@@ -10,6 +10,7 @@ import com.expstudio.pycmd.python.DownloadedFile
 import com.expstudio.pycmd.python.InstalledPackage
 import com.expstudio.pycmd.python.LanguageInfo
 import com.expstudio.pycmd.python.OutputChunk
+import com.expstudio.pycmd.python.PreviewPage
 import com.expstudio.pycmd.python.PythonEngine
 import com.expstudio.pycmd.python.RunningServer
 import com.expstudio.pycmd.python.ServerService
@@ -194,6 +195,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private val _servers = MutableStateFlow(ServersState())
     val servers: StateFlow<ServersState> = _servers.asStateFlow()
+
+    /** The page shown by the preview overlay, when one is open. */
+    private val _preview = MutableStateFlow<PreviewPage?>(null)
+    val preview: StateFlow<PreviewPage?> = _preview.asStateFlow()
 
     /** Which plugin tool is open, if any. */
     private val _activeTool = MutableStateFlow<PluginScreen?>(null)
@@ -545,7 +550,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     /** Saves first when needed, then runs the buffer as a real file. */
     fun runEditor() {
         val state = _editor.value
-        _tab.value = Tab.CONSOLE
+        val previewable = state.file != null &&
+            languageForName(state.file.name)?.canPreview == true
+
         viewModelScope.launch {
             val file = state.file
             if (file != null && state.isDirty) {
@@ -555,10 +562,21 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 }
                 _editor.value = _editor.value.copy(savedContent = state.content)
             }
+            // Save first either way: a preview reads the file from disk, so an
+            // unsaved buffer would show the previous version.
+            if (previewable && file != null) {
+                previewFile(file)
+                return@launch
+            }
+
+            _tab.value = Tab.CONSOLE
             engine.echo("\n", OutputChunk.Stream.SYSTEM)
             if (file != null) {
                 engine.echo("Running ${file.name}\n", OutputChunk.Stream.SYSTEM)
-                engine.runFile(file.absolutePath)
+                // runAny, not runFile: the editor runs whatever the file is,
+                // and calling the Python runner on a .go file would try to
+                // execute Go as Python.
+                engine.runAny(file.absolutePath)
             } else {
                 engine.echo("Running untitled buffer\n", OutputChunk.Stream.SYSTEM)
                 engine.run(state.content, sourceName = "untitled.py", echoResult = false)
@@ -683,13 +701,55 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    /** The language of a file, from the catalogue already loaded. */
+    fun languageForName(name: String): LanguageInfo? {
+        val extension = name.substringAfterLast('.', "").lowercase()
+        if (extension.isEmpty()) return null
+        return _languages.value.firstOrNull { info ->
+            info.extensions.split(",").any { it.trim().removePrefix(".") == extension }
+        }
+    }
+
+    /**
+     * Renders a previewable file.
+     *
+     * The base directory is handed to the WebView so a page's own stylesheet
+     * and images load: a preview that shows unstyled HTML because the CSS
+     * next to it could not be found is not much of a preview.
+     */
+    fun previewFile(file: File) {
+        if (!Plugins.isOn(PluginIds.POLYGLOT_RUNNER)) {
+            showToast("Turn on Polyglot Runner to preview files.")
+            return
+        }
+        viewModelScope.launch {
+            val page = engine.previewPage(file.absolutePath)
+            if (page == null) {
+                showToast("Could not build a preview of ${file.name}.")
+                return@launch
+            }
+            _preview.value = page
+        }
+    }
+
+    fun closePreview() {
+        _preview.value = null
+    }
+
     fun runFile(file: File) {
+        // HTML, CSS and Markdown have nothing to print; Run on one of those
+        // means "show me", so it opens the preview instead of the console.
+        if (languageForName(file.name)?.canPreview == true) {
+            previewFile(file)
+            return
+        }
         _tab.value = Tab.CONSOLE
         viewModelScope.launch {
             engine.echo("\n", OutputChunk.Stream.SYSTEM)
             // runAny picks the engine from the extension: Python keeps the
-            // console namespace, C goes through the interpreter, and anything
-            // without an engine explains itself rather than failing silently.
+            // console namespace, C, Go and Rust go through their interpreters,
+            // JavaScript to the device's engine, and anything without one
+            // explains itself rather than failing silently.
             engine.runAny(file.absolutePath)
             refreshServers()
         }

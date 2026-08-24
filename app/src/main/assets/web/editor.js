@@ -380,6 +380,15 @@
       suppressChangeEvent = false;
     },
 
+    /** Switches which grammar the highlighter uses, and repaints. */
+    setLanguage: function (name) {
+      if (global.PyHighlight && global.PyHighlight.setLanguage) {
+        global.PyHighlight.setLanguage(name);
+        lineCount = -1;
+        render();
+      }
+    },
+
     insert: function (text) {
       insertText(text);
       onInput();

@@ -73,6 +73,7 @@ fun PyCmdRoot(viewModel: MainViewModel = viewModel()) {
     val pluginsEnabled by viewModel.pluginsEnabled.collectAsState()
     val languages by viewModel.languages.collectAsState()
     val activeTool by viewModel.activeTool.collectAsState()
+    val previewPage by viewModel.preview.collectAsState()
 
     // Which language the open file is, so the snippet bar and the header can
     // say so. Derived rather than stored: the file name is the only input.
@@ -279,6 +280,7 @@ fun PyCmdRoot(viewModel: MainViewModel = viewModel()) {
                         viewModel.showToast("Copied the file")
                     },
                     languageId = editorLanguage?.id ?: "text",
+                    highlightAs = editorLanguage?.highlight ?: "text",
                     languageName = editorLanguage?.name.orEmpty(),
                     snippetsOn = viewModel.isPluginOn(PluginIds.SNIPPETS),
                     snippetsPoweredUp = viewModel.isPluginPoweredUp(PluginIds.SNIPPETS),
@@ -385,6 +387,19 @@ fun PyCmdRoot(viewModel: MainViewModel = viewModel()) {
                 )
             }
         }
+    }
+
+    // The preview sits over everything: it is a mode, not a destination, and
+    // closing it puts the user back exactly where they were.
+    previewPage?.let { page ->
+        Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
+            PreviewScreen(
+                page = page,
+                onClose = viewModel::closePreview,
+                onReload = { viewModel.previewFile(File(page.baseDirectory + page.name)) },
+            )
+        }
+        BackHandler(enabled = true) { viewModel.closePreview() }
     }
 
     if (saveAsOpen) {

@@ -123,6 +123,7 @@ object PythonEngine {
     private lateinit var servers: PyObject
     private lateinit var downloads: PyObject
     private lateinit var tools: PyObject
+    private lateinit var preview: PyObject
 
     private lateinit var appContext: Context
     private lateinit var workspaceDir: File
@@ -257,6 +258,7 @@ object PythonEngine {
             servers = python.getModule("pycmd_servers")
             downloads = python.getModule("pycmd_download")
             tools = python.getModule("pycmd_tools")
+            preview = python.getModule("pycmd_preview")
 
             val version = runtime.callAttr(
                 "configure",
@@ -419,6 +421,32 @@ object PythonEngine {
             "error"
         } finally {
             _status.value = _status.value.copy(running = false, awaitingInput = false)
+        }
+    }
+
+    /**
+     * Builds the page a previewable file shows.
+     *
+     * HTML is passed through, Markdown is converted, and a stylesheet gets a
+     * demo page - a CSS file previewed on its own would otherwise render as a
+     * blank screen, which looks like a bug rather than an answer.
+     */
+    suspend fun previewPage(path: String): PreviewPage? = withContext(controlDispatcher) {
+        if (!_status.value.ready) return@withContext null
+        runCatching {
+            val map = preview.callAttr("render", path).asMap()
+            if (map.str("ok") != "True") {
+                DebugLog.warn(TAG, "preview failed", map.str("error"))
+                return@runCatching null
+            }
+            PreviewPage(
+                name = map.str("name"),
+                html = map.str("html"),
+                baseDirectory = map.str("base"),
+            )
+        }.getOrElse {
+            DebugLog.error(TAG, "preview failed: $path", it)
+            null
         }
     }
 
@@ -861,6 +889,13 @@ object PythonEngine {
 }
 
 /** What the app knows about a file type. */
+/** A rendered preview: the page, and where its relative links point. */
+data class PreviewPage(
+    val name: String,
+    val html: String,
+    val baseDirectory: String,
+)
+
 data class LanguageInfo(
     val id: String,
     val name: String,
