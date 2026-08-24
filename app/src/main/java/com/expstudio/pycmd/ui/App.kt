@@ -81,6 +81,7 @@ fun PyCmdRoot(viewModel: MainViewModel = viewModel()) {
     val languages by viewModel.languages.collectAsState()
     val activeTool by viewModel.activeTool.collectAsState()
     val previewPage by viewModel.preview.collectAsState()
+    val previewable by viewModel.previewable.collectAsState()
     val installedPlugins by viewModel.customPlugins.collectAsState()
     val installedEnabled by viewModel.customPluginsEnabled.collectAsState()
     val pluginBusy by viewModel.pluginBusy.collectAsState()
@@ -105,13 +106,16 @@ fun PyCmdRoot(viewModel: MainViewModel = viewModel()) {
 
     // Keyed on the catalogue, so the play buttons appear the moment it loads
     // rather than the next time something else happens to redraw the list.
-    val fileAction: (WorkspaceEntry) -> FileAction = remember(languages) {
+    val fileAction: (WorkspaceEntry) -> FileAction = remember(languages, previewable) {
         { entry ->
             val language = languages.forFileName(entry.name)
+            val extension = entry.name.substringAfterLast('.', "").lowercase()
             when {
                 entry.isDirectory -> FileAction.NONE
                 language?.canRun == true -> FileAction.RUN
-                language?.canPreview == true -> FileAction.PREVIEW
+                // Wider than the language table on purpose: JSON, CSV, SVG and
+                // images have no language to run but plenty to show.
+                language?.canPreview == true || extension in previewable -> FileAction.PREVIEW
                 else -> FileAction.NONE
             }
         }
@@ -350,6 +354,7 @@ fun PyCmdRoot(viewModel: MainViewModel = viewModel()) {
                     onRename = viewModel::renameEntry,
                     onDelete = viewModel::deleteEntry,
                     onImport = viewModel::importFile,
+                    onImportFolder = viewModel::importFolder,
                     pickingFor = pickingFor,
                     onUseAsTarget = viewModel::useAsLaunchTarget,
                     onCancelPicking = viewModel::cancelPicking,

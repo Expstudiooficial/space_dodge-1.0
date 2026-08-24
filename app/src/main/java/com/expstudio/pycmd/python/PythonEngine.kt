@@ -444,20 +444,44 @@ object PythonEngine {
     suspend fun previewPage(path: String): PreviewPage? = withContext(controlDispatcher) {
         if (!_status.value.ready) return@withContext null
         runCatching {
-            val map = preview.callAttr("render", path).asMap()
+            val map = preview.callAttr("serve", path).asMap()
             if (map.str("ok") != "True") {
                 DebugLog.warn(TAG, "preview failed", map.str("error"))
                 return@runCatching null
+            }
+            val served = map.str("served") == "True"
+            if (!served && map.str("error").isNotEmpty()) {
+                DebugLog.warn(TAG, "preview is not being served", map.str("error"))
             }
             PreviewPage(
                 name = map.str("name"),
                 html = map.str("html"),
                 baseDirectory = map.str("base"),
+                url = map.str("url"),
+                served = served,
             )
         }.getOrElse {
             DebugLog.error(TAG, "preview failed: $path", it)
             null
         }
+    }
+
+    /** Every extension the preview can show, so the file list knows. */
+    suspend fun previewableExtensions(): Set<String> = withContext(controlDispatcher) {
+        if (!_status.value.ready) return@withContext emptySet()
+        runCatching {
+            preview.callAttr("extensions").toString()
+                .split(",")
+                .map { it.trim().removePrefix(".").lowercase() }
+                .filter { it.isNotEmpty() }
+                .toSet()
+        }.getOrDefault(emptySet())
+    }
+
+    /** Shuts the preview server down when the preview closes. */
+    suspend fun stopPreview() = withContext(controlDispatcher) {
+        runCatching { preview.callAttr("stop") }
+        Unit
     }
 
     /** Renders text the app is holding - a shipped document, say - as a page. */
@@ -1046,12 +1070,27 @@ fun List<LanguageInfo>.forFileName(name: String): LanguageInfo? {
     }
 }
 
-/** A rendered preview: the page, and where its relative links point. */
+/**
+ * A page ready to show.
+ *
+ * When [served] is true the page is coming off a loopback HTTP server rooted
+ * at its own folder, which is the only way a preview behaves like a browser:
+ * modules load, fetch works, relative paths resolve, and a link to the next
+ * page of the site actually goes there. [html] is kept as the fallback for
+ * the rare case where no socket could be opened.
+ */
 data class PreviewPage(
     val name: String,
     val html: String,
     val baseDirectory: String,
-)
+    val url: String = "",
+    val served: Boolean = false,
+) {
+    /** The origin the preview is allowed to navigate inside. */
+    val origin: String get() = url.substringBefore("/", "").let {
+        if (url.startsWith("http")) url.split("/").take(3).joinToString("/") else ""
+    }
+}
 
 data class LanguageInfo(
     val id: String,

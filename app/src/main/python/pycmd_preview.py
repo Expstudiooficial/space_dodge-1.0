@@ -63,6 +63,16 @@ img { max-width: 100%; height: auto; border-radius: 8px; }
 ul, ol { padding-left: 1.4em; }
 li { margin: 0.25em 0; }
 input[type=checkbox] { margin-right: 6px; }
+.pycmd-art {
+  display: flex; justify-content: center; padding: 12px;
+  background:
+    linear-gradient(45deg, #151C26 25%, transparent 25%, transparent 75%, #151C26 75%),
+    linear-gradient(45deg, #151C26 25%, #0F141C 25%, #0F141C 75%, #151C26 75%);
+  background-size: 24px 24px;
+  background-position: 0 0, 12px 12px;
+  border: 1px solid #223041; border-radius: 10px;
+}
+.pycmd-art svg, .pycmd-art img { max-width: 100%; height: auto; }
 .pycmd-note {
   background: #151C26;
   border: 1px solid #223041;
@@ -87,17 +97,52 @@ It runs long enough to wrap onto a second line on a phone.</p>
 """
 
 
+# Everything the preview can show, which is what decides whether a file gets a
+# preview button. Anything not here is a file you edit, not a file you view.
+EXTENSIONS = (
+    ".html", ".htm", ".md", ".markdown", ".css", ".svg", ".js", ".mjs",
+    ".json", ".csv", ".tsv", ".xml", ".yaml", ".yml", ".toml", ".ini",
+    ".cfg", ".conf", ".txt", ".log", ".png", ".jpg", ".jpeg", ".gif",
+    ".webp", ".bmp", ".ico",
+)
+
+IMAGES = (".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".ico")
+
+
+def can_preview(name: str) -> bool:
+    return os.path.splitext(name)[1].lower() in EXTENSIONS
+
+
+def extensions() -> str:
+    """The list, for the app's file list to key its preview button on."""
+    return ",".join(EXTENSIONS)
+
+
 def render(path: str) -> dict:
     """Returns the HTML to show, and the folder relative links resolve against."""
+    extension = os.path.splitext(path)[1].lower()
+    name = os.path.basename(path)
+    folder = os.path.dirname(os.path.abspath(path))
+
+    if extension in IMAGES:
+        # Never read as text, and never inlined: the server next door can
+        # serve the real bytes.
+        try:
+            size = os.path.getsize(path)
+        except OSError as error:
+            return {"ok": False, "error": f"cannot open {path}: {error}"}
+        return {
+            "ok": True,
+            "html": _page(name, _image_body(name, size)),
+            "base": folder + os.sep,
+            "name": name,
+        }
+
     try:
         with open(path, "r", encoding="utf-8", errors="replace") as handle:
             source = handle.read()
     except OSError as error:
         return {"ok": False, "error": f"cannot open {path}: {error}"}
-
-    extension = os.path.splitext(path)[1].lower()
-    name = os.path.basename(path)
-    folder = os.path.dirname(os.path.abspath(path))
 
     if extension in (".html", ".htm"):
         body = source
@@ -111,12 +156,150 @@ def render(path: str) -> dict:
             f"<link rel='stylesheet' href='{html_escape.escape(name)}'>"
             "</head><body>" + CSS_DEMO_BODY + "</body></html>"
         )
+    elif extension in (".js", ".mjs"):
+        body = _script_page(name)
+    elif extension == ".json":
+        body = _page(name, _json_body(source))
+    elif extension in (".csv", ".tsv"):
+        body = _page(name, _table_body(source, "\t" if extension == ".tsv" else ","))
     elif extension == ".svg":
-        body = _page(name, source)
+        body = _page(name, f"<div class='pycmd-art'>{source}</div>")
     else:
         body = _page(name, f"<pre><code>{html_escape.escape(source)}</code></pre>")
 
     return {"ok": True, "html": body, "base": folder + os.sep, "name": name}
+
+
+def _image_body(name: str, size: int) -> str:
+    escaped = html_escape.escape(name)
+    return (
+        f"<div class='pycmd-art'><img src='{escaped}' alt='{escaped}'></div>"
+        f"<p class='pycmd-note'>{escaped} - {size:,} bytes</p>"
+    )
+
+
+def _json_body(source: str) -> str:
+    """Pretty-printed if it parses, and the parse error if it does not."""
+    import json
+
+    try:
+        value = json.loads(source)
+    except ValueError as error:
+        return (
+            "<div class='pycmd-note'>This is not valid JSON: "
+            f"{html_escape.escape(str(error))}</div>"
+            f"<pre><code>{html_escape.escape(source)}</code></pre>"
+        )
+
+    pretty = json.dumps(value, indent=2, ensure_ascii=False)
+    if isinstance(value, dict):
+        shape = f"an object with {len(value)} key{'' if len(value) == 1 else 's'}"
+    elif isinstance(value, list):
+        shape = f"an array of {len(value)}"
+    else:
+        shape = type(value).__name__
+    return (
+        f"<div class='pycmd-note'>Valid JSON - {shape}</div>"
+        f"<pre><code>{html_escape.escape(pretty)}</code></pre>"
+    )
+
+
+def _table_body(source: str, separator: str) -> str:
+    """Separated values as a table, which is the whole point of previewing one."""
+    import csv
+    import io as _io
+
+    rows = list(csv.reader(_io.StringIO(source), delimiter=separator))
+    if not rows:
+        return "<p class='pycmd-note'>Empty.</p>"
+
+    header, body = rows[0], rows[1:]
+    out = ["<table><thead><tr>"]
+    out += [f"<th>{html_escape.escape(cell)}</th>" for cell in header]
+    out.append("</tr></thead><tbody>")
+    for row in body[:500]:
+        out.append("<tr>" + "".join(
+            f"<td>{html_escape.escape(cell)}</td>" for cell in row
+        ) + "</tr>")
+    out.append("</tbody></table>")
+    if len(body) > 500:
+        out.append(f"<p class='pycmd-note'>Showing 500 of {len(body)} rows.</p>")
+    else:
+        out.append(f"<p class='pycmd-note'>{len(body)} rows, {len(header)} columns.</p>")
+    return "".join(out)
+
+
+def _script_page(name: str) -> str:
+    """Runs a script in a page and shows what it logged.
+
+    A .js file has no appearance of its own, so previewing one means running
+    it: the page loads the script exactly as a browser would, and everything
+    it logs or throws lands in a console underneath. Anything it draws into
+    the document shows up above that.
+    """
+    escaped = html_escape.escape(name)
+    return f"""<!doctype html>
+<html><head><meta charset='utf-8'>
+<meta name='viewport' content='width=device-width, initial-scale=1'>
+<title>{escaped}</title>{PAGE_CSS}
+<style>
+  #pycmd-console {{
+    background: #10161F; border: 1px solid #223041; border-radius: 10px;
+    padding: 10px 12px; font-family: ui-monospace, Menlo, monospace;
+    font-size: 13px; white-space: pre-wrap; min-height: 60px;
+  }}
+  #pycmd-console .err {{ color: #FF8A8A; }}
+  #pycmd-console .warn {{ color: #F5C77E; }}
+  #pycmd-stage:empty::after {{
+    content: 'Anything the script adds to the page appears here.';
+    color: #64748B; font-size: 13px;
+  }}
+</style>
+</head>
+<body>
+<h1>{escaped}</h1>
+<div id='pycmd-stage'></div>
+<h2>Console</h2>
+<div id='pycmd-console'></div>
+<script>
+(function () {{
+  var out = document.getElementById('pycmd-console');
+  function write(text, kind) {{
+    var line = document.createElement('div');
+    if (kind) line.className = kind;
+    line.textContent = text;
+    out.appendChild(line);
+  }}
+  function show(args) {{
+    return Array.prototype.map.call(args, function (value) {{
+      if (typeof value === 'string') return value;
+      try {{ return JSON.stringify(value); }} catch (e) {{ return String(value); }}
+    }}).join(' ');
+  }}
+  var real = window.console;
+  window.console = {{
+    log: function () {{ write(show(arguments)); real.log.apply(real, arguments); }},
+    info: function () {{ write(show(arguments)); real.info.apply(real, arguments); }},
+    debug: function () {{ write(show(arguments)); real.debug.apply(real, arguments); }},
+    warn: function () {{ write(show(arguments), 'warn'); real.warn.apply(real, arguments); }},
+    error: function () {{ write(show(arguments), 'err'); real.error.apply(real, arguments); }},
+    table: function (v) {{ write(show([v])); }},
+    trace: function () {{ write(show(arguments), 'warn'); }},
+    group: function () {{ write(show(arguments)); }},
+    groupEnd: function () {{}},
+    time: function () {{}},
+    timeEnd: function () {{}}
+  }};
+  window.addEventListener('error', function (event) {{
+    write((event.error && event.error.stack) || event.message, 'err');
+  }});
+  window.addEventListener('unhandledrejection', function (event) {{
+    write('Unhandled promise rejection: ' + event.reason, 'err');
+  }});
+}})();
+</script>
+<script src='{escaped}'></script>
+</body></html>"""
 
 
 def render_text(text: str, name: str = "document.md") -> dict:
@@ -329,3 +512,111 @@ def inline(text: str) -> str:
     for position, value in enumerate(placeholders):
         text = text.replace(f"\x00{position}\x00", value)
     return text
+
+
+# --------------------------------------------------------------- serving it
+
+# A page loaded from a `file://` URL is a crippled page: no modules, no fetch,
+# no XHR, and a browser that treats every file as its own origin. Serving the
+# folder over loopback for the length of the preview costs one thread and
+# makes the preview an actual browser view of the actual site.
+
+_server = None
+_server_thread = None
+_server_root = ""
+_generated = ""
+
+MAGIC_PATH = "/__pycmd_preview__"
+
+
+def serve(path: str) -> dict:
+    """Serves the file's folder on loopback and says what URL to open."""
+    import http.server
+    import socketserver
+    import threading
+
+    global _server, _server_thread, _server_root, _generated
+
+    rendered = render(path)
+    if not rendered.get("ok"):
+        return rendered
+
+    folder = os.path.dirname(os.path.abspath(path))
+    name = os.path.basename(path)
+    extension = os.path.splitext(path)[1].lower()
+
+    # HTML is served as itself; anything else is served through the magic
+    # path, which hands back the page this module generated.
+    _generated = rendered["html"]
+
+    if _server is not None and _server_root == folder:
+        port = _server.server_address[1]
+        return _url(port, name, extension, rendered)
+
+    stop()
+
+    class Handler(http.server.SimpleHTTPRequestHandler):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, directory=folder, **kwargs)
+
+        def do_GET(self):  # noqa: N802
+            if self.path.split("?")[0] == MAGIC_PATH:
+                body = _generated.encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "text/html; charset=utf-8")
+                self.send_header("Content-Length", str(len(body)))
+                self.send_header("Cache-Control", "no-store")
+                self.end_headers()
+                self.wfile.write(body)
+                return
+            super().do_GET()
+
+        def end_headers(self):
+            # A preview that shows a cached copy of the page you just edited
+            # is worse than no preview.
+            self.send_header("Cache-Control", "no-store, must-revalidate")
+            super().end_headers()
+
+        def log_message(self, format, *args):  # noqa: A002
+            pass
+
+    class Server(socketserver.ThreadingTCPServer):
+        daemon_threads = True
+        allow_reuse_address = True
+
+    try:
+        _server = Server(("127.0.0.1", 0), Handler)
+    except OSError as error:
+        # No loopback socket: fall back to the inline page, which still shows
+        # something even if its scripts will be limited.
+        return dict(rendered, served=False, error=str(error))
+
+    _server_root = folder
+    _server_thread = threading.Thread(target=_server.serve_forever, daemon=True)
+    _server_thread.start()
+    return _url(_server.server_address[1], name, extension, rendered)
+
+
+def _url(port: int, name: str, extension: str, rendered: dict) -> dict:
+    import urllib.parse
+
+    if extension in (".html", ".htm"):
+        target = f"http://127.0.0.1:{port}/{urllib.parse.quote(name)}"
+    else:
+        target = f"http://127.0.0.1:{port}{MAGIC_PATH}"
+    return dict(rendered, served=True, url=target, port=port)
+
+
+def stop() -> None:
+    """Shuts the preview server down. Called when the preview closes."""
+    global _server, _server_thread, _server_root
+
+    if _server is not None:
+        try:
+            _server.shutdown()
+            _server.server_close()
+        except Exception:  # noqa: BLE001
+            pass
+    _server = None
+    _server_thread = None
+    _server_root = ""

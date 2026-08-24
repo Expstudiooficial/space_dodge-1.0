@@ -195,6 +195,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     val pluginsEnabled: StateFlow<Set<String>> = Plugins.enabled
 
+    /** Extensions the preview can show, which is wider than what can run. */
+    private val _previewable = MutableStateFlow<Set<String>>(emptySet())
+    val previewable: StateFlow<Set<String>> = _previewable.asStateFlow()
+
     private val _languages = MutableStateFlow<List<LanguageInfo>>(emptyList())
     val languages: StateFlow<List<LanguageInfo>> = _languages.asStateFlow()
 
@@ -265,6 +269,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             refreshServers()
             refreshDownloads()
             refreshLanguages()
+            _previewable.value = engine.previewableExtensions()
             refreshCustomPlugins()
         }
     }
@@ -914,6 +919,35 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    /**
+     * Copies a folder the user picked from outside into the workspace.
+     *
+     * Staged into the cache first and then moved, so a folder that turns out
+     * to be enormous, or that fails halfway, leaves nothing behind in the
+     * user's files.
+     */
+    fun importFolder(uri: Uri) {
+        val directory = _files.value.directory ?: workspace.root
+        showToast("Copying the folder...")
+        viewModelScope.launch {
+            Imports.stageTree(getApplication(), uri)
+                .onSuccess { staged ->
+                    val target = File(directory, staged.root.name)
+                    val moved = runCatching {
+                        staged.root.copyRecursively(target, overwrite = false)
+                    }
+                    staged.root.deleteRecursively()
+                    if (moved.isSuccess) {
+                        refreshFiles(directory)
+                        showToast("Copied ${staged.files} files into ${target.name}")
+                    } else {
+                        showToast("Could not copy that folder in - a name is already taken.")
+                    }
+                }
+                .onFailure { showToast(it.message ?: "That folder could not be read.") }
+        }
+    }
+
     /** The language of a file, from the catalogue already loaded. */
     fun languageForName(name: String): LanguageInfo? = _languages.value.forFileName(name)
 
@@ -941,12 +975,20 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun closePreview() {
         _preview.value = null
+        // The preview server exists for the length of the preview and no
+        // longer: a socket left open after the screen closes is a leak the
+        // user has no way to see.
+        viewModelScope.launch { engine.stopPreview() }
     }
 
     fun runFile(file: File) {
-        // HTML, CSS and Markdown have nothing to print; Run on one of those
-        // means "show me", so it opens the preview instead of the console.
-        if (languageForName(file.name)?.canPreview == true) {
+        // HTML, CSS, Markdown, JSON, CSV, SVG and images have nothing to
+        // print; the button on those means "show me", so it opens the preview
+        // rather than the console.
+        val extension = file.name.substringAfterLast('.', "").lowercase()
+        val previewOnly = languageForName(file.name)?.canRun != true &&
+            (languageForName(file.name)?.canPreview == true || extension in _previewable.value)
+        if (previewOnly) {
             previewFile(file)
             return
         }

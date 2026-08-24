@@ -2,7 +2,11 @@ package com.expstudio.pycmd.ui
 
 import android.annotation.SuppressLint
 import android.view.ViewGroup
+import android.webkit.ConsoleMessage
+import android.webkit.WebChromeClient
+import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
+import android.webkit.WebResourceResponse
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.compose.foundation.background
@@ -12,17 +16,23 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -34,16 +44,17 @@ import com.expstudio.pycmd.python.PreviewPage
 import com.expstudio.pycmd.util.DebugLog
 
 /**
- * Shows a rendered HTML, Markdown or CSS file.
+ * Shows a page the way a browser would.
  *
- * The page is loaded with the file's own folder as the base URL, so a
- * stylesheet or an image sitting next to it resolves - a preview that shows
- * unstyled HTML because it could not find style.css is worse than none.
+ * The page comes off a loopback HTTP server rooted at its own folder, so it is
+ * a real site rather than a document: scripts run, stylesheets and images load
+ * by relative path, `fetch` works, ES modules load, and a link to another page
+ * of the same site goes there. A `file://` preview can do none of that, which
+ * is why one that looked like plain text with dead buttons was the old
+ * behaviour rather than a bug in any one place.
  *
- * JavaScript is on because plenty of pages need it to look right at all, and
- * the page is one the user just wrote. Navigation away from it is not: a link
- * to another site opens nothing here rather than turning the preview into an
- * unmarked browser.
+ * Whatever the page logs or throws is copied into the app's debug console:
+ * on a phone there is no other way to see a JavaScript error.
  */
 @SuppressLint("SetJavaScriptEnabled")
 @Composable
@@ -54,50 +65,128 @@ fun PreviewScreen(
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
+    var progress by remember { mutableIntStateOf(0) }
+    var currentUrl by remember(page.url) { mutableStateOf(page.url) }
+    var problems by remember(page.url) { mutableIntStateOf(0) }
 
     val webView = remember {
         WebView(context).apply {
-            // Match the console's WebView: without explicit parameters the
-            // view is added with wrap-content, and a page that sizes itself
-            // against the viewport lays out against a strip a few hundred
-            // pixels tall.
             layoutParams = ViewGroup.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT,
             )
             settings.javaScriptEnabled = true
             settings.domStorageEnabled = true
+            settings.databaseEnabled = true
             settings.loadWithOverviewMode = true
             settings.useWideViewPort = true
+            settings.builtInZoomControls = true
+            settings.displayZoomControls = false
+            settings.mediaPlaybackRequiresUserGesture = false
+            // Only matters for the fallback path, when no socket was free and
+            // the page is loaded straight from disk.
+            settings.allowFileAccess = true
+            settings.allowContentAccess = false
             setBackgroundColor("#0B0F14".toColorInt())
-            webViewClient = object : WebViewClient() {
-                override fun shouldOverrideUrlLoading(
-                    view: WebView?,
-                    request: WebResourceRequest?,
-                ): Boolean {
-                    // Anything but the page itself is refused: a preview that
-                    // can wander off to the open web is a browser in disguise.
-                    DebugLog.debug("preview", "blocked navigation to ${request?.url}")
-                    return true
+        }
+    }
+
+    DisposableEffect(webView) {
+        onDispose {
+            webView.stopLoading()
+            webView.loadUrl("about:blank")
+            webView.destroy()
+        }
+    }
+
+    LaunchedEffect(webView, page.origin) {
+        webView.webChromeClient = object : WebChromeClient() {
+            override fun onProgressChanged(view: WebView?, newProgress: Int) {
+                progress = newProgress
+            }
+
+            override fun onConsoleMessage(message: ConsoleMessage): Boolean {
+                val where = "${message.sourceId().substringAfterLast('/')}:${message.lineNumber()}"
+                val text = "${message.message()}  ($where)"
+                when (message.messageLevel()) {
+                    ConsoleMessage.MessageLevel.ERROR -> {
+                        problems += 1
+                        DebugLog.error("preview", text)
+                    }
+                    ConsoleMessage.MessageLevel.WARNING -> DebugLog.warn("preview", text)
+                    else -> DebugLog.debug("preview", text)
+                }
+                return true
+            }
+        }
+
+        webView.webViewClient = object : WebViewClient() {
+            override fun shouldOverrideUrlLoading(
+                view: WebView?,
+                request: WebResourceRequest?,
+            ): Boolean {
+                val target = request?.url?.toString().orEmpty()
+                // Inside the previewed site, follow the link - that is what
+                // makes a multi-page site previewable at all. Anywhere else,
+                // refuse: this is a preview, not a browser.
+                if (page.origin.isNotEmpty() && target.startsWith(page.origin)) {
+                    currentUrl = target
+                    return false
+                }
+                DebugLog.info("preview", "blocked a link out of the preview", target)
+                return true
+            }
+
+            override fun onPageFinished(view: WebView?, url: String?) {
+                progress = 100
+                if (url != null && url != "about:blank") currentUrl = url
+            }
+
+            override fun onReceivedError(
+                view: WebView,
+                request: WebResourceRequest,
+                error: WebResourceError,
+            ) {
+                // A missing stylesheet is the single most common reason a
+                // preview looks wrong, and the only place it can be reported.
+                problems += 1
+                DebugLog.error(
+                    "preview",
+                    "could not load ${request.url.lastPathSegment}",
+                    "${error.errorCode}: ${error.description}",
+                )
+            }
+
+            override fun onReceivedHttpError(
+                view: WebView,
+                request: WebResourceRequest,
+                response: WebResourceResponse,
+            ) {
+                if (response.statusCode >= 400) {
+                    problems += 1
+                    DebugLog.error(
+                        "preview",
+                        "${response.statusCode} for ${request.url.lastPathSegment}",
+                        request.url.toString(),
+                    )
                 }
             }
         }
     }
 
-    LaunchedEffect(page.html, page.baseDirectory) {
-        webView.loadDataWithBaseURL(
-            "file://${page.baseDirectory}",
-            page.html,
-            "text/html",
-            "utf-8",
-            null,
-        )
-    }
-
-    DisposableEffect(Unit) {
-        onDispose {
-            webView.stopLoading()
-            webView.destroy()
+    LaunchedEffect(page.url, page.html) {
+        progress = 0
+        problems = 0
+        if (page.served && page.url.isNotEmpty()) {
+            webView.loadUrl(page.url)
+        } else {
+            webView.loadDataWithBaseURL(
+                "file://${page.baseDirectory}",
+                page.html,
+                "text/html",
+                "utf-8",
+                null,
+            )
         }
     }
 
@@ -129,10 +218,29 @@ fun PreviewScreen(
                     maxLines = 1,
                 )
                 Text(
-                    "Preview",
+                    when {
+                        !page.served -> "Preview - served from disk"
+                        currentUrl.isNotEmpty() -> currentUrl.substringAfter("://")
+                        else -> "Preview"
+                    },
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
                 )
+            }
+            if (problems > 0) {
+                StatusChip("$problems", MaterialTheme.colorScheme.error)
+                Spacer(Modifier.width(4.dp))
+            }
+            if (webView.canGoBack()) {
+                IconButton(onClick = { webView.goBack() }) {
+                    Icon(
+                        PyIcons.Undo,
+                        contentDescription = "Back inside the page",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(19.dp),
+                    )
+                }
             }
             IconButton(onClick = onReload) {
                 Icon(
@@ -144,7 +252,15 @@ fun PreviewScreen(
             }
         }
 
-        Divider()
+        if (progress in 1..99) {
+            LinearProgressIndicator(
+                progress = { progress / 100f },
+                modifier = Modifier.fillMaxWidth().height(2.dp),
+                color = MaterialTheme.colorScheme.primary,
+            )
+        } else {
+            Divider()
+        }
 
         Box(Modifier.weight(1f).fillMaxWidth()) {
             AndroidView(factory = { webView }, modifier = Modifier.fillMaxSize())

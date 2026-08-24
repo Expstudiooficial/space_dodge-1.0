@@ -64,6 +64,7 @@ fun FilesScreen(
     onRename: (File, String) -> Unit,
     onDelete: (File) -> Unit,
     onImport: (android.net.Uri) -> Unit,
+    onImportFolder: (android.net.Uri) -> Unit,
     modifier: Modifier = Modifier,
     pickingFor: ServerKind? = null,
     onUseAsTarget: (File) -> Unit = {},
@@ -71,9 +72,16 @@ fun FilesScreen(
 ) {
     var dialog by remember { mutableStateOf<FileDialog?>(null) }
 
+    var importMenuOpen by remember { mutableStateOf(false) }
+    var query by remember { mutableStateOf("") }
+
     val importLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.OpenDocument(),
-    ) { uri -> if (uri != null) onImport(uri) }
+        contract = ActivityResultContracts.OpenMultipleDocuments(),
+    ) { uris -> uris.forEach(onImport) }
+
+    val folderLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocumentTree(),
+    ) { uri -> if (uri != null) onImportFolder(uri) }
 
     val atRoot = state.directory?.absolutePath == rootPath
 
@@ -101,12 +109,41 @@ fun FilesScreen(
                     maxLines = 1,
                 )
             }
-            IconButton(onClick = { importLauncher.launch(arrayOf("*/*")) }) {
-                Icon(
-                    PyIcons.FileUpload,
-                    contentDescription = "Import a file",
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
+            Box {
+                IconButton(onClick = { importMenuOpen = true }) {
+                    Icon(
+                        PyIcons.FileUpload,
+                        contentDescription = "Upload from this phone",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                DropdownMenu(
+                    expanded = importMenuOpen,
+                    onDismissRequest = { importMenuOpen = false },
+                ) {
+                    DropdownMenuItem(
+                        text = { Text("Upload files") },
+                        leadingIcon = {
+                            Icon(PyIcons.Description, contentDescription = null,
+                                 modifier = Modifier.size(18.dp))
+                        },
+                        onClick = {
+                            importMenuOpen = false
+                            importLauncher.launch(arrayOf("*/*"))
+                        },
+                    )
+                    DropdownMenuItem(
+                        text = { Text("Upload a folder") },
+                        leadingIcon = {
+                            Icon(PyIcons.Folder, contentDescription = null,
+                                 modifier = Modifier.size(18.dp))
+                        },
+                        onClick = {
+                            importMenuOpen = false
+                            folderLauncher.launch(null)
+                        },
+                    )
+                }
             }
             IconButton(onClick = { dialog = FileDialog.NewFolder }) {
                 Icon(
@@ -122,6 +159,19 @@ fun FilesScreen(
                     tint = MaterialTheme.colorScheme.primary,
                 )
             }
+        }
+
+        Box(
+            Modifier
+                .fillMaxWidth()
+                .background(MaterialTheme.colorScheme.surface)
+                .padding(horizontal = 12.dp, vertical = 4.dp),
+        ) {
+            SearchField(
+                value = query,
+                onValueChange = { query = it },
+                placeholder = "Filter this folder",
+            )
         }
 
         if (pickingFor != null) {
@@ -152,7 +202,25 @@ fun FilesScreen(
                 Modifier.fillMaxSize(),
                 contentPadding = PaddingValues(bottom = 24.dp),
             ) {
-                items(state.entries, key = { it.file.absolutePath }) { entry ->
+                val needle = query.trim().lowercase()
+                val shown = if (needle.isEmpty()) {
+                    state.entries
+                } else {
+                    state.entries.filter { it.name.lowercase().contains(needle) }
+                }
+
+                if (shown.isEmpty()) {
+                    item {
+                        EmptyState(
+                            icon = PyIcons.Search,
+                            title = "Nothing here matches",
+                            hint = "${state.entries.size} items in this folder. " +
+                                "Workspace Search looks inside files, across every folder.",
+                        )
+                    }
+                }
+
+                items(shown, key = { it.file.absolutePath }) { entry ->
                     FileRow(
                         entry = entry,
                         action = actionFor(entry),
