@@ -380,8 +380,23 @@ def errors() -> str:
 # ------------------------------------------------------------------- loading
 
 def load_all(enabled_ids) -> str:
-    """Loads the enabled plugins and unloads the rest. Returns what happened."""
-    wanted = {_safe_id(str(i)) for i in (enabled_ids or [])}
+    """Loads the enabled plugins and unloads the rest. Returns what happened.
+
+    Takes a comma-separated string as well as a list: what crosses the bridge
+    from Kotlin is whatever the caller happened to have, and an empty Kotlin
+    collection arrives as an object Python cannot iterate.
+    """
+    if isinstance(enabled_ids, str):
+        names = [part for part in enabled_ids.split(",") if part.strip()]
+    elif enabled_ids is None:
+        names = []
+    else:
+        try:
+            names = list(enabled_ids)
+        except TypeError:
+            names = []
+
+    wanted = {_safe_id(str(i)) for i in names if str(i).strip()}
 
     for plugin_id in list(_loaded):
         if plugin_id not in wanted:

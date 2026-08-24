@@ -200,19 +200,23 @@ class Workspace(context: Context) {
         return trimmed.take(120)
     }
 
-    /** Drops the bundled examples in on first launch so the app is never empty. */
+    /**
+     * Drops the bundled examples in, and tops them up on later versions.
+     *
+     * Only files that are not already there are written, so an example the
+     * user edited is never overwritten - but an example added in a newer
+     * version does arrive, which a one-shot "does the folder exist" check
+     * would have hidden from everyone who already had the app.
+     */
     suspend fun seedExamples(): Int = withContext(Dispatchers.IO) {
-        val examplesDir = File(root, "examples")
-        if (examplesDir.exists()) return@withContext 0
-        examplesDir.mkdirs()
-        // Recursive now that the examples include a plugin folder, which is
-        // only a useful example if it arrives as a folder.
+        val examplesDir = File(root, "examples").apply { mkdirs() }
         runCatching { copyAssets("examples", examplesDir) }.getOrDefault(0)
     }
 
     private fun copyAssets(assetPath: String, target: File): Int {
         val children = appContext.assets.list(assetPath).orEmpty()
         if (children.isEmpty()) {
+            if (target.exists()) return 0
             target.parentFile?.mkdirs()
             appContext.assets.open(assetPath).use { input ->
                 target.outputStream().use { output -> input.copyTo(output) }

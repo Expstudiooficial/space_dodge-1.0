@@ -791,7 +791,11 @@ object PythonEngine {
     suspend fun loadPlugins(enabled: Collection<String>): JSONObject =
         withContext(controlDispatcher) {
             runCatching {
-                JSONObject(pluginRuntime.callAttr("load_all", enabled.toList()).toString())
+                // Sent as one string rather than a collection: Chaquopy hands
+                // Kotlin's EmptyList across as an object Python cannot iterate,
+                // and a comma-separated list has no such corner.
+                val ids = enabled.joinToString(",")
+                JSONObject(pluginRuntime.callAttr("load_all", ids).toString())
             }.getOrElse { failure("load_all", it) }
         }
 

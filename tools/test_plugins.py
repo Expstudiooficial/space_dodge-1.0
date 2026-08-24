@@ -318,6 +318,14 @@ check("the file really is in the workspace",
 # ------------------------------------------------------- loading in batches
 
 print("\n== enabling and disabling ==")
+check("an empty string asks for nothing", result(plugins.load_all(""))["ok"],
+      plugins.load_all(""))
+check("None asks for nothing", result(plugins.load_all(None))["ok"], plugins.load_all(None))
+check("a comma-separated string works like a list",
+      {r["id"] for r in result(plugins.load_all("demo.wordcount,demo.notes"))["results"]}
+      == {"demo.wordcount", "demo.notes"},
+      plugins.load_all("demo.wordcount,demo.notes"))
+
 outcome = result(plugins.load_all(["demo.wordcount", "demo.notes"]))
 ok_ids = {r["id"] for r in outcome["results"] if r.get("ok")}
 check("load_all loads what was asked for", ok_ids == {"demo.wordcount", "demo.notes"}, outcome)
