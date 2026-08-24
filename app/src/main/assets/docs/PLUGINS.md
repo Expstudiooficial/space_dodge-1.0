@@ -97,7 +97,7 @@ wrapping directory if it finds one.
 | `description` | no | One paragraph. Up to 600 characters. |
 | `entry` | no | The module PyCmd imports. Defaults to `main.py`. |
 | `panel` | no | An HTML file. Having one is what gives the plugin an **Open** button and a tab. |
-| `tab` | no | `{"title": "…", "icon": "…"}` or just a string. Needs `panel`. |
+| `tab` | no | `{"title": "…"}` or just a string. Needs `panel`. An `icon` is accepted and kept for a future version; nothing draws it yet. |
 | `commands` | no | Console commands, for the list and the help text. You still register the handler in code. |
 | `permissions` | no | `files`, `network`, `console`, `servers`, `packages`. **Documentation, not enforcement** — they are shown to the user so they know what to expect. Declare honestly. |
 

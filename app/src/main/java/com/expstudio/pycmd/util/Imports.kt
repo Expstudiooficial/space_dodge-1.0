@@ -26,6 +26,7 @@ object Imports {
     private const val MAX_BYTES = 64L * 1024 * 1024
     private const val MAX_FILES = 3000
     private const val MAX_DEPTH = 12
+    private const val STALE_AFTER_MS = 10 * 60 * 1000L
 
     /** What was copied, and how big it turned out to be. */
     data class Staged(val root: File, val name: String, val files: Int, val bytes: Long)
@@ -133,8 +134,11 @@ object Imports {
     private fun scratch(context: Context, label: String): File {
         val root = File(context.cacheDir, "imports")
         root.mkdirs()
-        // Anything left by an earlier import is rubbish now.
-        root.listFiles()?.forEach { it.deleteRecursively() }
+        // Clear out what an earlier import abandoned, but leave anything
+        // recent alone: two imports can be in flight at once, and wiping the
+        // folder wholesale would pull the first one's files out from under it.
+        val stale = System.currentTimeMillis() - STALE_AFTER_MS
+        root.listFiles()?.filter { it.lastModified() < stale }?.forEach { it.deleteRecursively() }
         val folder = File(root, "${System.currentTimeMillis()}-${sanitise(label).take(24)}")
         folder.mkdirs()
         return folder

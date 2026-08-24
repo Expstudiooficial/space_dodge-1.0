@@ -1,10 +1,18 @@
 # PyCmd
 
-A Python command line for Android. Write and run Python on the phone itself —
+A programmer's console for Android. Write and run code on the phone itself —
 no server, no connection, no desktop involved.
 
-Version 1.0. Kotlin and Jetpack Compose for the app, JavaScript for the console
-and editor, CPython 3.13 embedded through [Chaquopy](https://chaquo.com/chaquopy/).
+Six languages actually run on the device: **Python**, **C**, **Go**, **Rust**,
+**JavaScript** and shell. Python is CPython 3.13, embedded through
+[Chaquopy](https://chaquo.com/chaquopy/); C, Go and Rust run on interpreters
+written for this app, because Android has not allowed an app to execute code it
+compiled itself since API 29; JavaScript is handed to the engine the device
+already has. Another twenty file types are edited, highlighted, previewed and
+served.
+
+Version 1.2. Kotlin and Jetpack Compose for the app, JavaScript for the console
+and editor.
 
 ---
 
@@ -16,13 +24,20 @@ appearing all at once when the script ends, `input()` prompts you and waits,
 and Stop interrupts a runaway loop. Terminal colours from libraries like `rich`
 render properly. Completions for names in your session appear as you type.
 
-**Editor** — a code editor with Python syntax highlighting, line numbers,
-auto-indent, bracket matching, and a shortcut row for the characters phone
-keyboards hide. Run the open file straight from the toolbar.
+**Editor** — syntax highlighting for every language it knows, line numbers,
+auto-indent, bracket matching, a snippet bar that changes with the file type,
+autosave, and a shortcut row for the characters phone keyboards hide. Run the
+open file straight from the toolbar, whatever language it is.
 
-**Files** — a private workspace you can browse, create in, rename, delete, and
-import into from anywhere on the device. Ten example scripts are there on
-first launch, covering the console, the editor, packages and servers.
+**Files** — a private workspace you can browse, filter, create in, rename and
+delete. Upload files or a whole folder from anywhere on the device. Examples
+ship on first launch, including two working plugins.
+
+**Preview** — HTML, CSS, Markdown, JavaScript, JSON, CSV, SVG and images. A
+page is served over a loopback HTTP server rooted at its own folder, so it
+behaves like a real site: scripts run, `fetch` works, relative paths resolve,
+and links inside the site follow. Whatever the page logs or throws is copied
+into the debug console.
 
 **Packages** — install pure-Python libraries from PyPI onto the device at
 runtime. `requests`, `flask` and `rich` are already built in.
@@ -34,17 +49,37 @@ its own scrollback and its own stdin box, and a **Kill** switch beside Stop for
 when a script hangs before it ever finishes starting. Servers stay alive in the
 background while you use other apps.
 
+**It offers to fix what it can** — a file one typo away from the name your
+script asked for, an import of a package that is not installed, a port already
+in use, a folder served with no index page. The console says what it thinks is
+wrong and what it would change, and waits for `yes`. It never acts on its own.
+
+**Plugins** — thirteen built in, each a switch over behaviour already compiled
+into the app, plus **plugins you write yourself**: Python that PyCmd imports,
+with an optional HTML panel that becomes its own tab. Install from a file, a
+folder or a zip. They are not sandboxed and the app says so before installing
+one. [PLUGINS.md](PLUGINS.md) is the authoring guide — format, API, events,
+panel bridge, four working examples, and a prompt to hand an AI.
+
+**Tools** — JSON formatting, Base64 and hashes, a regex lab that uses Python's
+own `re`, an HTTP client, and workspace-wide search.
+
 **Debug console** — one tap from anywhere in the top bar. Interpreter
-lifecycle, server events, package installs, file errors, WebView JavaScript
-errors and uncaught Java exceptions, with level filters, text search,
-expandable stack traces, copy-all and save-to-workspace.
+lifecycle, server events, package installs, file errors, plugin failures,
+JavaScript errors from a preview or a panel, and uncaught Java exceptions, with
+level filters, text search, expandable stack traces, copy-all and
+save-to-workspace.
+
+**Guides and System** — the manuals on the phone, and a screen that says what
+the app is using: versions, architecture, what each folder costs, what is
+running, and housekeeping that touches nothing you wrote.
 
 ---
 
 ## Just want to try it
 
 A ready-to-install debug APK is in [`dist/`](dist/) - download
-[`PyCmd-1.1-debug.apk`](dist/PyCmd-1.1-debug.apk), open it on the phone, and
+[`PyCmd-1.2-debug.apk`](dist/PyCmd-1.2-debug.apk), open it on the phone, and
 allow the install when Android asks. It is signed with the standard debug key,
 so no keystore or store account is involved. See [dist/README.md](dist/README.md)
 for the details.

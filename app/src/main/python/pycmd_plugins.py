@@ -22,14 +22,12 @@ document, and the two are meant to be read together.
 from __future__ import annotations
 
 import importlib.util
-import io
 import json
 import os
 import shutil
 import sys
 import time
 import traceback
-import types
 import zipfile
 
 __all__ = [
@@ -173,11 +171,16 @@ def _extract_zip(source: str, target: str) -> None:
 
 
 def _safe_join(root: str, relative: str) -> str:
-    """Refuses the `../../etc/passwd` trick that zip files are famous for."""
-    target = os.path.normpath(os.path.join(root, relative))
-    if not target.startswith(os.path.abspath(root) + os.sep) and target != os.path.abspath(root):
-        if not os.path.abspath(target).startswith(os.path.abspath(root)):
-            raise PluginError(f"the zip tries to write outside its folder: {relative}")
+    """Refuses the `../../etc/passwd` trick that zip files are famous for.
+
+    Both sides are made absolute before comparing, and the separator is part
+    of the comparison: without it a folder called `pluginsX` would pass a
+    prefix test against `plugins`.
+    """
+    base = os.path.abspath(root)
+    target = os.path.abspath(os.path.join(base, relative))
+    if target != base and not target.startswith(base + os.sep):
+        raise PluginError(f"the zip tries to write outside its folder: {relative}")
     return target
 
 
@@ -455,6 +458,14 @@ def load(plugin_id: str) -> str:
 
     _loaded[plugin_id] = {"manifest": manifest, "module": module, "api": api}
     _errors.pop(plugin_id, None)
+    # Documented in PLUGINS.md, so it has to actually arrive: a plugin can
+    # subscribe to its own load and do the work `setup` was too early for.
+    for handler in api.listeners.get("plugin_loaded", []):
+        try:
+            handler({"id": plugin_id})
+        except BaseException as error:  # noqa: BLE001
+            _report("error", f"{manifest['name']} failed on plugin_loaded",
+                    _format_error(error, manifest["name"]))
     _report("info", f"{manifest['name']} loaded", f"{len(api.exports)} exports, "
                                                   f"{len(api.command_names)} commands")
     return _json({"ok": True, "id": plugin_id, "manifest": manifest,

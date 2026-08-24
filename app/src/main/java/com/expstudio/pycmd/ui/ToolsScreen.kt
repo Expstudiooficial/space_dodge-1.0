@@ -515,7 +515,10 @@ private fun WorkspaceSearchScreen(viewModel: MainViewModel, modifier: Modifier) 
                     }
                 }
                 items((0 until count).toList()) { index ->
-                    val hit = hits!!.getJSONObject(index)
+                    // `count` is zero when hits is null, so this list is empty
+                    // in that case - but reading it defensively costs nothing
+                    // and cannot be broken by a later edit to the count.
+                    val hit = hits?.optJSONObject(index) ?: return@items
                     PyCard(contentPadding = PaddingValues(0.dp)) {
                         Column(
                             Modifier
