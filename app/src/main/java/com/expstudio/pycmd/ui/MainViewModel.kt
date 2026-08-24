@@ -11,6 +11,7 @@ import com.expstudio.pycmd.python.InstalledPackage
 import com.expstudio.pycmd.python.LanguageInfo
 import com.expstudio.pycmd.python.OutputChunk
 import com.expstudio.pycmd.python.PreviewPage
+import com.expstudio.pycmd.python.forFileName
 import com.expstudio.pycmd.python.PythonEngine
 import com.expstudio.pycmd.python.RunningServer
 import com.expstudio.pycmd.python.ServerService
@@ -702,13 +703,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     /** The language of a file, from the catalogue already loaded. */
-    fun languageForName(name: String): LanguageInfo? {
-        val extension = name.substringAfterLast('.', "").lowercase()
-        if (extension.isEmpty()) return null
-        return _languages.value.firstOrNull { info ->
-            info.extensions.split(",").any { it.trim().removePrefix(".") == extension }
-        }
-    }
+    fun languageForName(name: String): LanguageInfo? = _languages.value.forFileName(name)
 
     /**
      * Renders a previewable file.

@@ -7,14 +7,17 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.systemBars
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.material3.Badge
 import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.CircularProgressIndicator
@@ -45,6 +48,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.expstudio.pycmd.plugins.PluginIds
+import com.expstudio.pycmd.python.forFileName
+import com.expstudio.pycmd.util.WorkspaceEntry
 import com.expstudio.pycmd.python.OutputChunk
 import java.io.File
 import kotlinx.coroutines.delay
@@ -78,9 +83,20 @@ fun PyCmdRoot(viewModel: MainViewModel = viewModel()) {
     // Which language the open file is, so the snippet bar and the header can
     // say so. Derived rather than stored: the file name is the only input.
     val editorLanguage = remember(editorState.fileName, languages) {
-        val extension = editorState.fileName.substringAfterLast('.', "").lowercase()
-        languages.firstOrNull { info ->
-            info.extensions.split(",").any { it.trim().removePrefix(".") == extension }
+        languages.forFileName(editorState.fileName)
+    }
+
+    // Keyed on the catalogue, so the play buttons appear the moment it loads
+    // rather than the next time something else happens to redraw the list.
+    val fileAction: (WorkspaceEntry) -> FileAction = remember(languages) {
+        { entry ->
+            val language = languages.forFileName(entry.name)
+            when {
+                entry.isDirectory -> FileAction.NONE
+                language?.canRun == true -> FileAction.RUN
+                language?.canPreview == true -> FileAction.PREVIEW
+                else -> FileAction.NONE
+            }
         }
     }
 
@@ -293,6 +309,7 @@ fun PyCmdRoot(viewModel: MainViewModel = viewModel()) {
                     onOpenDirectory = viewModel::openDirectory,
                     onOpenFile = viewModel::openInEditor,
                     onRunFile = viewModel::runFile,
+                    actionFor = fileAction,
                     onUp = { viewModel.navigateUp() },
                     onNewFile = viewModel::createFile,
                     onNewFileOfType = viewModel::createFileOfType,
@@ -392,7 +409,14 @@ fun PyCmdRoot(viewModel: MainViewModel = viewModel()) {
     // The preview sits over everything: it is a mode, not a destination, and
     // closing it puts the user back exactly where they were.
     previewPage?.let { page ->
-        Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
+        Box(
+            Modifier
+                .fillMaxSize()
+                .background(MaterialTheme.colorScheme.background)
+                // The overlay sits outside the Scaffold, so it has to inset
+                // itself: without this its header hides under the status bar.
+                .windowInsetsPadding(WindowInsets.systemBars),
+        ) {
             PreviewScreen(
                 page = page,
                 onClose = viewModel::closePreview,

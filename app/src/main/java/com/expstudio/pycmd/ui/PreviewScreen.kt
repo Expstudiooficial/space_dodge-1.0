@@ -57,6 +57,10 @@ fun PreviewScreen(
 
     val webView = remember {
         WebView(context).apply {
+            // Match the console's WebView: without explicit parameters the
+            // view is added with wrap-content, and a page that sizes itself
+            // against the viewport lays out against a strip a few hundred
+            // pixels tall.
             layoutParams = ViewGroup.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT,

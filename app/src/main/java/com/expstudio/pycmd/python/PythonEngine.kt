@@ -889,6 +889,22 @@ object PythonEngine {
 }
 
 /** What the app knows about a file type. */
+/**
+ * The language whose extensions include [name]'s.
+ *
+ * Lives here rather than in the view model so that a composable can match on
+ * the catalogue it already collects: matching through the view model reads a
+ * flow's value without subscribing to it, and the row then never notices when
+ * the catalogue finally arrives.
+ */
+fun List<LanguageInfo>.forFileName(name: String): LanguageInfo? {
+    val extension = name.substringAfterLast('.', "").lowercase()
+    if (extension.isEmpty()) return null
+    return firstOrNull { info ->
+        info.extensions.split(",").any { it.trim().removePrefix(".") == extension }
+    }
+}
+
 /** A rendered preview: the page, and where its relative links point. */
 data class PreviewPage(
     val name: String,

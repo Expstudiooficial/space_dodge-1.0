@@ -43,6 +43,9 @@ import com.expstudio.pycmd.python.LanguageInfo
 import com.expstudio.pycmd.util.WorkspaceEntry
 import java.io.File
 
+/** What pressing the button on a file row does. */
+enum class FileAction { NONE, RUN, PREVIEW }
+
 @Composable
 fun FilesScreen(
     state: FilesState,
@@ -51,6 +54,8 @@ fun FilesScreen(
     onOpenDirectory: (File) -> Unit,
     onOpenFile: (File) -> Unit,
     onRunFile: (File) -> Unit,
+    /** What the play button on a row would do, if anything. */
+    actionFor: (WorkspaceEntry) -> FileAction,
     onUp: () -> Unit,
     onNewFile: (String) -> Unit,
     onNewFileOfType: (String, String) -> Unit,
@@ -150,6 +155,7 @@ fun FilesScreen(
                 items(state.entries, key = { it.file.absolutePath }) { entry ->
                     FileRow(
                         entry = entry,
+                        action = actionFor(entry),
                         onOpen = {
                             when {
                                 entry.isDirectory -> onOpenDirectory(entry.file)
@@ -230,6 +236,7 @@ private sealed interface FileDialog {
 @Composable
 private fun FileRow(
     entry: WorkspaceEntry,
+    action: FileAction,
     onOpen: () -> Unit,
     onRun: () -> Unit,
     onRename: () -> Unit,
@@ -276,12 +283,22 @@ private fun FileRow(
             )
         }
 
-        if (entry.isPython) {
+        // Anything the device can actually run or show gets the button: it
+        // was Python-only until C, Go, Rust and JavaScript could run too.
+        if (action != FileAction.NONE) {
             IconButton(onClick = onRun, modifier = Modifier.size(38.dp)) {
                 Icon(
                     PyIcons.PlayArrow,
-                    contentDescription = "Run ${entry.name}",
-                    tint = MaterialTheme.colorScheme.primary,
+                    contentDescription = if (action == FileAction.PREVIEW) {
+                        "Preview ${entry.name}"
+                    } else {
+                        "Run ${entry.name}"
+                    },
+                    tint = if (action == FileAction.PREVIEW) {
+                        MaterialTheme.colorScheme.secondary
+                    } else {
+                        MaterialTheme.colorScheme.primary
+                    },
                     modifier = Modifier.size(20.dp),
                 )
             }
