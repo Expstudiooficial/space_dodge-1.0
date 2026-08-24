@@ -386,6 +386,22 @@
       notifyCursor();
     },
 
+    /**
+     * Inserts a snippet and puts the caret where the snippet wants it.
+     *
+     * Without the second step every snippet would leave the caret at its end,
+     * which for a function body is the wrong side of the closing brace.
+     */
+    insertSnippet: function (text, caret) {
+      var start = input.selectionStart;
+      insertText(text);
+      var target = start + (typeof caret === 'number' ? caret : text.length);
+      input.setSelectionRange(target, target);
+      onInput();
+      notifyCursor();
+      render();
+    },
+
     indent: function () {
       indentLines(input.selectionStart, input.selectionEnd);
       onInput();

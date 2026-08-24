@@ -14,16 +14,20 @@ import com.expstudio.pycmd.python.PythonEngine
 import com.expstudio.pycmd.python.RunningServer
 import com.expstudio.pycmd.python.ServerService
 import com.expstudio.pycmd.plugins.PluginIds
+import com.expstudio.pycmd.plugins.PluginScreen
+import com.expstudio.pycmd.plugins.PluginSpec
 import com.expstudio.pycmd.plugins.Plugins
 import com.expstudio.pycmd.util.DebugLog
 import com.expstudio.pycmd.util.LogEntry
 import com.expstudio.pycmd.util.Workspace
 import com.expstudio.pycmd.util.WorkspaceEntry
 import java.io.File
+import org.json.JSONObject
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 /**
@@ -44,6 +48,7 @@ enum class Tab(val label: String) {
     DOWNLOADS("Downloads"),
     PLUGINS("Plugins"),
     DEBUG("Debug"),
+    TOOL("Tool"),
 }
 
 /** The five destinations in the bottom bar; the rest live behind More. */
@@ -137,6 +142,12 @@ data class Toast(val text: String, val id: Long)
 /** How many lines each server console keeps. */
 private const val CONSOLE_LIMIT = 1500
 
+/** Log tag for the view model's own messages. */
+private const val TAG_VIEW = "ui"
+
+/** How long typing has to stop before Autosave writes the file. */
+private const val AUTOSAVE_DELAY_MS = 2000L
+
 private const val DEFAULT_SNIPPET = """# Welcome to PyCmd.
 # Write Python here, then press Run. Output lands in the Console tab.
 
@@ -183,6 +194,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private val _servers = MutableStateFlow(ServersState())
     val servers: StateFlow<ServersState> = _servers.asStateFlow()
+
+    /** Which plugin tool is open, if any. */
+    private val _activeTool = MutableStateFlow<PluginScreen?>(null)
+    val activeTool: StateFlow<PluginScreen?> = _activeTool.asStateFlow()
 
     private val _toast = MutableStateFlow<Toast?>(null)
     val toast: StateFlow<Toast?> = _toast.asStateFlow()
@@ -250,6 +265,59 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun isPluginOn(id: String): Boolean = Plugins.isOn(id)
+
+    fun isPluginPoweredUp(id: String): Boolean = Plugins.isPoweredUp(id)
+
+    /** Opens a plugin's own screen. */
+    fun openPlugin(spec: PluginSpec) {
+        val screen = spec.screen ?: return
+        if (!Plugins.isOn(spec.id)) {
+            showToast("${spec.name} is off.")
+            return
+        }
+        _activeTool.value = screen
+        _tab.value = Tab.TOOL
+    }
+
+    fun closeTool() {
+        _activeTool.value = null
+        _tab.value = Tab.PLUGINS
+    }
+
+    /**
+     * Runs a plugin tool and hands back what it said.
+     *
+     * The tools live in Python because that is where the batteries are, and
+     * because Regex Lab has to use the same `re` module the user's script
+     * will - a regex tester that disagrees with the language is worse than
+     * none at all.
+     */
+    suspend fun runTool(name: String, arguments: JSONObject): JSONObject =
+        engine.tool(name, arguments)
+
+    /** The text of the file open in the editor, for the tools that offer it. */
+    fun editorContent(): String = _editor.value.content
+
+    fun replaceEditorContent(content: String) {
+        val state = _editor.value
+        if (state.file == null) {
+            showToast("Open a file first.")
+            return
+        }
+        _editor.value = state.copy(content = content, epoch = nextEpoch())
+        showToast("Editor updated")
+    }
+
+    /** Opens a search hit at the right file. */
+    fun openSearchHit(path: String) {
+        val file = File(path)
+        if (!file.exists()) {
+            showToast("That file is gone.")
+            return
+        }
+        _activeTool.value = null
+        openInEditor(file)
+    }
 
     private fun refreshLanguages() {
         viewModelScope.launch {
@@ -388,6 +456,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun onEditorContentChanged(content: String) {
         _editor.value = _editor.value.copy(content = content)
+        scheduleAutosave()
     }
 
     fun onCursorMoved(line: Int, column: Int) {
@@ -400,6 +469,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private var epochCounter = 0L
+
+    /** The pending autosave, cancelled and replaced on every keystroke. */
+    private var autosaveJob: kotlinx.coroutines.Job? = null
 
     private fun nextEpoch(): Long = ++epochCounter
 
@@ -420,6 +492,38 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     /** Saves the open buffer, asking for a name first if it has never been saved. */
+    /**
+     * Saves a couple of seconds after typing stops, when Autosave is on.
+     *
+     * Debounced rather than saving on every keystroke: writing a file per
+     * character would spend the flash budget for nothing, and the point is
+     * only to survive a phone call or a tab switch, not to save mid-word. A
+     * file that has never been named is left alone - there is nowhere to put
+     * it without asking.
+     */
+    private fun scheduleAutosave() {
+        if (!Plugins.isOn(PluginIds.AUTOSAVE)) return
+        val state = _editor.value
+        if (state.file == null || !state.isDirty) return
+
+        autosaveJob?.cancel()
+        autosaveJob = viewModelScope.launch {
+            delay(AUTOSAVE_DELAY_MS)
+            val current = _editor.value
+            val target = current.file ?: return@launch
+            if (!current.isDirty) return@launch
+            runCatching { workspace.write(target, current.content) }
+                .onSuccess {
+                    _editor.value = _editor.value.copy(savedContent = current.content)
+                    DebugLog.debug(TAG_VIEW, "autosaved ${target.name}")
+                    _files.value.directory?.let { refreshFiles(it) }
+                }
+                .onFailure { error ->
+                    DebugLog.error(TAG_VIEW, "autosave failed for ${target.name}", error)
+                }
+        }
+    }
+
     fun saveEditor(nameIfUntitled: String? = null, onSaved: (File) -> Unit = {}) {
         val state = _editor.value
         val target = state.file ?: run {

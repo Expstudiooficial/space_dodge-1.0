@@ -72,6 +72,16 @@ fun PyCmdRoot(viewModel: MainViewModel = viewModel()) {
     val downloadsState by viewModel.downloads.collectAsState()
     val pluginsEnabled by viewModel.pluginsEnabled.collectAsState()
     val languages by viewModel.languages.collectAsState()
+    val activeTool by viewModel.activeTool.collectAsState()
+
+    // Which language the open file is, so the snippet bar and the header can
+    // say so. Derived rather than stored: the file name is the only input.
+    val editorLanguage = remember(editorState.fileName, languages) {
+        val extension = editorState.fileName.substringAfterLast('.', "").lowercase()
+        languages.firstOrNull { info ->
+            info.extensions.split(",").any { it.trim().removePrefix(".") == extension }
+        }
+    }
 
     // Both WebViews are created once and reused for the life of the screen, so
     // console history and editor state survive tab switches.
@@ -113,6 +123,11 @@ fun PyCmdRoot(viewModel: MainViewModel = viewModel()) {
     // else it returns to the console first.
     BackHandler(enabled = tab != Tab.CONSOLE) {
         if (tab == Tab.FILES && viewModel.navigateUp()) return@BackHandler
+        // A tool was opened from the plugin list, so that is where back goes.
+        if (tab == Tab.TOOL) {
+            viewModel.closeTool()
+            return@BackHandler
+        }
         // A destination reached through More goes back to More first.
         val parent = if (tab in setOf(Tab.PACKAGES, Tab.DOWNLOADS, Tab.PLUGINS)) {
             Tab.MORE
@@ -162,6 +177,17 @@ fun PyCmdRoot(viewModel: MainViewModel = viewModel()) {
                         }
                     }
                 },
+                navigationIcon = {
+                    if (tab == Tab.TOOL) {
+                        IconButton(onClick = { viewModel.closeTool() }) {
+                            Icon(
+                                PyIcons.ArrowBack,
+                                contentDescription = "Back to the plugin list",
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
+                },
                 actions = {
                     IconButton(onClick = { viewModel.clearNamespace() }, enabled = status.ready) {
                         Icon(
@@ -208,7 +234,9 @@ fun PyCmdRoot(viewModel: MainViewModel = viewModel()) {
                     viewModel::selectTab,
                     // The other destinations live here, so More has to show
                     // that one of them is the current screen.
-                    forceSelected = tab in setOf(Tab.PACKAGES, Tab.DOWNLOADS, Tab.PLUGINS),
+                    forceSelected = tab in setOf(
+                        Tab.PACKAGES, Tab.DOWNLOADS, Tab.PLUGINS, Tab.TOOL,
+                    ),
                 )
             }
         },
@@ -250,6 +278,10 @@ fun PyCmdRoot(viewModel: MainViewModel = viewModel()) {
                         copyToClipboard(context, text)
                         viewModel.showToast("Copied the file")
                     },
+                    languageId = editorLanguage?.id ?: "text",
+                    languageName = editorLanguage?.name.orEmpty(),
+                    snippetsOn = viewModel.isPluginOn(PluginIds.SNIPPETS),
+                    snippetsPoweredUp = viewModel.isPluginPoweredUp(PluginIds.SNIPPETS),
                 )
 
                 Tab.FILES -> FilesScreen(
@@ -325,12 +357,21 @@ fun PyCmdRoot(viewModel: MainViewModel = viewModel()) {
                 Tab.PLUGINS -> PluginsScreen(
                     enabled = pluginsEnabled,
                     onToggle = viewModel::setPluginEnabled,
-                    onOpen = { spec ->
-                        viewModel.showToast("${spec.name} opens from here in a later build")
-                    },
+                    onOpen = viewModel::openPlugin,
                     onEnableAll = viewModel::enableAllPlugins,
                     onReset = viewModel::resetPlugins,
                 )
+
+                Tab.TOOL -> {
+                    val tool = activeTool
+                    if (tool == null) {
+                        // Nothing to show without a chosen tool; the plugin
+                        // list is where one gets chosen.
+                        LaunchedEffect(Unit) { viewModel.selectTab(Tab.PLUGINS) }
+                    } else {
+                        ToolScreen(screen = tool, viewModel = viewModel)
+                    }
+                }
 
                 Tab.DEBUG -> DebugScreen(
                     entries = debugEntries,

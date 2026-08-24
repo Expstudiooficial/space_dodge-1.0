@@ -90,15 +90,15 @@ object Plugins {
             id = PluginIds.POLYGLOT_RUNNER,
             name = "Polyglot Runner",
             tagline = "Run more than Python",
-            description = "Runs JavaScript in a real engine, previews HTML, CSS and Markdown " +
-                "live, and executes shell commands. Servers can serve a site written in any " +
-                "language. Compiled languages - C, Rust, Go, Java - can be written and served " +
-                "but not built: there is no compiler on the device, and the app says so rather " +
+            description = "Runs C, Go and Rust on interpreters built into the app, and " +
+                "JavaScript in the device's own engine - the same one a browser uses. Previews " +
+                "HTML, CSS and Markdown, and runs shell scripts. Servers can serve a site " +
+                "written in any language. What still cannot run says so on its own card rather " +
                 "than failing quietly.",
             group = PluginGroup.KIT,
             defaultEnabled = true,
-            poweredUp = "Adds a console for JavaScript with its own scrollback, and lets a " +
-                "preview reload itself as you edit.",
+            poweredUp = "Adds a live preview that reloads as you type, and keeps each " +
+                "language's run output on the console with its own heading.",
             requires = listOf(PluginIds.POLYGLOT_FILES),
         ),
         PluginSpec(

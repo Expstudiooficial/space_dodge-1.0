@@ -27,6 +27,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import com.expstudio.pycmd.plugins.Snippets
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 
@@ -51,6 +52,10 @@ fun EditorScreen(
     onRunAsServer: () -> Unit = {},
     onOpenDebug: () -> Unit = {},
     onCopyAll: (String) -> Unit = {},
+    languageId: String = "python",
+    languageName: String = "",
+    snippetsOn: Boolean = false,
+    snippetsPoweredUp: Boolean = false,
 ) {
     var menuOpen by remember { mutableStateOf(false) }
     val currentContent by rememberUpdatedState(state.content)
@@ -109,7 +114,8 @@ fun EditorScreen(
                     }
                 }
                 Text(
-                    text = "Ln ${state.line}, Col ${state.column}",
+                    text = "Ln ${state.line}, Col ${state.column}" +
+                        if (languageName.isNotEmpty()) "  ·  $languageName" else "",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -183,6 +189,21 @@ fun EditorScreen(
             EditorToolButton(PyIcons.Redo, "Redo") { host.eval("PyEditor.redo();") }
             EditorToolButton(PyIcons.FormatIndentIncrease, "Indent") { host.eval("PyEditor.indent();") }
             EditorToolButton(PyIcons.FormatIndentDecrease, "Outdent") { host.eval("PyEditor.outdent();") }
+        }
+
+        if (snippetsOn) {
+            val snippets = remember(languageId, snippetsPoweredUp) {
+                Snippets.forLanguage(languageId, snippetsPoweredUp)
+            }
+            KeyStrip(
+                keys = snippets.map { it.label },
+                onKey = { label ->
+                    snippets.firstOrNull { it.label == label }?.let { snippet ->
+                        val (text, caret) = Snippets.split(snippet.body)
+                        host.eval("PyEditor.insertSnippet(${jsString(text)}, $caret);")
+                    }
+                },
+            )
         }
 
         KeyStrip(

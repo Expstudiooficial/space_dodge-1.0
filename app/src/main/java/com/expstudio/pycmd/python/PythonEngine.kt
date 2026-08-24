@@ -22,6 +22,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.withContext
+import org.json.JSONObject
 
 /** The main console's channel name. Servers use their own handle. */
 const val CONSOLE_CHANNEL = "console"
@@ -121,6 +122,7 @@ object PythonEngine {
     private lateinit var packages: PyObject
     private lateinit var servers: PyObject
     private lateinit var downloads: PyObject
+    private lateinit var tools: PyObject
 
     private lateinit var appContext: Context
     private lateinit var workspaceDir: File
@@ -254,6 +256,7 @@ object PythonEngine {
             packages = python.getModule("pycmd_packages")
             servers = python.getModule("pycmd_servers")
             downloads = python.getModule("pycmd_download")
+            tools = python.getModule("pycmd_tools")
 
             val version = runtime.callAttr(
                 "configure",
@@ -433,6 +436,7 @@ object PythonEngine {
                         mode = map.str("mode"),
                         highlight = map.str("highlight"),
                         note = map.str("note"),
+                        extensions = map.str("extensions"),
                     )
                 }
             }.getOrElse {
@@ -453,6 +457,7 @@ object PythonEngine {
                 mode = map.str("mode"),
                 highlight = map.str("highlight"),
                 note = map.str("note"),
+                extensions = map.str("extensions"),
             )
         }.getOrDefault(fallback)
     }
@@ -624,6 +629,32 @@ object PythonEngine {
             DownloadResult(false, error = it.friendlyMessage())
         }
     }
+
+    /**
+     * Runs one of the plugin tools.
+     *
+     * These go through the control dispatcher rather than the interpreter
+     * thread: formatting a bit of JSON or sending an HTTP request has nothing
+     * to do with the script that is running, and should not have to wait for
+     * it to finish - least of all when that script is stuck.
+     */
+    suspend fun tool(name: String, arguments: JSONObject): JSONObject =
+        withContext(controlDispatcher) {
+            if (!_status.value.ready) {
+                return@withContext JSONObject()
+                    .put("ok", false)
+                    .put("error", "the interpreter is not ready yet")
+            }
+            try {
+                val reply = tools.callAttr("invoke", name, arguments.toString()).toString()
+                JSONObject(reply)
+            } catch (error: Throwable) {
+                DebugLog.error(TAG, "tool $name failed", error)
+                JSONObject()
+                    .put("ok", false)
+                    .put("error", error.message ?: error.javaClass.simpleName)
+            }
+        }
 
     suspend fun listDownloads(): List<DownloadedFile> = withContext(controlDispatcher) {
         if (!_status.value.ready) return@withContext emptyList()
@@ -838,6 +869,8 @@ data class LanguageInfo(
     val mode: String,
     val highlight: String,
     val note: String,
+    /** Every extension this language claims, comma separated. */
+    val extensions: String = extension,
 ) {
     val canRun: Boolean get() = mode == "run"
     val canPreview: Boolean get() = mode == "preview"
