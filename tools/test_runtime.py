@@ -484,11 +484,17 @@ check("python is runnable", registry.for_path("a.py")["mode"] == "run", registry
 check("C is runnable", registry.for_path("a.c")["mode"] == "run", registry.for_path("a.c"))
 check("javascript is runnable", registry.for_path("a.js")["mode"] == "run", registry.for_path("a.js"))
 check("html previews", registry.for_path("a.html")["mode"] == "preview", registry.for_path("a.html"))
-check("rust is edit-only", registry.for_path("a.rs")["mode"] == "edit", registry.for_path("a.rs"))
+check("rust is runnable", registry.for_path("a.rs")["mode"] == "run", registry.for_path("a.rs"))
+check("go is runnable", registry.for_path("a.go")["mode"] == "run", registry.for_path("a.go"))
 check(
-    "rust says why it cannot run",
-    "compiler" in registry.for_path("a.rs")["note"],
+    "rust admits it has no borrow checker",
+    "borrow" in registry.for_path("a.rs")["note"],
     registry.for_path("a.rs")["note"],
+)
+check(
+    "java still says why it cannot run",
+    "compiler" in registry.for_path("A.java")["note"],
+    registry.for_path("A.java")["note"],
 )
 check("unknown extension falls back to text", registry.for_path("a.zzz")["id"] == "text",
       registry.for_path("a.zzz"))
@@ -531,12 +537,50 @@ status = pycmd_runtime.run_any(bad_c)
 check("a broken C file reports an error", status == "error", status)
 check("the C error is explained", "C syntax error" in sink.text("stderr"), sink.text("stderr"))
 
+report("\n== languages: running Go and Rust through the runtime ==")
 rust_file = os.path.join(workspace, "demo.rs")
 with open(rust_file, "w", encoding="utf-8") as handle:
-    handle.write('fn main() { println!("hi"); }\n')
+    handle.write(
+        "fn main() {\n"
+        "    let squares: Vec<i32> = (1..=3).map(|n| n * n).collect();\n"
+        '    println!("{:?}", squares);\n'
+        "}\n"
+    )
 sink.reset()
 status = pycmd_runtime.run_any(rust_file)
-check("rust is refused", status == "error", status)
+check("run_any runs Rust", status == "ok", status)
+check("Rust output reached the console", "[1, 4, 9]" in sink.text("stdout"), repr(sink.text()))
+
+go_file = os.path.join(workspace, "demo.go")
+with open(go_file, "w", encoding="utf-8") as handle:
+    handle.write(
+        "package main\n\nimport \"fmt\"\n\n"
+        "func main() {\n"
+        "\tfor i := 1; i <= 3; i++ {\n"
+        "\t\tfmt.Print(i*i, \" \")\n"
+        "\t}\n"
+        "\tfmt.Println()\n"
+        "}\n"
+    )
+sink.reset()
+status = pycmd_runtime.run_any(go_file)
+check("run_any runs Go", status == "ok", status)
+check("Go output reached the console", "1 4 9" in sink.text("stdout"), repr(sink.text()))
+
+bad_go = os.path.join(workspace, "bad.go")
+with open(bad_go, "w", encoding="utf-8") as handle:
+    handle.write("package main\n\nfunc main() { x := }\n")
+sink.reset()
+status = pycmd_runtime.run_any(bad_go)
+check("a broken Go file reports an error", status == "error", status)
+check("the Go error is explained", "Go syntax error" in sink.text("stderr"), sink.text("stderr"))
+
+java_file = os.path.join(workspace, "Demo.java")
+with open(java_file, "w", encoding="utf-8") as handle:
+    handle.write("public class Demo { }\n")
+sink.reset()
+status = pycmd_runtime.run_any(java_file)
+check("java is refused", status == "error", status)
 check("and says why", "compiler" in sink.text("stderr"), sink.text("stderr"))
 
 sink.reset()

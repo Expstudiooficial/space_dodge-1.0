@@ -183,6 +183,14 @@ _sink = None
 _workspace = None
 _state_lock = threading.RLock()
 _stop_flag = threading.Event()
+
+# The same flag as a bare boolean.
+#
+# The trace-hook fallback reads it from inside a trace function, and
+# `Event.is_set` is written in Python: calling it there means a `call` event
+# fires from inside the tracer, on every traced line, for the whole run. A
+# module global costs one dict lookup and cannot re-enter anything.
+_stop_requested = False
 _namespace: dict = {}
 _run_counter = 0
 _active_thread_id: int | None = None
@@ -286,16 +294,51 @@ def interrupt_thread(thread_id: int, exception=KeyboardInterrupt) -> bool:
         return False
 
 
+class _DiscardedInterrupt(BaseException):
+    """A stop that arrived too late to belong to any run."""
+
+
 def _clear_pending_async_exc(thread_id: int) -> None:
-    """Drop an interrupt that was requested after the run already finished."""
-    if not _use_async_exc or _set_async_exc is None:
+    """Consume an interrupt requested after the run had already finished.
+
+    Passing NULL to ``PyThreadState_SetAsyncExc`` looks like the way to cancel
+    a queued interrupt, and it does drop the thread's exception - but the
+    interpreter only clears its own "an async exception is waiting" signal when
+    one is actually *delivered*. A NULL therefore leaves that signal set for
+    the life of the process, and the eval loop keeps taking the slow path it
+    guards. With a trace function installed the two together stop a thread
+    making progress at all, which is how this was found.
+
+    Delivering a harmless exception instead clears both. It lands on the next
+    instruction that checks, which is why the loop below exists: it gives the
+    interpreter a check point, and then swallows what it asked for.
+    """
+    if not _use_async_exc or _set_async_exc is None or thread_id is None:
         return
     import ctypes
 
     try:
-        _set_async_exc(ctypes.c_ulong(thread_id), ctypes.py_object())
+        queued = _set_async_exc(
+            ctypes.c_ulong(thread_id), ctypes.py_object(_DiscardedInterrupt)
+        )
+    except _DiscardedInterrupt:
+        # Usually it lands right here, on the return from the C call, and
+        # there is nothing further to do.
+        return
     except Exception:  # noqa: BLE001
+        return
+
+    if queued <= 0:
+        return
+    try:
+        for _ in range(64):
+            _check_point()
+    except _DiscardedInterrupt:
         pass
+
+
+def _check_point() -> None:
+    """A call, which is where the interpreter looks for a pending exception."""
 
 
 def _fresh_namespace() -> dict:
@@ -362,6 +405,9 @@ def reset_namespace() -> None:
 
 def request_stop() -> None:
     """Ask the console's running code to stop at its next bytecode boundary."""
+    global _stop_requested
+
+    _stop_requested = True
     _stop_flag.set()
 
     thread_id = _active_thread_id
@@ -375,7 +421,7 @@ def _make_tracer():
     """Cooperative interrupt used when async exceptions are unavailable."""
 
     def tracer(frame, event, arg):
-        if _stop_flag.is_set():
+        if _stop_requested:
             raise KeyboardInterrupt("execution stopped")
         return tracer
 
@@ -415,7 +461,7 @@ def _split_last_expression(source: str, filename: str):
 
 def run_source(source: str, source_name: str = "<console>", echo_result: bool = True) -> str:
     """Execute a chunk of code. Returns "ok", "error" or "stopped"."""
-    global _run_counter, _active_thread_id
+    global _run_counter, _active_thread_id, _stop_requested
 
     if _sink is None:
         raise RuntimeError("pycmd_runtime.configure() has not been called")
@@ -425,6 +471,7 @@ def run_source(source: str, source_name: str = "<console>", echo_result: bool = 
         _run_counter += 1
         run_id = _run_counter
 
+    _stop_requested = False
     _stop_flag.clear()
     started = time.monotonic()
     status = "ok"
@@ -468,9 +515,12 @@ def run_source(source: str, source_name: str = "<console>", echo_result: bool = 
             sys.settrace(None)
             threading.settrace(None)
         # A stop requested in the last instants of a run must not land on the
-        # next one.
-        _clear_pending_async_exc(thread_id)
+        # next one. Nothing is queued unless one was asked for, so the common
+        # path does not touch the interrupt machinery at all.
+        if _stop_requested or _stop_flag.is_set():
+            _clear_pending_async_exc(thread_id)
         _active_thread_id = None
+        _stop_requested = False
         _stop_flag.clear()
         try:
             sys.stdout.flush()
