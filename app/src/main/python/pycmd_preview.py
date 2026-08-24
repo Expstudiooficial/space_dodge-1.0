@@ -119,6 +119,22 @@ def render(path: str) -> dict:
     return {"ok": True, "html": body, "base": folder + os.sep, "name": name}
 
 
+def render_text(text: str, name: str = "document.md") -> dict:
+    """Renders text the app already has in memory - a doc shipped in assets.
+
+    Same renderer as a file preview, so the plugin guide reads on the phone
+    exactly as it does on GitHub.
+    """
+    extension = os.path.splitext(name)[1].lower()
+    if extension in (".html", ".htm"):
+        body = text
+    elif extension in (".md", ".markdown", ""):
+        body = _page(name, markdown_to_html(text))
+    else:
+        body = _page(name, f"<pre><code>{html_escape.escape(text)}</code></pre>")
+    return {"ok": True, "html": body, "base": "", "name": name}
+
+
 def _page(title: str, body: str) -> str:
     return (
         "<!doctype html><html><head><meta charset='utf-8'>"

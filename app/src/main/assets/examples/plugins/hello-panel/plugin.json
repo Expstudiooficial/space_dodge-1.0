@@ -1,0 +1,11 @@
+{
+  "id": "demo.panel",
+  "name": "Workspace Stats",
+  "version": "1.0.0",
+  "author": "PyCmd",
+  "description": "A plugin with its own tab: counts the lines in every file you have written.",
+  "entry": "main.py",
+  "panel": "ui.html",
+  "tab": { "title": "Stats" },
+  "permissions": ["files"]
+}

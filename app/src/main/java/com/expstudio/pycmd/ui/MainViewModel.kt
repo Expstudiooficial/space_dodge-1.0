@@ -15,12 +15,15 @@ import com.expstudio.pycmd.python.forFileName
 import com.expstudio.pycmd.python.PythonEngine
 import com.expstudio.pycmd.python.RunningServer
 import com.expstudio.pycmd.python.ServerService
+import com.expstudio.pycmd.plugins.CustomPlugins
+import com.expstudio.pycmd.plugins.InstalledPlugin
 import com.expstudio.pycmd.plugins.PluginIds
 import com.expstudio.pycmd.plugins.PluginScreen
 import com.expstudio.pycmd.plugins.PluginSpec
 import com.expstudio.pycmd.plugins.Plugins
 import com.expstudio.pycmd.util.DebugLog
 import com.expstudio.pycmd.util.LogEntry
+import com.expstudio.pycmd.util.Imports
 import com.expstudio.pycmd.util.Workspace
 import com.expstudio.pycmd.util.WorkspaceEntry
 import java.io.File
@@ -51,6 +54,7 @@ enum class Tab(val label: String) {
     PLUGINS("Plugins"),
     DEBUG("Debug"),
     TOOL("Tool"),
+    PLUGIN_PANEL("Plugin"),
 }
 
 /** The five destinations in the bottom bar; the rest live behind More. */
@@ -197,6 +201,21 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _servers = MutableStateFlow(ServersState())
     val servers: StateFlow<ServersState> = _servers.asStateFlow()
 
+    /** Plugins the user installed themselves, and which of them are on. */
+    val customPlugins: StateFlow<List<InstalledPlugin>> = CustomPlugins.installed
+    val customPluginsEnabled: StateFlow<Set<String>> = CustomPlugins.enabled
+
+    private val _pluginBusy = MutableStateFlow("")
+    val pluginBusy: StateFlow<String> = _pluginBusy.asStateFlow()
+
+    /** The custom plugin whose panel is open, if any. */
+    private val _openPanel = MutableStateFlow<InstalledPlugin?>(null)
+    val openPanel: StateFlow<InstalledPlugin?> = _openPanel.asStateFlow()
+
+    /** Commands the loaded plugins have registered, by name. */
+    private val _pluginCommands = MutableStateFlow<Map<String, String>>(emptyMap())
+    val pluginCommands: StateFlow<Map<String, String>> = _pluginCommands.asStateFlow()
+
     /** The page shown by the preview overlay, when one is open. */
     private val _preview = MutableStateFlow<PreviewPage?>(null)
     val preview: StateFlow<PreviewPage?> = _preview.asStateFlow()
@@ -246,6 +265,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             refreshServers()
             refreshDownloads()
             refreshLanguages()
+            refreshCustomPlugins()
         }
     }
 
@@ -271,6 +291,171 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun isPluginOn(id: String): Boolean = Plugins.isOn(id)
+
+    // ------------------------------------------------------- custom plugins
+
+    /** Re-reads what is on disk, then loads whatever is switched on. */
+    /**
+     * Tells every loaded plugin that something happened.
+     *
+     * Fire-and-forget on purpose: a plugin that is slow, or broken, must not
+     * make saving a file feel slow or fail. Errors are caught on the Python
+     * side and reported against the plugin that caused them.
+     */
+    private fun firePlugins(event: String, payload: JSONObject = JSONObject()) {
+        if (CustomPlugins.enabled.value.isEmpty()) return
+        viewModelScope.launch { engine.firePluginEvent(event, payload.toString()) }
+    }
+
+    fun refreshCustomPlugins(reload: Boolean = true) {
+        viewModelScope.launch {
+            val reply = engine.listPlugins()
+            if (!reply.optBoolean("ok")) {
+                DebugLog.warn(TAG_VIEW, "could not list plugins", reply.optString("error"))
+                return@launch
+            }
+            val rows = reply.optJSONArray("plugins") ?: return@launch
+            val parsed = (0 until rows.length()).mapNotNull { index ->
+                rows.optJSONObject(index)?.let(InstalledPlugin::from)
+            }
+            CustomPlugins.setInstalled(parsed)
+            if (reload) loadEnabledPlugins()
+        }
+    }
+
+    private suspend fun loadEnabledPlugins() {
+        val wanted = CustomPlugins.enabled.value
+        engine.loadPlugins(wanted)
+        val commands = engine.pluginCommands()
+        val rows = commands.optJSONArray("commands")
+        val table = mutableMapOf<String, String>()
+        if (rows != null) {
+            for (index in 0 until rows.length()) {
+                val row = rows.optJSONObject(index) ?: continue
+                table[row.optString("name")] = row.optString("help")
+            }
+        }
+        _pluginCommands.value = table
+        // The listing carries a loaded flag and any load error, so it has to
+        // be read back after loading rather than before.
+        val reply = engine.listPlugins()
+        val listed = reply.optJSONArray("plugins")
+        if (listed != null) {
+            CustomPlugins.setInstalled(
+                (0 until listed.length()).mapNotNull { index ->
+                    listed.optJSONObject(index)?.let(InstalledPlugin::from)
+                },
+            )
+        }
+    }
+
+    fun setCustomPluginEnabled(id: String, on: Boolean) {
+        CustomPlugins.setEnabled(id, on)
+        viewModelScope.launch {
+            loadEnabledPlugins()
+            val plugin = CustomPlugins.installed.value.firstOrNull { it.id == id }
+            val failure = plugin?.error
+            if (on && !failure.isNullOrEmpty()) {
+                showToast("${plugin.name} failed to load - see the debug console")
+            }
+        }
+    }
+
+    /** Installs a plugin the user picked from outside the app. */
+    fun installPluginFromUri(uri: Uri, isFolder: Boolean) {
+        _pluginBusy.value = if (isFolder) "Copying the folder..." else "Copying the file..."
+        viewModelScope.launch {
+            val staged = if (isFolder) {
+                Imports.stageTree(getApplication(), uri)
+            } else {
+                Imports.stageFile(getApplication(), uri)
+            }
+            staged
+                .onSuccess { install(it.root.absolutePath, it.name) }
+                .onFailure {
+                    _pluginBusy.value = ""
+                    showToast(it.message ?: "That could not be read.")
+                }
+        }
+    }
+
+    /** Installs a plugin that is already in the workspace. */
+    fun installPluginFromWorkspace(file: File) {
+        _pluginBusy.value = "Installing..."
+        viewModelScope.launch { install(file.absolutePath, file.name) }
+    }
+
+    private suspend fun install(path: String, name: String) {
+        _pluginBusy.value = "Installing..."
+        val reply = engine.installPlugin(path, name)
+        _pluginBusy.value = ""
+        if (!reply.optBoolean("ok")) {
+            val problem = reply.optString("error", "that is not a plugin")
+            showToast(problem)
+            DebugLog.warn(TAG_VIEW, "plugin install refused", "$name: $problem")
+            return
+        }
+        val manifest = reply.optJSONObject("manifest")
+        val installed = manifest?.optString("name").orEmpty().ifEmpty { name }
+        showToast(
+            if (reply.optBoolean("replaced")) "$installed updated" else "$installed installed",
+        )
+        DebugLog.info(TAG_VIEW, "installed plugin $installed", manifest?.optString("id").orEmpty())
+        refreshCustomPlugins()
+    }
+
+    fun removeCustomPlugin(plugin: InstalledPlugin) {
+        viewModelScope.launch {
+            val reply = engine.removePlugin(plugin.id)
+            if (reply.optBoolean("ok")) {
+                CustomPlugins.forget(plugin.id)
+                showToast("${plugin.name} removed")
+                refreshCustomPlugins()
+            } else {
+                showToast(reply.optString("error", "could not remove that"))
+            }
+        }
+    }
+
+    private val _pluginCandidates = MutableStateFlow<List<File>>(emptyList())
+
+    /** Plugins sitting in the workspace, which the system picker cannot see. */
+    val pluginCandidates: StateFlow<List<File>> = _pluginCandidates.asStateFlow()
+
+    fun refreshPluginCandidates() {
+        viewModelScope.launch { _pluginCandidates.value = workspace.pluginCandidates() }
+    }
+
+    /** Shows the plugin authoring guide that ships in the APK. */
+    fun openGuide(asset: String = "docs/PLUGINS.md", title: String = "PLUGINS.md") {
+        viewModelScope.launch {
+            val text = workspace.readAsset(asset)
+            if (text == null) {
+                showToast("That guide is missing from this build.")
+                return@launch
+            }
+            _preview.value = engine.previewText(text, title)
+        }
+    }
+
+    fun openPluginPanel(plugin: InstalledPlugin) {
+        if (!CustomPlugins.isOn(plugin.id)) {
+            showToast("${plugin.name} is switched off.")
+            return
+        }
+        _openPanel.value = plugin
+        _tab.value = Tab.PLUGIN_PANEL
+    }
+
+    fun closePluginPanel() {
+        _openPanel.value = null
+        _tab.value = Tab.PLUGINS
+    }
+
+    suspend fun pluginPanelHtml(id: String): String = engine.pluginPanel(id)
+
+    suspend fun callPluginExport(id: String, name: String, payload: String): JSONObject =
+        engine.callPluginExport(id, name, payload)
 
     fun isPluginPoweredUp(id: String): Boolean = Plugins.isPoweredUp(id)
 
@@ -433,7 +618,22 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         rememberHistory(trimmed)
         viewModelScope.launch {
             engine.echo(trimmed + "\n", OutputChunk.Stream.INPUT)
+
+            // A plugin command gets first refusal, because `todo add milk` is
+            // a syntax error in Python and a sensible command everywhere else.
+            // Only a bare word that a plugin actually registered qualifies, so
+            // nothing a Python line can start with is ever swallowed.
+            val head = trimmed.substringBefore(' ').trim()
+            if (head in _pluginCommands.value && !trimmed.contains('=')) {
+                val reply = engine.runPluginCommand(head, trimmed.substringAfter(' ', ""))
+                if (reply.optBoolean("handled")) {
+                    refreshServers()
+                    return@launch
+                }
+            }
+
             engine.run(trimmed)
+            engine.firePluginEvent("console_run", JSONObject().put("source", trimmed).toString())
             refreshServers()
         }
     }
@@ -492,6 +692,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         epoch = nextEpoch(),
                     )
                     _tab.value = Tab.EDITOR
+                    firePlugins(
+                        "file_opened",
+                        JSONObject().put("path", file.absolutePath).put("name", file.name),
+                    )
                 }
                 .onFailure { showToast(it.message ?: "Could not open the file.") }
         }
@@ -522,6 +726,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 .onSuccess {
                     _editor.value = _editor.value.copy(savedContent = current.content)
                     DebugLog.debug(TAG_VIEW, "autosaved ${target.name}")
+                    firePlugins(
+                        "file_saved",
+                        JSONObject().put("path", target.absolutePath).put("name", target.name),
+                    )
                     _files.value.directory?.let { refreshFiles(it) }
                 }
                 .onFailure { error ->
@@ -542,6 +750,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     _editor.value = state.copy(file = target, savedContent = state.content)
                     showToast("Saved ${target.name}")
                     refreshFiles(_files.value.directory ?: workspace.root)
+                    firePlugins(
+                        "file_saved",
+                        JSONObject().put("path", target.absolutePath).put("name", target.name),
+                    )
                     onSaved(target)
                 }
                 .onFailure { showToast(it.message ?: "Could not save.") }
@@ -741,11 +953,21 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _tab.value = Tab.CONSOLE
         viewModelScope.launch {
             engine.echo("\n", OutputChunk.Stream.SYSTEM)
+            firePlugins(
+                "run_started",
+                JSONObject()
+                    .put("path", file.absolutePath)
+                    .put("language", languageForName(file.name)?.id ?: "text"),
+            )
             // runAny picks the engine from the extension: Python keeps the
             // console namespace, C, Go and Rust go through their interpreters,
             // JavaScript to the device's engine, and anything without one
             // explains itself rather than failing silently.
-            engine.runAny(file.absolutePath)
+            val status = engine.runAny(file.absolutePath)
+            firePlugins(
+                "run_finished",
+                JSONObject().put("path", file.absolutePath).put("status", status),
+            )
             refreshServers()
         }
     }
@@ -908,6 +1130,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 // Drop straight into the new server's console: that is where
                 // its output and any startup failure will show up.
                 _servers.value = _servers.value.copy(openConsole = result.handle.ifBlank { null })
+                firePlugins(
+                    "server_started",
+                    JSONObject()
+                        .put("handle", result.handle)
+                        .put("port", port)
+                        .put("kind", form.kind.name.lowercase()),
+                )
             } else {
                 showToast(result.error.ifBlank { "Could not start." })
             }
@@ -958,6 +1187,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 )
             } else {
                 showToast("Stopped")
+                firePlugins("server_stopped", JSONObject().put("handle", handle))
             }
             refreshServers()
         }

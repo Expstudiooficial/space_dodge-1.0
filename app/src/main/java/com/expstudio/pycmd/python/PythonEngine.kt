@@ -65,6 +65,9 @@ object PythonEngine {
     private const val TAG = "engine"
     private const val OUTPUT_BUFFER = 512
 
+    /** Log tag for anything a custom plugin does. */
+    private const val TAG_PLUGIN = "plugin"
+
     /** Files the device's own JavaScript engine runs, rather than Python. */
     private val JS_EXTENSIONS = setOf("js", "mjs", "cjs")
 
@@ -124,11 +127,13 @@ object PythonEngine {
     private lateinit var downloads: PyObject
     private lateinit var tools: PyObject
     private lateinit var preview: PyObject
+    private lateinit var pluginRuntime: PyObject
 
     private lateinit var appContext: Context
     private lateinit var workspaceDir: File
     private lateinit var sitePackagesDir: File
     private lateinit var downloadsDir: File
+    private lateinit var pluginsDir: File
 
     private fun queueFor(channel: String): LinkedBlockingQueue<String> =
         stdinQueues.getOrPut(channel) { LinkedBlockingQueue(64) }
@@ -259,6 +264,7 @@ object PythonEngine {
             downloads = python.getModule("pycmd_download")
             tools = python.getModule("pycmd_tools")
             preview = python.getModule("pycmd_preview")
+            pluginRuntime = python.getModule("pycmd_plugins")
 
             val version = runtime.callAttr(
                 "configure",
@@ -269,6 +275,10 @@ object PythonEngine {
             packages.callAttr("configure", sitePackagesDir.absolutePath)
             downloadsDir = File(appContext.filesDir, "downloads").apply { mkdirs() }
             downloads.callAttr("configure", downloadsDir.absolutePath, workspaceDir.absolutePath)
+            pluginsDir = File(appContext.filesDir, "plugins").apply { mkdirs() }
+            pluginRuntime.callAttr(
+                "configure", pluginsDir.absolutePath, workspaceDir.absolutePath, pluginHost,
+            )
 
             val short = version.trim().split(" ").firstOrNull().orEmpty()
             _status.value = EngineStatus(ready = true, pythonVersion = short)
@@ -449,6 +459,23 @@ object PythonEngine {
             null
         }
     }
+
+    /** Renders text the app is holding - a shipped document, say - as a page. */
+    suspend fun previewText(text: String, name: String): PreviewPage? =
+        withContext(controlDispatcher) {
+            if (!_status.value.ready) return@withContext null
+            runCatching {
+                val map = preview.callAttr("render_text", text, name).asMap()
+                PreviewPage(
+                    name = map.str("name"),
+                    html = map.str("html"),
+                    baseDirectory = map.str("base"),
+                )
+            }.getOrElse {
+                DebugLog.error(TAG, "could not render $name", it)
+                null
+            }
+        }
 
     /** Every file type the new-file menu offers. */
     suspend fun languageCatalogue(includeAll: Boolean): List<LanguageInfo> =
@@ -656,6 +683,120 @@ object PythonEngine {
             DebugLog.error(TAG, "export failed", it)
             DownloadResult(false, error = it.friendlyMessage())
         }
+    }
+
+    /**
+     * What a custom plugin reaches when it logs, toasts, or messages its panel.
+     *
+     * Called from whichever thread the plugin happens to be on, so it does the
+     * same thing the output sink does: hand the value to a flow and get out.
+     */
+    @Suppress("unused") // Called from pycmd_plugins.py
+    private val pluginHost = object {
+        fun onPluginLog(level: String, message: String, detail: String) {
+            when (level) {
+                "error" -> DebugLog.error(TAG_PLUGIN, message, detail)
+                "warn" -> DebugLog.warn(TAG_PLUGIN, message, detail)
+                else -> DebugLog.info(TAG_PLUGIN, message, detail)
+            }
+        }
+
+        fun onToast(message: String) {
+            _pluginToasts.tryEmit(message)
+        }
+
+        fun onPluginMessage(pluginId: String, body: String) {
+            _pluginMessages.tryEmit(pluginId to body)
+        }
+    }
+
+    private val _pluginToasts = MutableSharedFlow<String>(extraBufferCapacity = 16,
+        onBufferOverflow = BufferOverflow.DROP_OLDEST)
+
+    /** Toasts a plugin asked for. */
+    val pluginToasts: SharedFlow<String> = _pluginToasts.asSharedFlow()
+
+    private val _pluginMessages = MutableSharedFlow<Pair<String, String>>(
+        extraBufferCapacity = 64, onBufferOverflow = BufferOverflow.DROP_OLDEST,
+    )
+
+    /** Messages a plugin pushed to its own panel. */
+    val pluginMessages: SharedFlow<Pair<String, String>> = _pluginMessages.asSharedFlow()
+
+    /**
+     * Installs a plugin from a file, folder or zip already on disk.
+     *
+     * Everything about custom plugins runs on the control dispatcher: a plugin
+     * that hangs on load must not take the console's thread with it, and the
+     * user needs the list to keep answering so they can switch the thing off.
+     */
+    suspend fun installPlugin(path: String, sourceName: String = ""): JSONObject =
+        pluginCall("install", path, sourceName)
+
+    suspend fun listPlugins(): JSONObject = pluginCall("listing")
+
+    suspend fun removePlugin(id: String): JSONObject = pluginCall("remove", id)
+
+    suspend fun loadPlugins(enabled: Collection<String>): JSONObject =
+        withContext(controlDispatcher) {
+            runCatching {
+                JSONObject(pluginRuntime.callAttr("load_all", enabled.toList()).toString())
+            }.getOrElse { failure("load_all", it) }
+        }
+
+    suspend fun callPluginExport(id: String, name: String, payload: String): JSONObject =
+        pluginCall("call_export", id, name, payload)
+
+    suspend fun pluginCommands(): JSONObject = pluginCall("commands")
+
+    suspend fun runPluginCommand(name: String, argument: String): JSONObject =
+        withContext(pythonDispatcher) {
+            // This one does go on the interpreter thread: a command prints to
+            // the console and may touch the same namespace a script does.
+            runCatching {
+                JSONObject(pluginRuntime.callAttr("run_command", name, argument).toString())
+            }.getOrElse { failure("run_command", it) }
+        }
+
+    suspend fun firePluginEvent(event: String, payload: String = "{}"): JSONObject =
+        pluginCall("fire", event, payload)
+
+    /** Where a plugin's files live, so its panel can load its own assets. */
+    fun pluginDirectory(id: String): File = File(pluginsDir, id)
+
+    suspend fun pluginPanel(id: String): String = withContext(controlDispatcher) {
+        runCatching { pluginRuntime.callAttr("panel_html", id).toString() }
+            .getOrElse { error ->
+                DebugLog.error(TAG_PLUGIN, "panel failed for $id", error)
+                "<h2>That panel could not be built.</h2>"
+            }
+    }
+
+    private suspend fun pluginCall(function: String, vararg arguments: String): JSONObject =
+        withContext(controlDispatcher) {
+            if (!_status.value.ready) {
+                return@withContext JSONObject()
+                    .put("ok", false)
+                    .put("error", "the interpreter is not ready yet")
+            }
+            runCatching {
+                val reply = when (arguments.size) {
+                    0 -> pluginRuntime.callAttr(function)
+                    1 -> pluginRuntime.callAttr(function, arguments[0])
+                    2 -> pluginRuntime.callAttr(function, arguments[0], arguments[1])
+                    else -> pluginRuntime.callAttr(
+                        function, arguments[0], arguments[1], arguments[2],
+                    )
+                }
+                JSONObject(reply.toString())
+            }.getOrElse { failure(function, it) }
+        }
+
+    private fun failure(what: String, error: Throwable): JSONObject {
+        DebugLog.error(TAG_PLUGIN, "plugin call failed: $what", error)
+        return JSONObject()
+            .put("ok", false)
+            .put("error", error.message ?: error.javaClass.simpleName)
     }
 
     /**

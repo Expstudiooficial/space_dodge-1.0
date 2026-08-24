@@ -4,6 +4,8 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -79,6 +81,21 @@ fun PyCmdRoot(viewModel: MainViewModel = viewModel()) {
     val languages by viewModel.languages.collectAsState()
     val activeTool by viewModel.activeTool.collectAsState()
     val previewPage by viewModel.preview.collectAsState()
+    val installedPlugins by viewModel.customPlugins.collectAsState()
+    val installedEnabled by viewModel.customPluginsEnabled.collectAsState()
+    val pluginBusy by viewModel.pluginBusy.collectAsState()
+    val pluginCandidates by viewModel.pluginCandidates.collectAsState()
+    val openPanel by viewModel.openPanel.collectAsState()
+
+    // Picking a plugin from outside the app: one launcher for a file or zip,
+    // one for a whole folder. Both are only reached after the warning dialog.
+    val pluginFileLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument(),
+    ) { uri -> if (uri != null) viewModel.installPluginFromUri(uri, isFolder = false) }
+
+    val pluginFolderLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocumentTree(),
+    ) { uri -> if (uri != null) viewModel.installPluginFromUri(uri, isFolder = true) }
 
     // Which language the open file is, so the snippet bar and the header can
     // say so. Derived rather than stored: the file name is the only input.
@@ -140,9 +157,14 @@ fun PyCmdRoot(viewModel: MainViewModel = viewModel()) {
     // else it returns to the console first.
     BackHandler(enabled = tab != Tab.CONSOLE) {
         if (tab == Tab.FILES && viewModel.navigateUp()) return@BackHandler
-        // A tool was opened from the plugin list, so that is where back goes.
+        // A tool or a plugin panel was opened from the plugin list, so that is
+        // where back goes.
         if (tab == Tab.TOOL) {
             viewModel.closeTool()
+            return@BackHandler
+        }
+        if (tab == Tab.PLUGIN_PANEL) {
+            viewModel.closePluginPanel()
             return@BackHandler
         }
         // A destination reached through More goes back to More first.
@@ -195,6 +217,15 @@ fun PyCmdRoot(viewModel: MainViewModel = viewModel()) {
                     }
                 },
                 navigationIcon = {
+                    if (tab == Tab.PLUGIN_PANEL) {
+                        IconButton(onClick = { viewModel.closePluginPanel() }) {
+                            Icon(
+                                PyIcons.ArrowBack,
+                                contentDescription = "Back to the plugin list",
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
                     if (tab == Tab.TOOL) {
                         IconButton(onClick = { viewModel.closeTool() }) {
                             Icon(
@@ -253,6 +284,7 @@ fun PyCmdRoot(viewModel: MainViewModel = viewModel()) {
                     // that one of them is the current screen.
                     forceSelected = tab in setOf(
                         Tab.PACKAGES, Tab.DOWNLOADS, Tab.PLUGINS, Tab.TOOL,
+                        Tab.PLUGIN_PANEL,
                     ),
                 )
             }
@@ -375,11 +407,36 @@ fun PyCmdRoot(viewModel: MainViewModel = viewModel()) {
 
                 Tab.PLUGINS -> PluginsScreen(
                     enabled = pluginsEnabled,
+                    installed = installedPlugins,
+                    installedEnabled = installedEnabled,
+                    busy = pluginBusy,
+                    workspaceCandidates = pluginCandidates,
                     onToggle = viewModel::setPluginEnabled,
                     onOpen = viewModel::openPlugin,
                     onEnableAll = viewModel::enableAllPlugins,
                     onReset = viewModel::resetPlugins,
+                    onInstallFile = { pluginFileLauncher.launch(arrayOf("*/*")) },
+                    onInstallFolder = { pluginFolderLauncher.launch(null) },
+                    onInstallWorkspace = viewModel::installPluginFromWorkspace,
+                    onRefreshCandidates = viewModel::refreshPluginCandidates,
+                    onToggleInstalled = viewModel::setCustomPluginEnabled,
+                    onOpenPanel = viewModel::openPluginPanel,
+                    onRemoveInstalled = viewModel::removeCustomPlugin,
+                    onReadGuide = { viewModel.openGuide() },
                 )
+
+                Tab.PLUGIN_PANEL -> {
+                    val panel = openPanel
+                    if (panel == null) {
+                        LaunchedEffect(Unit) { viewModel.selectTab(Tab.PLUGINS) }
+                    } else {
+                        PluginPanelScreen(
+                            plugin = panel,
+                            viewModel = viewModel,
+                            onClose = viewModel::closePluginPanel,
+                        )
+                    }
+                }
 
                 Tab.TOOL -> {
                     val tool = activeTool

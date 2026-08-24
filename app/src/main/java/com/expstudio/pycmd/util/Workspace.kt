@@ -205,15 +205,68 @@ class Workspace(context: Context) {
         val examplesDir = File(root, "examples")
         if (examplesDir.exists()) return@withContext 0
         examplesDir.mkdirs()
+        // Recursive now that the examples include a plugin folder, which is
+        // only a useful example if it arrives as a folder.
+        runCatching { copyAssets("examples", examplesDir) }.getOrDefault(0)
+    }
+
+    private fun copyAssets(assetPath: String, target: File): Int {
+        val children = appContext.assets.list(assetPath).orEmpty()
+        if (children.isEmpty()) {
+            target.parentFile?.mkdirs()
+            appContext.assets.open(assetPath).use { input ->
+                target.outputStream().use { output -> input.copyTo(output) }
+            }
+            return 1
+        }
+        target.mkdirs()
         var copied = 0
+        children.forEach { name ->
+            copied += copyAssets("$assetPath/$name", File(target, name))
+        }
+        return copied
+    }
+
+    /** Text of a document that ships in the APK, for the in-app guides. */
+    suspend fun readAsset(path: String): String? = withContext(Dispatchers.IO) {
         runCatching {
-            appContext.assets.list("examples").orEmpty().forEach { name ->
-                appContext.assets.open("examples/$name").use { input ->
-                    File(examplesDir, name).outputStream().use { output -> input.copyTo(output) }
+            appContext.assets.open(path).bufferedReader().use { it.readText() }
+        }.getOrNull()
+    }
+
+    /**
+     * Things in the workspace that could be a plugin.
+     *
+     * The system file picker cannot see the app's private storage, so a plugin
+     * written inside PyCmd itself would be uninstallable without this.
+     */
+    suspend fun pluginCandidates(): List<File> = withContext(Dispatchers.IO) {
+        val found = mutableListOf<File>()
+
+        fun scan(directory: File, depth: Int) {
+            if (depth > 2) return
+            directory.listFiles()?.sortedBy { it.name.lowercase() }?.forEach { entry ->
+                when {
+                    entry.isDirectory && File(entry, "plugin.json").isFile -> found += entry
+                    entry.isDirectory -> scan(entry, depth + 1)
+                    entry.name.endsWith(".zip", true) -> found += entry
+                    entry.name.endsWith(".py", true) -> {
+                        // A plugin declares itself; every other script would
+                        // only be noise in the list.
+                        val head = runCatching {
+                            entry.bufferedReader().use { reader ->
+                                buildString {
+                                    repeat(40) { append(reader.readLine() ?: return@buildString) }
+                                }
+                            }
+                        }.getOrDefault("")
+                        if ("PLUGIN" in head) found += entry
+                    }
                 }
-                copied += 1
             }
         }
-        copied
+
+        scan(root, 0)
+        found.take(60)
     }
 }

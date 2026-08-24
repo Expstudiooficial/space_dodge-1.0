@@ -1,0 +1,47 @@
+<h1>Workspace Stats</h1>
+
+<div class="card">
+  <p>Count what you have written. The scan runs in Python; this page just asks
+     for it and draws the answer.</p>
+  <p>
+    <input id="pattern" value="*.py" placeholder="a pattern, like *.py">
+  </p>
+  <p><button id="scan">Scan</button></p>
+  <p id="summary">—</p>
+  <table id="rows" style="width:100%"></table>
+</div>
+
+<div class="card">
+  <p>And a round trip in the other direction:</p>
+  <p><input id="name" placeholder="your name"></p>
+  <p><button id="hello">Say hello</button></p>
+  <pre id="reply">—</pre>
+</div>
+
+<script>
+  const $ = (id) => document.getElementById(id);
+
+  $('scan').onclick = async () => {
+    $('summary').textContent = 'scanning...';
+    try {
+      const data = await pycmd.call('scan', { pattern: $('pattern').value || '*' });
+      $('summary').textContent =
+        `${data.count} files, ${data.lines} lines, ${data.kilobytes} KB`;
+      $('rows').innerHTML = data.files.map((row) =>
+        `<tr><td>${row.name}</td><td style="text-align:right">${row.lines}</td></tr>`
+      ).join('');
+    } catch (error) {
+      $('summary').textContent = 'that failed: ' + error.message;
+    }
+  };
+
+  $('hello').onclick = async () => {
+    try {
+      $('reply').textContent = await pycmd.call('greet_from_panel', { name: $('name').value });
+    } catch (error) {
+      $('reply').textContent = 'error: ' + error.message;
+    }
+  };
+
+  pycmd.on('message', (data) => pycmd.log('panel got a message: ' + JSON.stringify(data)));
+</script>
