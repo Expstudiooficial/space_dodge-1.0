@@ -1,53 +1,59 @@
 # Prebuilt APK
 
-`PyCmd-1.1-debug.apk` — ready to install, nothing else needed.
+`PyCmd-1.2-debug.apk` — ready to install, nothing else needed.
 
 | | |
 |---|---|
 | Package | `com.expstudio.pycmd.debug` |
-| Version | 1.1-debug |
+| Version | 1.2-debug |
 | Size | 33 MB |
 | Signed with | the standard Android debug key |
 | Works on | Android 7.0 (API 24) and newer, **arm64-v8a** (every phone since about 2016) |
 | SHA-256 | see [SHA256SUMS.txt](SHA256SUMS.txt) |
 
-## What is new in 1.1
+## What is new in 1.2
 
-Four more languages actually run on the device, rather than being editable and
-nothing else:
+**Plugins you write yourself.** A plugin is Python the app imports, plus an
+optional HTML panel that becomes its own tab. Install from a file, a folder or
+a zip - or from the workspace, for a plugin written inside PyCmd itself. They
+are not sandboxed, and the app says so on a screen you have to read before the
+picker opens. PLUGINS.md is the authoring guide, and the app can show it on the
+phone: Plugins -> How do I write one?
 
-* **Go** - goroutines, channels, structs, methods, interfaces, defer, panic
-  and recover, plus fmt, strings, strconv, math, sort, errors, time, os,
-  bufio, unicode and sync.
-* **Rust** - traits, impl blocks, enums with payloads, match with real
-  patterns, closures, iterator chains, Option and Result with `?`, Vec,
-  HashMap, HashSet and the String methods.
-* **JavaScript** - handed to the engine the device already has, so it is the
-  real thing: classes, async/await, generators, regular expressions.
-* **C** was already interpreted; it still is.
+**Preview that behaves like a browser.** A page is served over a loopback HTTP
+server rooted at its own folder, so scripts run, stylesheets and images load by
+relative path, `fetch` works, and links inside the site follow. Buttons work.
+Preview also covers JavaScript (runs it and shows what it logged), JSON, CSV,
+SVG and images.
 
-None of these is compiled, because Android has not allowed an app to execute
-code it generated itself since API 29. They are interpreted, and each
-language's card in the app says exactly what that costs: no type checking in
-Go, no borrow checker in Rust.
+**It offers to fix what it can.** A missing file one typo away from one that
+exists, an import of a package that is not installed, a port already in use, a
+served folder with no index page: the console says what it would change and
+waits for `yes`. It never acts on its own.
 
-Also new: HTML, Markdown and CSS preview; syntax highlighting per language;
-and the ten plugins now do what their descriptions promise - JSON Tools, Text
-Tools, Regex Lab, API Tester, Workspace Search, Snippets, Autosave, Keep
-Awake, Downloader and Workspace Export.
+**Upload from anywhere.** Files can take several files at once, or a whole
+folder, from the system picker.
+
+**Search** in the file list and in the plugin list.
+
+**Two more screens** behind More: Guides (the manuals, on the phone) and System
+(versions, storage, what is running, and housekeeping).
 
 ## What was checked before this was committed
 
 The same source, built for x86_64, was installed on an Android 11 emulator and
-driven through: Go, Rust and JavaScript files were run from the Files tab and
-produced the right output on the console, and a Markdown file rendered in the
-preview. The APK here is that source built for arm64 instead, which changes
+driven through: Go, Rust and JavaScript ran from the Files tab with the right
+output, an HTML page previewed with its external stylesheet and script loaded
+and its button working, a plugin was installed from the workspace and switched
+on, its console command answered, and its panel called back into its own
+Python. The APK here is that source built for arm64 instead, which changes
 the CPython binaries and nothing else.
 
-The interpreters themselves are covered by 262 checks that run on a desktop
-CPython - `tools/test_c.py`, `test_go.py`, `test_rust.py`, `test_js.js` and
-`test_runtime.py` - each one a real program paired with the output the real
-compiler produces.
+479 checks run on a desktop CPython before any of this is committed:
+`test_c.py` (54), `test_go.py` (92), `test_rust.py` (73), `test_js.js` (43),
+`test_runtime.py` (124), `test_plugins.py` (62) and `test_doctor.py` (31). Each
+language check is a real program paired with the output the real compiler
+produces.
 
 It is a debug build, so it is already signed and installs without any keystore
 or Play Store involvement. It also carries the `.debug` package suffix, which
@@ -73,7 +79,7 @@ every tab with things to paste in and try.
 ## Installing over USB
 
 ```bash
-adb install -r dist/PyCmd-1.1-debug.apk
+adb install -r dist/PyCmd-1.2-debug.apk
 ```
 
 ## Checking the download
