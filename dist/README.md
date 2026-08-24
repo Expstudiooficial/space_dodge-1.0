@@ -1,20 +1,53 @@
 # Prebuilt APK
 
-`PyCmd-1.0-debug.apk` — ready to install, nothing else needed.
+`PyCmd-1.1-debug.apk` — ready to install, nothing else needed.
 
 | | |
 |---|---|
 | Package | `com.expstudio.pycmd.debug` |
-| Version | 1.0-debug |
-| Size | 32 MB |
+| Version | 1.1-debug |
+| Size | 33 MB |
 | Signed with | the standard Android debug key |
 | Works on | Android 7.0 (API 24) and newer, **arm64-v8a** (every phone since about 2016) |
 | SHA-256 | see [SHA256SUMS.txt](SHA256SUMS.txt) |
 
-This exact build was installed and run on an Android 11 emulator before being
-committed: the app launches, CPython 3.13.9 starts, and running the editor's
-starter script prints its output to the console. See the main README for what
-that check does and does not cover.
+## What is new in 1.1
+
+Four more languages actually run on the device, rather than being editable and
+nothing else:
+
+* **Go** - goroutines, channels, structs, methods, interfaces, defer, panic
+  and recover, plus fmt, strings, strconv, math, sort, errors, time, os,
+  bufio, unicode and sync.
+* **Rust** - traits, impl blocks, enums with payloads, match with real
+  patterns, closures, iterator chains, Option and Result with `?`, Vec,
+  HashMap, HashSet and the String methods.
+* **JavaScript** - handed to the engine the device already has, so it is the
+  real thing: classes, async/await, generators, regular expressions.
+* **C** was already interpreted; it still is.
+
+None of these is compiled, because Android has not allowed an app to execute
+code it generated itself since API 29. They are interpreted, and each
+language's card in the app says exactly what that costs: no type checking in
+Go, no borrow checker in Rust.
+
+Also new: HTML, Markdown and CSS preview; syntax highlighting per language;
+and the ten plugins now do what their descriptions promise - JSON Tools, Text
+Tools, Regex Lab, API Tester, Workspace Search, Snippets, Autosave, Keep
+Awake, Downloader and Workspace Export.
+
+## What was checked before this was committed
+
+The same source, built for x86_64, was installed on an Android 11 emulator and
+driven through: Go, Rust and JavaScript files were run from the Files tab and
+produced the right output on the console, and a Markdown file rendered in the
+preview. The APK here is that source built for arm64 instead, which changes
+the CPython binaries and nothing else.
+
+The interpreters themselves are covered by 262 checks that run on a desktop
+CPython - `tools/test_c.py`, `test_go.py`, `test_rust.py`, `test_js.js` and
+`test_runtime.py` - each one a real program paired with the output the real
+compiler produces.
 
 It is a debug build, so it is already signed and installs without any keystore
 or Play Store involvement. It also carries the `.debug` package suffix, which
@@ -40,7 +73,7 @@ every tab with things to paste in and try.
 ## Installing over USB
 
 ```bash
-adb install -r dist/PyCmd-1.0-debug.apk
+adb install -r dist/PyCmd-1.1-debug.apk
 ```
 
 ## Checking the download

@@ -44,7 +44,7 @@ expandable stack traces, copy-all and save-to-workspace.
 ## Just want to try it
 
 A ready-to-install debug APK is in [`dist/`](dist/) - download
-[`PyCmd-1.0-debug.apk`](dist/PyCmd-1.0-debug.apk), open it on the phone, and
+[`PyCmd-1.1-debug.apk`](dist/PyCmd-1.1-debug.apk), open it on the phone, and
 allow the install when Android asks. It is signed with the standard debug key,
 so no keystore or store account is involved. See [dist/README.md](dist/README.md)
 for the details.
@@ -92,7 +92,7 @@ about 2016.
 The APK is large because a complete CPython interpreter and standard library are
 inside it. The default build produces one APK per ABI plus a universal one
 (36 MB each, 46 MB universal); `-Ppycmd.abi=arm64-v8a` drops the x86_64 runtime
-that no phone can use and gives a single 32 MB APK, which is what `dist/` ships.
+that no phone can use and gives a single 33 MB APK, which is what `dist/` ships.
 
 ---
 
