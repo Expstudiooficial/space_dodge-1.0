@@ -124,26 +124,54 @@ def download(url: str, progress=None) -> dict:
 
 
 def export_workspace(name: str = "") -> dict:
-    """Zips the workspace into the downloads folder."""
+    """Zips the whole workspace into the downloads folder."""
+    if _workspace_dir is None:
+        return {"ok": False, "error": "downloads are not configured"}
+    stamp = time.strftime("%Y%m%d-%H%M%S")
+    return export_folder(_workspace_dir, name or f"workspace-{stamp}.zip")
+
+
+def export_folder(path: str, name: str = "") -> dict:
+    """Zips one folder into the downloads folder.
+
+    The whole workspace is rarely what you want to move to a computer - one
+    project out of it usually is - so any folder can be exported on its own,
+    and the archive is named after the folder unless told otherwise.
+    """
     if _downloads_dir is None or _workspace_dir is None:
         return {"ok": False, "error": "downloads are not configured"}
 
-    stamp = time.strftime("%Y%m%d-%H%M%S")
-    target = _unique(_downloads_dir, _safe_name(name or f"workspace-{stamp}.zip"))
+    folder = os.path.abspath(path)
+    root = os.path.abspath(_workspace_dir)
+    if folder != root and not folder.startswith(root + os.sep):
+        return {"ok": False, "error": "that folder is outside the workspace"}
+    if not os.path.isdir(folder):
+        return {"ok": False, "error": "that folder no longer exists"}
+
+    label = name or f"{os.path.basename(folder) or 'workspace'}.zip"
+    target = _unique(_downloads_dir, _safe_name(label))
     if not target.endswith(".zip"):
         target += ".zip"
 
     count = 0
     try:
         with zipfile.ZipFile(target, "w", zipfile.ZIP_DEFLATED) as archive:
-            for root, _, files in os.walk(_workspace_dir):
+            for walked, _, files in os.walk(folder):
+                # An export that swallowed the downloads folder would grow
+                # every time it ran, archiving its own previous archives.
+                if os.path.abspath(walked).startswith(os.path.abspath(_downloads_dir)):
+                    continue
                 for filename in files:
-                    full = os.path.join(root, filename)
-                    relative = os.path.relpath(full, _workspace_dir)
+                    full = os.path.join(walked, filename)
+                    relative = os.path.relpath(full, folder)
                     archive.write(full, relative)
                     count += 1
     except OSError as exc:
         return {"ok": False, "error": f"Could not build the archive: {exc}"}
+
+    if count == 0:
+        os.remove(target)
+        return {"ok": False, "error": "that folder has no files in it"}
 
     return {
         "ok": True,

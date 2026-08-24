@@ -46,7 +46,14 @@ pre {
   border: 1px solid #223041;
   border-radius: 10px;
   padding: 12px 14px;
-  overflow-x: auto;
+  /* Wrapped, not scrolled. A wide <pre> is a horizontal scroll container, and
+     on a touch screen a vertical drag that starts inside one is swallowed by
+     it - the page simply refuses to scroll, which is exactly what a long code
+     block in a guide feels like. Wrapping removes the trap entirely. */
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  touch-action: pan-y;
 }
 pre code { background: none; border: 0; padding: 0; font-size: 0.88em; }
 blockquote {
@@ -56,7 +63,13 @@ blockquote {
   color: #9BA9BB;
 }
 hr { border: 0; border-top: 1px solid #223041; margin: 1.6em 0; }
-table { border-collapse: collapse; width: 100%; display: block; overflow-x: auto; }
+table {
+  border-collapse: collapse; width: 100%; display: block; overflow-x: auto;
+  /* A table has to keep its columns, so this one stays scrollable - but the
+     scroll must not chain into the page or capture a vertical drag. */
+  overscroll-behavior-x: contain;
+}
+td, th { overflow-wrap: anywhere; }
 th, td { border: 1px solid #223041; padding: 7px 10px; text-align: left; }
 th { background: #151C26; }
 img { max-width: 100%; height: auto; border-radius: 8px; }
@@ -73,6 +86,25 @@ input[type=checkbox] { margin-right: 6px; }
   border: 1px solid #223041; border-radius: 10px;
 }
 .pycmd-art svg, .pycmd-art img { max-width: 100%; height: auto; }
+.pycmd-toc {
+  background: #121A24; border: 1px solid #223041; border-radius: 12px;
+  padding: 10px 14px; margin: 14px 0 22px;
+}
+.pycmd-toc summary {
+  cursor: pointer; color: #6FB3FF; font-weight: 600; list-style: none;
+  padding: 4px 0;
+}
+.pycmd-toc summary::-webkit-details-marker { display: none; }
+.pycmd-toc summary::before { content: '\25B8  '; }
+.pycmd-toc[open] summary::before { content: '\25BE  '; }
+.pycmd-toc ol { margin: 8px 0 4px; padding-left: 1.2em; }
+.pycmd-toc li { margin: 6px 0; }
+.pycmd-toc a { color: #DCE3EC; text-decoration: none; }
+.pycmd-toc .lvl3 { padding-left: 1em; font-size: .95em; opacity: .85; }
+.pycmd-text {
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 13.5px; line-height: 1.6;
+}
 .pycmd-note {
   background: #151C26;
   border: 1px solid #223041;
@@ -165,9 +197,20 @@ def render(path: str) -> dict:
     elif extension == ".svg":
         body = _page(name, f"<div class='pycmd-art'>{source}</div>")
     else:
-        body = _page(name, f"<pre><code>{html_escape.escape(source)}</code></pre>")
+        body = _page(name, _text_body(name, source), contents=False)
 
     return {"ok": True, "html": body, "base": folder + os.sep, "name": name}
+
+
+def _text_body(name: str, source: str) -> str:
+    """A plain file, made readable: wrapped, monospaced, and counted."""
+    lines = source.count("\n") + (1 if source and not source.endswith("\n") else 0)
+    words = len(source.split())
+    return (
+        f"<p class='pycmd-note'>{html_escape.escape(name)} - {lines} lines, "
+        f"{words} words, {len(source)} characters</p>"
+        f"<pre class='pycmd-text'>{html_escape.escape(source)}</pre>"
+    )
 
 
 def _image_body(name: str, size: int) -> str:
@@ -313,18 +356,76 @@ def render_text(text: str, name: str = "document.md") -> dict:
         body = text
     elif extension in (".md", ".markdown", ""):
         body = _page(name, markdown_to_html(text))
+    elif extension in (".txt", ".log", ".text", ".ini", ".cfg", ".conf"):
+        body = _page(name, _text_body(name, text), contents=False)
     else:
         body = _page(name, f"<pre><code>{html_escape.escape(text)}</code></pre>")
     return {"ok": True, "html": body, "base": "", "name": name}
 
 
-def _page(title: str, body: str) -> str:
+def serve_text(text: str, name: str = "document.md") -> dict:
+    """Renders in-memory text and serves it, exactly like a file preview.
+
+    A document handed to the WebView with loadDataWithBaseURL is a second-class
+    page: anchor links inside it are unreliable and it does not share the
+    behaviour of everything else the preview shows. Since the loopback server
+    already exists, the shipped guides go through it too, and then there is
+    only one preview path to get right.
+    """
+    rendered = render_text(text, name)
+    port = _ensure_server(_scratch_root())
+    if port is None:
+        return dict(rendered, served=False)
+    global _generated
+    _generated = rendered["html"]
+    return dict(rendered, served=True, url=f"http://127.0.0.1:{port}{MAGIC_PATH}", port=port)
+
+
+def _page(title: str, body: str, contents: bool = True) -> str:
+    """Wraps rendered content in the house page.
+
+    A long document gets a contents panel: PLUGINS.md is twelve sections and
+    twenty screens tall on a phone, and scrolling to find section 7 is not
+    reading, it is hunting.
+    """
+    body, toc = _with_contents(body) if contents else (body, "")
     return (
         "<!doctype html><html><head><meta charset='utf-8'>"
         "<meta name='viewport' content='width=device-width, initial-scale=1'>"
         f"<title>{html_escape.escape(title)}</title><style>{PAGE_CSS}</style>"
-        f"</head><body>{body}</body></html>"
+        f"</head><body>{toc}{body}</body></html>"
     )
+
+
+# Not to be confused with HEADING below, which matches Markdown source.
+HTML_HEADING = re.compile(r"<h([23])>(.*?)</h\1>", re.S)
+
+
+def _with_contents(body: str):
+    """Gives every h2/h3 an id and builds a jump list, if there are enough."""
+    found = []
+
+    def tag(match):
+        level = match.group(1)
+        text = match.group(2)
+        plain = re.sub(r"<[^>]+>", "", text).strip()
+        slug = "s" + str(len(found) + 1)
+        found.append((level, plain, slug))
+        return f'<h{level} id="{slug}">{text}</h{level}>'
+
+    tagged = HTML_HEADING.sub(tag, body)
+    if len(found) < 4:
+        return body, ""
+
+    items = "".join(
+        f'<li class="lvl{level}"><a href="#{slug}">{html_escape.escape(plain)}</a></li>'
+        for level, plain, slug in found
+    )
+    toc = (
+        '<details class="pycmd-toc" open><summary>Contents</summary>'
+        f"<ol>{items}</ol></details>"
+    )
+    return tagged, toc
 
 
 # ------------------------------------------------------------------ markdown
@@ -525,17 +626,15 @@ _server = None
 _server_thread = None
 _server_root = ""
 _generated = ""
+_scratch = ""
+_last_error = ""
 
 MAGIC_PATH = "/__pycmd_preview__"
 
 
 def serve(path: str) -> dict:
     """Serves the file's folder on loopback and says what URL to open."""
-    import http.server
-    import socketserver
-    import threading
-
-    global _server, _server_thread, _server_root, _generated
+    global _generated
 
     rendered = render(path)
     if not rendered.get("ok"):
@@ -549,9 +648,35 @@ def serve(path: str) -> dict:
     # path, which hands back the page this module generated.
     _generated = rendered["html"]
 
+    port = _ensure_server(folder)
+    if port is None:
+        # No loopback socket: fall back to the inline page, which still shows
+        # something even if its scripts will be limited.
+        return dict(rendered, served=False, error=_last_error)
+    return _url(port, name, extension, rendered)
+
+
+def _scratch_root() -> str:
+    """A folder for pages built from memory, so they have a root like any other."""
+    global _scratch
+
+    if not _scratch or not os.path.isdir(_scratch):
+        import tempfile
+
+        _scratch = tempfile.mkdtemp(prefix="pycmd-doc-")
+    return _scratch
+
+
+def _ensure_server(folder: str):
+    """Starts the loopback server rooted at [folder], or reuses a live one."""
+    import http.server
+    import socketserver
+    import threading
+
+    global _server, _server_thread, _server_root, _last_error
+
     if _server is not None and _server_root == folder:
-        port = _server.server_address[1]
-        return _url(port, name, extension, rendered)
+        return _server.server_address[1]
 
     stop()
 
@@ -565,7 +690,6 @@ def serve(path: str) -> dict:
                 self.send_response(200)
                 self.send_header("Content-Type", "text/html; charset=utf-8")
                 self.send_header("Content-Length", str(len(body)))
-                self.send_header("Cache-Control", "no-store")
                 self.end_headers()
                 self.wfile.write(body)
                 return
@@ -587,14 +711,15 @@ def serve(path: str) -> dict:
     try:
         _server = Server(("127.0.0.1", 0), Handler)
     except OSError as error:
-        # No loopback socket: fall back to the inline page, which still shows
-        # something even if its scripts will be limited.
-        return dict(rendered, served=False, error=str(error))
+        _server = None
+        _last_error = str(error)
+        return None
 
+    _last_error = ""
     _server_root = folder
     _server_thread = threading.Thread(target=_server.serve_forever, daemon=True)
     _server_thread.start()
-    return _url(_server.server_address[1], name, extension, rendered)
+    return _server.server_address[1]
 
 
 def _url(port: int, name: str, extension: str, rendered: dict) -> dict:

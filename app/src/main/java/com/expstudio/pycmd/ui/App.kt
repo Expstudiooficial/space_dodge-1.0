@@ -100,6 +100,21 @@ fun PyCmdRoot(viewModel: MainViewModel = viewModel()) {
         contract = ActivityResultContracts.OpenDocumentTree(),
     ) { uri -> if (uri != null) viewModel.installPluginFromUri(uri, isFolder = true) }
 
+    // Saving a file out of the app: the picker only tells us where afterwards,
+    // so the file being saved is held until it comes back.
+    var pendingSave by remember { mutableStateOf<File?>(null) }
+    val saveLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument("application/octet-stream"),
+    ) { uri ->
+        val source = pendingSave
+        pendingSave = null
+        if (uri != null && source != null) viewModel.saveToDevice(source, uri)
+    }
+    val saveToDevice: (File) -> Unit = { file ->
+        pendingSave = file
+        saveLauncher.launch(file.name)
+    }
+
     // Which language the open file is, so the snippet bar and the header can
     // say so. Derived rather than stored: the file name is the only input.
     val editorLanguage = remember(editorState.fileName, languages) {
@@ -360,6 +375,8 @@ fun PyCmdRoot(viewModel: MainViewModel = viewModel()) {
                     onDelete = viewModel::deleteEntry,
                     onImport = viewModel::importFile,
                     onImportFolder = viewModel::importFolder,
+                    onExportFolder = viewModel::exportFolder,
+                    onSaveToDevice = saveToDevice,
                     pickingFor = pickingFor,
                     onUseAsTarget = viewModel::useAsLaunchTarget,
                     onCancelPicking = viewModel::cancelPicking,
@@ -427,6 +444,7 @@ fun PyCmdRoot(viewModel: MainViewModel = viewModel()) {
                     onCopyToWorkspace = viewModel::copyDownloadToWorkspace,
                     onDelete = viewModel::deleteDownload,
                     onExport = viewModel::exportWorkspace,
+                    onSaveToDevice = { saveToDevice(File(it.path)) },
                 )
 
                 Tab.PLUGINS -> PluginsScreen(

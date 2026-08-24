@@ -65,6 +65,8 @@ fun FilesScreen(
     onDelete: (File) -> Unit,
     onImport: (android.net.Uri) -> Unit,
     onImportFolder: (android.net.Uri) -> Unit,
+    onExportFolder: (File) -> Unit,
+    onSaveToDevice: (File) -> Unit,
     modifier: Modifier = Modifier,
     pickingFor: ServerKind? = null,
     onUseAsTarget: (File) -> Unit = {},
@@ -234,6 +236,8 @@ fun FilesScreen(
                         onRun = { onRunFile(entry.file) },
                         onRename = { dialog = FileDialog.Rename(entry.file) },
                         onDelete = { dialog = FileDialog.ConfirmDelete(entry.file) },
+                        onExportFolder = { onExportFolder(entry.file) },
+                        onSaveToDevice = { onSaveToDevice(entry.file) },
                     )
                 }
             }
@@ -309,6 +313,8 @@ private fun FileRow(
     onRun: () -> Unit,
     onRename: () -> Unit,
     onDelete: () -> Unit,
+    onExportFolder: () -> Unit,
+    onSaveToDevice: () -> Unit,
 ) {
     var menuOpen by remember { mutableStateOf(false) }
 
@@ -382,6 +388,28 @@ private fun FileRow(
                 )
             }
             DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                if (entry.isDirectory) {
+                    // A folder cannot be handed to another app as it is, so
+                    // it goes out the way a computer expects one: as a zip in
+                    // Downloads, which can then be saved anywhere.
+                    DropdownMenuItem(
+                        text = { Text("Export as zip") },
+                        leadingIcon = { Icon(PyIcons.Inventory2, contentDescription = null) },
+                        onClick = {
+                            menuOpen = false
+                            onExportFolder()
+                        },
+                    )
+                } else {
+                    DropdownMenuItem(
+                        text = { Text("Save to device") },
+                        leadingIcon = { Icon(PyIcons.FileUpload, contentDescription = null) },
+                        onClick = {
+                            menuOpen = false
+                            onSaveToDevice()
+                        },
+                    )
+                }
                 DropdownMenuItem(
                     text = { Text("Rename") },
                     leadingIcon = { Icon(PyIcons.DriveFileRenameOutline, contentDescription = null) },

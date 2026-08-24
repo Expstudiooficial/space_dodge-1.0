@@ -16,6 +16,18 @@ echo "== Python engine =="
 "$PYTHON" tools/test_runtime.py
 
 echo
+echo "== Language interpreters =="
+"$PYTHON" tools/test_c.py
+"$PYTHON" tools/test_go.py
+"$PYTHON" tools/test_rust.py
+
+echo
+echo "== Plugins, doctor, preview =="
+"$PYTHON" tools/test_plugins.py
+"$PYTHON" tools/test_doctor.py
+"$PYTHON" tools/test_preview.py
+
+echo
 echo "== WebView JavaScript =="
 node tools/test_js.js
 

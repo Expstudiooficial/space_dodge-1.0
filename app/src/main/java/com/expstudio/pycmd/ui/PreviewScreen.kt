@@ -56,7 +56,7 @@ import com.expstudio.pycmd.util.DebugLog
  * Whatever the page logs or throws is copied into the app's debug console:
  * on a phone there is no other way to see a JavaScript error.
  */
-@SuppressLint("SetJavaScriptEnabled")
+@SuppressLint("SetJavaScriptEnabled", "ClickableViewAccessibility")
 @Composable
 fun PreviewScreen(
     page: PreviewPage,
@@ -68,6 +68,10 @@ fun PreviewScreen(
     var progress by remember { mutableIntStateOf(0) }
     var currentUrl by remember(page.url) { mutableStateOf(page.url) }
     var problems by remember(page.url) { mutableIntStateOf(0) }
+    // Reading a document on a phone is the one place a preview needs a size
+    // control: the shipped guides are long, and one size does not fit a
+    // 5-inch screen and a tablet alike.
+    var textZoom by remember { mutableIntStateOf(100) }
 
     val webView = remember {
         WebView(context).apply {
@@ -82,11 +86,22 @@ fun PreviewScreen(
             settings.useWideViewPort = true
             settings.builtInZoomControls = true
             settings.displayZoomControls = false
+            // A drag that begins inside the page belongs to the page. Without
+            // this a parent view can claim the gesture halfway through, which
+            // reads as "the scroll just stopped responding".
+            setOnTouchListener { view, _ ->
+                view.parent?.requestDisallowInterceptTouchEvent(true)
+                false
+            }
+            isVerticalScrollBarEnabled = true
+            isScrollbarFadingEnabled = false
+            overScrollMode = WebView.OVER_SCROLL_IF_CONTENT_SCROLLS
             settings.mediaPlaybackRequiresUserGesture = false
             // Only matters for the fallback path, when no socket was free and
             // the page is loaded straight from disk.
             settings.allowFileAccess = true
             settings.allowContentAccess = false
+            settings.textZoom = 100
             setBackgroundColor("#0B0F14".toColorInt())
         }
     }
@@ -179,6 +194,10 @@ fun PreviewScreen(
         }
     }
 
+    LaunchedEffect(textZoom) {
+        webView.settings.textZoom = textZoom
+    }
+
     LaunchedEffect(page.url, page.html) {
         progress = 0
         problems = 0
@@ -237,6 +256,26 @@ fun PreviewScreen(
                 StatusChip("$problems", MaterialTheme.colorScheme.error)
                 Spacer(Modifier.width(4.dp))
             }
+            IconButton(
+                onClick = { textZoom = (textZoom - 15).coerceAtLeast(60) },
+                enabled = textZoom > 60,
+            ) {
+                Text(
+                    "A-",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            IconButton(
+                onClick = { textZoom = (textZoom + 15).coerceAtMost(220) },
+                enabled = textZoom < 220,
+            ) {
+                Text(
+                    "A+",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
             if (webView.canGoBack()) {
                 IconButton(onClick = { webView.goBack() }) {
                     Icon(
@@ -247,7 +286,13 @@ fun PreviewScreen(
                     )
                 }
             }
-            IconButton(onClick = onReload) {
+            IconButton(
+                onClick = {
+                    // A document rendered from memory has no file to re-read;
+                    // reloading the view is the whole of what reload means.
+                    if (page.baseDirectory.isEmpty()) webView.reload() else onReload()
+                },
+            ) {
                 Icon(
                     PyIcons.RestartAlt,
                     contentDescription = "Reload",

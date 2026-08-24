@@ -56,6 +56,7 @@ fun DownloadsScreen(
     onCopyToWorkspace: (DownloadedFile) -> Unit,
     onDelete: (DownloadedFile) -> Unit,
     onExport: () -> Unit,
+    onSaveToDevice: (DownloadedFile) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     var url by remember { mutableStateOf("") }
@@ -162,6 +163,7 @@ fun DownloadsScreen(
                     file = file,
                     onOpen = { onOpen(file) },
                     onCopy = { onCopyToWorkspace(file) },
+                    onSave = { onSaveToDevice(file) },
                     onDelete = { pendingDelete = file },
                 )
             }
@@ -175,7 +177,9 @@ fun DownloadsScreen(
                 Text(
                     text = "These files are kept separately from the workspace so that what you " +
                         "wrote and what you fetched do not get mixed up. Move one across when " +
-                        "you want to edit it or serve it.",
+                        "you want to edit it or serve it, or save it to the device to copy it " +
+                        "onto a computer. Any workspace folder can be exported here as a zip " +
+                        "from its menu in the Files tab.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -205,6 +209,7 @@ private fun DownloadRow(
     file: DownloadedFile,
     onOpen: () -> Unit,
     onCopy: () -> Unit,
+    onSave: () -> Unit,
     onDelete: () -> Unit,
 ) {
     PyCard {
@@ -243,6 +248,11 @@ private fun DownloadRow(
             GhostButton("Open", PyIcons.Edit, onOpen, Modifier.weight(1f))
             GhostButton("To workspace", PyIcons.Folder, onCopy, Modifier.weight(1f))
         }
+        Spacer(Modifier.height(8.dp))
+        // The one route off the phone: the picker writes into shared storage
+        // on our behalf, so a zip can land in the real Downloads folder and be
+        // copied to a computer like anything else.
+        GhostButton("Save to device", PyIcons.FileUpload, onSave, Modifier.fillMaxWidth())
     }
 }
 

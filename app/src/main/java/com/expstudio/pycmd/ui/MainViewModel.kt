@@ -23,6 +23,7 @@ import com.expstudio.pycmd.plugins.PluginSpec
 import com.expstudio.pycmd.plugins.Plugins
 import com.expstudio.pycmd.util.DebugLog
 import com.expstudio.pycmd.util.LogEntry
+import com.expstudio.pycmd.util.Exports
 import com.expstudio.pycmd.util.Imports
 import com.expstudio.pycmd.util.Workspace
 import com.expstudio.pycmd.util.WorkspaceEntry
@@ -653,6 +654,36 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 else result.error.ifBlank { "Export failed." },
             )
             refreshDownloads()
+        }
+    }
+
+    /**
+     * Zips one workspace folder into Downloads.
+     *
+     * From there it can be saved out to the phone's own storage, which is the
+     * only route a folder has off the device: a picker hands over one file at
+     * a time, never a tree.
+     */
+    fun exportFolder(folder: File) {
+        viewModelScope.launch {
+            _downloads.value = _downloads.value.copy(busy = true, progress = "Zipping ${folder.name}...")
+            val result = engine.exportZip(folder.absolutePath)
+            _downloads.value = _downloads.value.copy(busy = false, progress = "")
+            showToast(
+                if (result.ok) "Exported ${result.files} files to ${result.name}"
+                else result.error.ifBlank { "Export failed." },
+            )
+            refreshDownloads()
+            if (result.ok) selectTab(Tab.DOWNLOADS)
+        }
+    }
+
+    /** Copies a file we hold out to wherever the user pointed the picker. */
+    fun saveToDevice(source: File, target: Uri) {
+        viewModelScope.launch {
+            Exports.saveTo(getApplication(), source, target)
+                .onSuccess { showToast("Saved ${source.name} to the device") }
+                .onFailure { showToast(it.message ?: "Could not save it there.") }
         }
     }
 

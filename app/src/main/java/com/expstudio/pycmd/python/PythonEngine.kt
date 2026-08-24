@@ -516,11 +516,16 @@ object PythonEngine {
         withContext(controlDispatcher) {
             if (!_status.value.ready) return@withContext null
             runCatching {
-                val map = preview.callAttr("render_text", text, name).asMap()
+                // Served over the same loopback path as a file preview, so a
+                // shipped guide behaves like every other page: anchors jump,
+                // scrolling is the browser's own, nothing is a special case.
+                val map = preview.callAttr("serve_text", text, name).asMap()
                 PreviewPage(
                     name = map.str("name"),
                     html = map.str("html"),
                     baseDirectory = map.str("base"),
+                    url = map.str("url"),
+                    served = map.str("served") == "True",
                 )
             }.getOrElse {
                 DebugLog.error(TAG, "could not render $name", it)
@@ -718,10 +723,17 @@ object PythonEngine {
             }
         }.also { if (!it.ok) DebugLog.warn(TAG, "download failed: ${it.error}") }
 
-    suspend fun exportWorkspace(): DownloadResult = withContext(controlDispatcher) {
+    suspend fun exportWorkspace(): DownloadResult = exportZip(null)
+
+    /** Zips one folder of the workspace, or the whole thing when [folder] is null. */
+    suspend fun exportZip(folder: String?): DownloadResult = withContext(controlDispatcher) {
         if (!_status.value.ready) return@withContext DownloadResult(false, error = "Interpreter is not ready.")
         runCatching {
-            val map = downloads.callAttr("export_workspace", "").asMap()
+            val map = if (folder == null) {
+                downloads.callAttr("export_workspace", "").asMap()
+            } else {
+                downloads.callAttr("export_folder", folder, "").asMap()
+            }
             DownloadResult(
                 ok = map.str("ok") == "True",
                 name = map.str("name"),
