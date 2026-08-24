@@ -5,6 +5,7 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.os.Build
 import com.expstudio.pycmd.python.ServerService
+import com.expstudio.pycmd.plugins.Plugins
 import com.expstudio.pycmd.util.DebugLog
 
 class PyCmdApp : Application() {
@@ -15,6 +16,7 @@ class PyCmdApp : Application() {
         // recorded for the debug console.
         DebugLog.installCrashHandler()
         DebugLog.info("app", "PyCmd starting")
+        Plugins.init(this)
         createNotificationChannel()
     }
 

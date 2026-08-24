@@ -1,291 +1,294 @@
-/**
- * Host-side tests for the app's browser-side modules.
+/*
+ * Checks the JavaScript runtime the app loads into its WebView.
  *
- * The console renderer, the ANSI parser and the Python highlighter all run
- * inside a WebView on the device; here they run under Node against a stub
- * document, which is enough to cover their logic.
- *
- *     node tools/test_js.js
+ * The WebView is not available here, so this stands in for it: a V8 context
+ * with the same bridge Kotlin exposes, the same globals a browser provides,
+ * and the same call sequence. What it cannot prove is that Android's WebView
+ * behaves like node's V8 - but the runtime file itself, which is where the
+ * logic lives, is exercised exactly as it is on the device.
  */
+'use strict';
+
 const fs = require('fs');
 const path = require('path');
 const vm = require('vm');
 
-const WEB = path.join(__dirname, '..', 'app', 'src', 'main', 'assets', 'web');
+const RUNTIME = path.join(__dirname, '..', 'app', 'src', 'main', 'assets', 'web', 'jsruntime.js');
+const source = fs.readFileSync(RUNTIME, 'utf8');
 
-const failures = [];
+// One process-wide hook, pointed at whichever case is running: node warns
+// about a listener per case, and the warning would drown the results.
+let rejectionSink = () => {};
+process.on('unhandledRejection', (reason) => rejectionSink(reason));
 
-function check(name, condition, detail) {
-  if (condition) {
-    console.log('  PASS  ' + name);
-  } else {
-    console.log('  FAIL  ' + name + '  ' + (detail === undefined ? '' : JSON.stringify(detail)));
-    failures.push(name);
-  }
-}
+function runCase(code, inputs) {
+  return new Promise((resolve, reject) => {
+    const out = [];
+    const err = [];
+    const queue = (inputs || []).slice();
+    const listeners = {};
+    let nextTimerId = 1;
+    const handles = new Map();
 
-// A window object is all these files need; neither touches the DOM at load time
-// except console.js, which is tested separately with a stub document.
-const sandbox = { window: {}, console: console };
-sandbox.window.window = sandbox.window;
-vm.createContext(sandbox);
+    const context = vm.createContext({});
+    vm.runInContext('globalThis.window = globalThis;', context);
 
-for (const file of ['ansi.js', 'highlight.js']) {
-  vm.runInContext(fs.readFileSync(path.join(WEB, file), 'utf8'), sandbox, { filename: file });
-}
+    // Browser-shaped timers: numeric ids, which is what the runtime keys on.
+    context.setTimeout = (fn, ms, ...rest) => {
+      const id = nextTimerId++;
+      handles.set(id, setTimeout(() => { handles.delete(id); fn(...rest); }, ms || 0));
+      return id;
+    };
+    context.clearTimeout = (id) => {
+      if (handles.has(id)) { clearTimeout(handles.get(id)); handles.delete(id); }
+    };
+    context.setInterval = (fn, ms, ...rest) => {
+      const id = nextTimerId++;
+      handles.set(id, setInterval(() => fn(...rest), ms || 0));
+      return id;
+    };
+    context.clearInterval = (id) => {
+      if (handles.has(id)) { clearInterval(handles.get(id)); handles.delete(id); }
+    };
+    context.addEventListener = (name, fn) => { (listeners[name] = listeners[name] || []).push(fn); };
+    context.queueMicrotask = queueMicrotask;
 
-const Ansi = sandbox.window.Ansi;
-const PyHighlight = sandbox.window.PyHighlight;
-const ESC = '\u001b';
+    context.__pycmd = {
+      ready() {},
+      write(token, text) { out.push(text); },
+      writeErr(token, text) { err.push(text); },
+      readLine(token, id) {
+        const line = queue.length ? queue.shift() : null;
+        setTimeout(() => {
+          vm.runInContext(
+            `__pycmd_resolve(${id}, ${line !== null}, ${JSON.stringify(line)})`,
+            context,
+          );
+        }, 0);
+      },
+      finish(token, status, exitCode, detail) {
+        handles.forEach((handle) => { clearTimeout(handle); clearInterval(handle); });
+        resolve({
+          status,
+          exit: Number(exitCode),
+          out: out.join(''),
+          err: err.join(''),
+        });
+      },
+    };
 
-console.log('\n== ansi: escaping ==');
-check('html is escaped', Ansi.toHtml('<script>&"', Ansi.newState()) === '&lt;script&gt;&amp;&quot;');
-check('plain text passes through', Ansi.toHtml('hello world', Ansi.newState()) === 'hello world');
+    vm.runInContext(source, context);
+    // Unhandled rejections inside the context surface through the listener the
+    // runtime registers, exactly as they do in a WebView.
+    rejectionSink = (reason) => {
+      (listeners['unhandledrejection'] || [])
+        .forEach((fn) => fn({ reason, preventDefault() {} }));
+    };
 
-console.log('\n== ansi: colour ==');
-let out = Ansi.toHtml(ESC + '[31mred' + ESC + '[0m plain', Ansi.newState());
-check('red opens a span', out.indexOf('<span class="fg1">red</span>') === 0, out);
-check('reset closes the colour', out.endsWith(' plain'), out);
-
-out = Ansi.toHtml(ESC + '[1;32mbold green' + ESC + '[0m', Ansi.newState());
-check('bold and colour combine', /class="b fg2"/.test(out), out);
-
-out = Ansi.toHtml(ESC + '[91mbright' + ESC + '[0m', Ansi.newState());
-check('bright colours map to 8-15', /class="fg9"/.test(out), out);
-
-out = Ansi.toHtml(ESC + '[38;5;196mindexed' + ESC + '[0m', Ansi.newState());
-check('256-colour is mapped', /class="fg9"/.test(out), out);
-
-out = Ansi.toHtml(ESC + '[38;2;255;0;0mtruecolour' + ESC + '[0m', Ansi.newState());
-check('truecolour is mapped', /class="fg9"/.test(out), out);
-
-console.log('\n== ansi: state across chunks ==');
-const shared = Ansi.newState();
-const first = Ansi.toHtml(ESC + '[34mblue start', shared);
-const second = Ansi.toHtml(' still blue' + ESC + '[0m done', shared);
-check('colour opens in the first chunk', /fg4/.test(first), first);
-check('colour continues into the second', /fg4/.test(second), second);
-check('reset applies mid-chunk', second.endsWith('</span> done'), second);
-
-console.log('\n== ansi: sequences that are not colour ==');
-out = Ansi.toHtml(ESC + '[2J' + ESC + '[H' + 'text', Ansi.newState());
-check('clear-screen and home are dropped', out === 'text', out);
-out = Ansi.toHtml(ESC + ']0;window title' + '\u0007' + 'after', Ansi.newState());
-check('OSC title is dropped', out === 'after', out);
-out = Ansi.toHtml('progress\rdone', Ansi.newState());
-check('bare carriage return is dropped', out === 'progressdone', out);
-out = Ansi.toHtml('line1\nline2', Ansi.newState());
-check('newlines survive', out === 'line1\nline2', out);
-check('empty input is empty output', Ansi.toHtml('', Ansi.newState()) === '');
-
-console.log('\n== ansi: a real rich-style line ==');
-out = Ansi.toHtml(ESC + '[1;36m|' + ESC + '[0m name ' + ESC + '[1;36m|' + ESC + '[0m', Ansi.newState());
-check('table borders render', (out.match(/fg6/g) || []).length === 2, out);
-check('no escape bytes leak through', out.indexOf(ESC) === -1, out);
-
-console.log('\n== highlight: keywords ==');
-let html = PyHighlight.highlight('def greet(name):\n    return name');
-check('def is a keyword', /<span class="tok-kw">def<\/span>/.test(html), html);
-check('function name is a definition', /<span class="tok-def">greet<\/span>/.test(html), html);
-check('return is a keyword', /<span class="tok-kw">return<\/span>/.test(html), html);
-
-html = PyHighlight.highlight('class Robot:\n    pass');
-check('class name is a definition', /<span class="tok-def">Robot<\/span>/.test(html), html);
-
-console.log('\n== highlight: strings and comments ==');
-html = PyHighlight.highlight('x = "hello # not a comment"');
-check('string is one token', /<span class="tok-str">"hello # not a comment"<\/span>/.test(html), html);
-check('hash inside a string is not a comment', !/tok-comment/.test(html), html);
-
-html = PyHighlight.highlight('# def is not a keyword here\nx = 1');
-check('comment is highlighted', /<span class="tok-comment"># def is not a keyword here<\/span>/.test(html), html);
-check('keyword inside a comment is inert', !/tok-kw/.test(html), html);
-
-html = PyHighlight.highlight('s = """triple\nline"""');
-check('triple-quoted strings span lines', /tok-str">"""triple\nline"""/.test(html), html);
-
-html = PyHighlight.highlight('f = f"value: {x}"');
-check('f-string prefix is part of the string', /tok-str">f"value: \{x\}"/.test(html), html);
-
-html = PyHighlight.highlight("t = 'single \\' escaped'");
-check('escaped quote does not end the string', (html.match(/tok-str/g) || []).length === 1, html);
-
-console.log('\n== highlight: numbers, builtins, decorators ==');
-html = PyHighlight.highlight('n = 42\nf = 3.14\nh = 0xFF\nc = 1e10');
-check('integers are numbers', /tok-num">42/.test(html), html);
-check('floats are numbers', /tok-num">3.14/.test(html), html);
-check('hex is a number', /tok-num">0xFF/.test(html), html);
-check('exponents are numbers', /tok-num">1e10/.test(html), html);
-
-html = PyHighlight.highlight('print(len(items))');
-check('print is a builtin', /tok-builtin">print/.test(html), html);
-check('len is a builtin', /tok-builtin">len/.test(html), html);
-
-html = PyHighlight.highlight('@property\ndef value(self):\n    return self._v');
-check('decorator is highlighted', /tok-decorator">@property/.test(html), html);
-check('self is highlighted', /tok-self">self/.test(html), html);
-
-html = PyHighlight.highlight('x = True\ny = None');
-check('True is a constant', /tok-num">True/.test(html), html);
-check('None is a constant', /tok-num">None/.test(html), html);
-
-console.log('\n== highlight: safety ==');
-html = PyHighlight.highlight('x = "<script>alert(1)</script>"');
-check('markup inside a string is escaped', html.indexOf('<script>') === -1, html);
-html = PyHighlight.highlight('# <img src=x onerror=alert(1)>');
-check('markup inside a comment is escaped', html.indexOf('<img') === -1, html);
-html = PyHighlight.highlight('a < b and c > d');
-check('comparisons are escaped', html.indexOf('&lt;') !== -1 && html.indexOf('&gt;') !== -1, html);
-
-console.log('\n== highlight: round trip ==');
-const samples = [
-  'x = 1',
-  '',
-  'def f():\n    """doc"""\n    return {"a": [1, 2, 3]}',
-  'if a and b or not c:\n    pass  # trailing',
-  "print(f'{x!r:>10}')",
-];
-function stripTags(value) {
-  return value
-    .replace(/<[^>]*>/g, '')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&amp;/g, '&');
-}
-samples.forEach(function (source, index) {
-  check('sample ' + index + ' survives highlighting unchanged', stripTags(PyHighlight.highlight(source)) === source, {
-    source: source,
-    got: stripTags(PyHighlight.highlight(source)),
+    vm.runInContext(
+      `__pycmd_run(${JSON.stringify(code)}, "test.js", "1")`,
+      context,
+    );
+    setTimeout(() => reject(new Error('timed out')), 5000).unref();
   });
+}
+
+const cases = [];
+function check(name, code, expected, options) {
+  cases.push({ name, code, expected, options: options || {} });
+}
+
+// ------------------------------------------------------------------ basics
+
+check('hello', 'console.log("hello")', 'hello\n');
+check('arithmetic', 'console.log(2 + 3 * 4)', '14\n');
+check('several arguments', 'console.log("a", 1, true)', 'a 1 true\n');
+check('template literals', 'const n = 4; console.log(`n is ${n}`)', 'n is 4\n');
+check('string is bare at the top level', 'console.log("a b")', 'a b\n');
+check('string is quoted inside an array', 'console.log(["a b"])', "[ \"a b\" ]\n");
+check('numbers', 'console.log(1.5, -0, 1e21)', '1.5 -0 1e+21\n');
+check('null and undefined', 'console.log(null, undefined)', 'null undefined\n');
+check('object', 'console.log({a: 1, b: "x"})', '{ a: 1, b: "x" }\n');
+check('nested object', 'console.log({a: {b: [1, 2]}})', '{ a: { b: [ 1, 2 ] } }\n');
+check('empty array and object', 'console.log([], {})', '[] {}\n');
+check('map and set', 'console.log(new Map([["a", 1]]), new Set([1, 2]))',
+      'Map(1) { "a" => 1 } Set(2) { 1, 2 }\n');
+check('circular reference', 'const o = {}; o.self = o; console.log(o)', '{ self: [Circular] }\n');
+check('function', 'function greet() {} console.log(greet)', '[Function: greet]\n');
+check('print alias', 'print("via print")', 'via print\n');
+check('process.stdout.write', 'process.stdout.write("no newline")', 'no newline');
+
+// --------------------------------------------------------------- language
+
+check('classes', `
+class Counter {
+  constructor() { this.n = 0; }
+  bump() { this.n += 1; return this; }
+}
+console.log(new Counter().bump().bump().n);
+`, '2\n');
+
+check('destructuring and spread', `
+const [a, ...rest] = [1, 2, 3];
+const {x, y = 9} = {x: 5};
+console.log(a, rest, x, y);
+`, '1 [ 2, 3 ] 5 9\n');
+
+check('array methods', `
+const values = [5, 3, 8, 1];
+console.log(values.filter(v => v > 2).sort((p, q) => p - q).map(v => v * 2).join(","));
+`, '6,10,16\n');
+
+check('regular expressions', `
+const m = "2026-08-23".match(/(\\d{4})-(\\d{2})-(\\d{2})/);
+console.log(m[1], m[2], m[3]);
+`, '2026 08 23\n');
+
+check('JSON round trip', `
+const text = JSON.stringify({b: [1, 2], a: "x"});
+console.log(text);
+console.log(JSON.parse(text).b[1]);
+`, '{"b":[1,2],"a":"x"}\n2\n');
+
+check('generators', `
+function* take() { yield 1; yield 2; yield 3; }
+console.log([...take()]);
+`, '[ 1, 2, 3 ]\n');
+
+check('closures and recursion', `
+const fib = n => (n < 2 ? n : fib(n - 1) + fib(n - 2));
+console.log(fib(20));
+`, '6765\n');
+
+// ------------------------------------------------------------------ async
+
+check('await a promise', `
+const value = await Promise.resolve(41);
+console.log(value + 1);
+`, '42\n');
+
+check('setTimeout still runs before the script ends', `
+setTimeout(() => console.log("later"), 10);
+console.log("first");
+`, 'first\nlater\n');
+
+check('sleep', `
+console.log("before");
+await sleep(5);
+console.log("after");
+`, 'before\nafter\n');
+
+check('setInterval that clears itself', `
+let n = 0;
+const id = setInterval(() => {
+  n += 1;
+  console.log("tick", n);
+  if (n === 3) clearInterval(id);
+}, 1);
+`, 'tick 1\ntick 2\ntick 3\n');
+
+check('cleared timeout does not hang the run', `
+const id = setTimeout(() => console.log("never"), 50);
+clearTimeout(id);
+console.log("done");
+`, 'done\n');
+
+check('promise chain', `
+await new Promise(resolve => setTimeout(resolve, 5))
+  .then(() => console.log("one"))
+  .then(() => console.log("two"));
+`, 'one\ntwo\n');
+
+// ------------------------------------------------------------------ input
+
+check('readLine', `
+const name = await readLine("Name: ");
+console.log("hello " + name);
+`, 'Name: hello Ada\n', { inputs: ['Ada'] });
+
+check('several reads', `
+const a = Number(await input());
+const b = Number(await input());
+console.log(a + b);
+`, '7\n', { inputs: ['3', '4'] });
+
+check('read at the end of input', `
+const line = await readLine();
+console.log(line === null ? "no more input" : line);
+`, 'no more input\n', { inputs: [] });
+
+// ------------------------------------------------------------------ errors
+
+check('thrown error', 'throw new Error("boom")', '', {
+  status: 'error', errIncludes: 'Error: boom',
 });
+check('syntax error', 'const = 3', '', {
+  status: 'error', errIncludes: 'SyntaxError',
+});
+check('reference error', 'console.log(nope)', '', {
+  status: 'error', errIncludes: 'nope is not defined',
+});
+check('type error', 'null.field', '', {
+  status: 'error', errIncludes: 'TypeError',
+});
+check('error inside a timer', `
+setTimeout(() => { throw new Error("late failure"); }, 1);
+console.log("scheduled");
+`, 'scheduled\n', { status: 'error', errIncludes: 'late failure' });
+check('rejected promise', `
+await Promise.reject(new Error("rejected"));
+`, '', { status: 'error', errIncludes: 'rejected' });
+check('console.error goes to stderr', 'console.error("to stderr"); console.log("to stdout")',
+      'to stdout\n', { errIncludes: 'to stderr' });
+check('catching an error keeps the run clean', `
+try { throw new Error("handled"); } catch (e) { console.log("caught " + e.message); }
+`, 'caught handled\n');
 
-console.log('\n== console.js against a stub DOM ==');
-const nodes = {};
-function makeElement(id) {
-  const element = {
-    id: id,
-    childNodes: [],
-    _text: '',
-    get textContent() { return this._text; },
-    set textContent(value) {
-      this._text = value;
-      if (value === '') {
-        this.childNodes = [];
-        this.firstChild = undefined;
-      }
-    },
-    style: {},
-    classList: {
-      values: {},
-      add: function (n) { this.values[n] = true; },
-      remove: function (n) { delete this.values[n]; },
-      toggle: function (n, on) { if (on) this.values[n] = true; else delete this.values[n]; },
-      contains: function (n) { return !!this.values[n]; },
-    },
-    scrollTop: 0,
-    scrollHeight: 1000,
-    clientHeight: 500,
-    addEventListener: function () {},
-    appendChild: function (child) {
-      this.childNodes.push(child);
-      this._text += child.textContent;
-      this.firstChild = this.childNodes[0];
-    },
-    removeChild: function (child) {
-      const at = this.childNodes.indexOf(child);
-      if (at >= 0) this.childNodes.splice(at, 1);
-      this.firstChild = this.childNodes[0];
-    },
-    set innerHTML(value) {
-      this._html = value;
-      // The stub only needs the text the browser would have rendered.
-      this._text = value.replace(/<[^>]*>/g, '')
-        .replace(/&lt;/g, '<').replace(/&gt;/g, '>')
-        .replace(/&quot;/g, '"').replace(/&#39;/g, "'")
-        .replace(/&amp;/g, '&');
-    },
-    get innerHTML() {
-      return this._html || '';
-    },
-  };
-  nodes[id] = element;
-  return element;
-}
-['scroller', 'output', 'empty', 'tail'].forEach(makeElement);
+// ------------------------------------------------------------------- exit
 
-const frames = [];
-const consoleSandbox = {
-  window: {
-    Ansi: Ansi,
-    requestAnimationFrame: function (fn) { frames.push(fn); },
-  },
-  document: {
-    getElementById: function (id) { return nodes[id]; },
-    createElement: function () { return makeElement('tmp' + Math.random()); },
-  },
-  console: console,
-};
-consoleSandbox.window.window = consoleSandbox.window;
-vm.createContext(consoleSandbox);
-vm.runInContext(
-  fs.readFileSync(path.join(WEB, 'console.js'), 'utf8'),
-  consoleSandbox,
-  { filename: 'console.js' }
-);
+check('exit code', 'console.log("bye"); exit(3);', 'bye\n', { exit: 3 });
+check('exit zero', 'exit()', '', { exit: 0 });
+check('process.exit', 'process.exit(2)', '', { exit: 2 });
 
-const PyConsole = consoleSandbox.window.PyConsole;
-check('PyConsole is exported', typeof PyConsole === 'object');
+(async () => {
+  let failures = 0;
+  for (const item of cases) {
+    let result;
+    try {
+      result = await runCase(item.code, item.options.inputs);
+    } catch (error) {
+      console.log(`FAIL ${item.name}: ${error.message}`);
+      failures += 1;
+      continue;
+    }
 
-PyConsole.append('stdout', 'first\n');
-PyConsole.append('stderr', 'oops\n');
-check('writes are batched, not immediate', nodes.output.childNodes.length === 0, nodes.output.childNodes.length);
-check('one frame was requested for two writes', frames.length === 1, frames.length);
-frames.shift()();
-check('flush appends to the DOM', nodes.output.childNodes.length === 1, nodes.output.childNodes.length);
-check('stdout text is present', nodes.output.textContent.indexOf('first') !== -1, nodes.output.textContent);
-check('stderr text is present', nodes.output.textContent.indexOf('oops') !== -1, nodes.output.textContent);
-check('stderr is class-tagged', nodes.output.childNodes[0].innerHTML.indexOf('class="stderr"') !== -1);
-check('empty placeholder is hidden', nodes.empty.classList.contains('hidden'));
-check('view scrolled to the bottom', nodes.scroller.scrollTop === nodes.scroller.scrollHeight);
+    const wantStatus = item.options.status || 'ok';
+    const problems = [];
+    if (result.status !== wantStatus) {
+      problems.push(`status ${JSON.stringify(result.status)}, wanted ${JSON.stringify(wantStatus)}`);
+    }
+    if (result.out !== item.expected) {
+      problems.push(`stdout ${JSON.stringify(result.out)}, wanted ${JSON.stringify(item.expected)}`);
+    }
+    if (item.options.errIncludes && !result.err.includes(item.options.errIncludes)) {
+      problems.push(`stderr ${JSON.stringify(result.err)} lacks ${JSON.stringify(item.options.errIncludes)}`);
+    }
+    if (!item.options.errIncludes && wantStatus === 'ok' && result.err.trim() !== '') {
+      problems.push(`unexpected stderr ${JSON.stringify(result.err)}`);
+    }
+    if (item.options.exit !== undefined && result.exit !== item.options.exit) {
+      problems.push(`exit ${result.exit}, wanted ${item.options.exit}`);
+    }
 
-PyConsole.append('stdout', '');
-check('empty writes are ignored', frames.length === 0, frames.length);
+    if (problems.length) {
+      failures += 1;
+      console.log(`FAIL ${item.name}`);
+      problems.forEach((line) => console.log(`     ${line}`));
+    } else {
+      console.log(`ok   ${item.name}`);
+    }
+  }
 
-PyConsole.clear();
-check('clear empties the output', nodes.output.textContent === '', nodes.output.textContent);
-check('clear restores the placeholder', !nodes.empty.classList.contains('hidden'));
-
-PyConsole.append('system', '<b>note</b>\n');
-frames.shift()();
-check('system text is escaped, not parsed',
-  nodes.output.childNodes[0].innerHTML.indexOf('&lt;b&gt;') !== -1,
-  nodes.output.childNodes[0].innerHTML);
-
-PyConsole.clear();
-PyConsole.append('stdout', ESC + '[32mgreen\n');
-frames.shift()();
-check('ansi is applied to stdout',
-  nodes.output.childNodes[0].innerHTML.indexOf('fg2') !== -1,
-  nodes.output.childNodes[0].innerHTML);
-
-PyConsole.setWrap(false);
-check('wrap toggles the class', nodes.output.classList.contains('nowrap'));
-PyConsole.setWrap(true);
-check('wrap toggles back', !nodes.output.classList.contains('nowrap'));
-
-console.log('\n== console.js: buffer cap ==');
-PyConsole.clear();
-const big = 'x'.repeat(100000);
-for (let i = 0; i < 8; i += 1) {
-  PyConsole.append('stdout', big);
-  while (frames.length) frames.shift()();
-}
-check('old blocks are dropped past the cap', nodes.output.childNodes.length < 8, nodes.output.childNodes.length);
-check('at least one block is kept', nodes.output.childNodes.length >= 1, nodes.output.childNodes.length);
-
-console.log('');
-if (failures.length) {
-  console.log(failures.length + ' FAILURE(S): ' + failures.join(', '));
-  process.exit(1);
-}
-console.log('all checks passed');
+  console.log(`\n${cases.length - failures}/${cases.length} checks passed`);
+  process.exit(failures ? 1 : 0);
+})();

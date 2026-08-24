@@ -1,0 +1,207 @@
+"""Downloads and workspace exports.
+
+Both land in the same folder so the Downloads tab has one place to look, and
+both are careful about where they write: a URL cannot choose a path outside the
+downloads folder, and a zip is built from the workspace only.
+"""
+
+from __future__ import annotations
+
+import os
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
+import zipfile
+
+USER_AGENT = "PyCmd-Android/1.0"
+TIMEOUT = 60
+MAX_BYTES = 64 * 1024 * 1024
+
+_downloads_dir = None
+_workspace_dir = None
+
+
+def configure(downloads_dir: str, workspace_dir: str) -> None:
+    global _downloads_dir, _workspace_dir
+    _downloads_dir = downloads_dir
+    _workspace_dir = workspace_dir
+    os.makedirs(downloads_dir, exist_ok=True)
+
+
+def _safe_name(name: str) -> str:
+    """Keeps a downloaded file inside the downloads folder.
+
+    A server controls the filename it suggests, so separators and traversal are
+    stripped rather than trusted.
+    """
+    name = os.path.basename(name.replace("\\", "/")).strip()
+    name = name.replace("..", "_")
+    keep = "-_. ()[]"
+    cleaned = "".join(c for c in name if c.isalnum() or c in keep).strip()
+    return cleaned[:120] or "download"
+
+
+def _unique(directory: str, name: str) -> str:
+    candidate = os.path.join(directory, name)
+    if not os.path.exists(candidate):
+        return candidate
+    stem, extension = os.path.splitext(name)
+    for index in range(2, 500):
+        candidate = os.path.join(directory, f"{stem}-{index}{extension}")
+        if not os.path.exists(candidate):
+            return candidate
+    return os.path.join(directory, f"{stem}-{int(time.time())}{extension}")
+
+
+def download(url: str, progress=None) -> dict:
+    """Fetches a URL into the downloads folder."""
+    if _downloads_dir is None:
+        return {"ok": False, "error": "downloads are not configured"}
+
+    url = url.strip()
+    if not url:
+        return {"ok": False, "error": "Enter a URL."}
+    if "://" not in url:
+        url = "https://" + url
+
+    parsed = urllib.parse.urlparse(url)
+    if parsed.scheme not in ("http", "https"):
+        return {"ok": False, "error": f"Only http and https are supported (got {parsed.scheme!r})."}
+
+    def report(message):
+        if progress is not None:
+            progress.onProgress(message)
+
+    report(f"Connecting to {parsed.netloc}...")
+    request = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
+    try:
+        with urllib.request.urlopen(request, timeout=TIMEOUT) as response:
+            suggested = ""
+            disposition = response.headers.get("Content-Disposition", "")
+            if "filename=" in disposition:
+                suggested = disposition.split("filename=")[-1].strip().strip('";')
+            if not suggested:
+                suggested = os.path.basename(parsed.path) or parsed.netloc
+            if "." not in suggested:
+                content_type = (response.headers.get("Content-Type") or "").split(";")[0].strip()
+                suggested += {
+                    "text/html": ".html", "text/plain": ".txt", "application/json": ".json",
+                    "text/css": ".css", "application/javascript": ".js", "text/javascript": ".js",
+                    "application/zip": ".zip", "image/png": ".png", "image/jpeg": ".jpg",
+                }.get(content_type, "")
+
+            target = _unique(_downloads_dir, _safe_name(suggested))
+            total = int(response.headers.get("Content-Length") or 0)
+            written = 0
+            report(f"Downloading {os.path.basename(target)}...")
+
+            with open(target, "wb") as handle:
+                while True:
+                    chunk = response.read(64 * 1024)
+                    if not chunk:
+                        break
+                    written += len(chunk)
+                    if written > MAX_BYTES:
+                        handle.close()
+                        os.remove(target)
+                        return {"ok": False, "error": "That file is larger than 64 MB."}
+                    handle.write(chunk)
+                    if total:
+                        report(f"{written * 100 // total}%  ({written // 1024} KB)")
+                    else:
+                        report(f"{written // 1024} KB")
+    except urllib.error.HTTPError as exc:
+        return {"ok": False, "error": f"The server returned HTTP {exc.code}."}
+    except urllib.error.URLError as exc:
+        return {"ok": False, "error": f"Could not reach it: {getattr(exc, 'reason', exc)}"}
+    except TimeoutError:
+        return {"ok": False, "error": "The download timed out."}
+    except OSError as exc:
+        return {"ok": False, "error": f"Could not save it: {exc}"}
+
+    return {"ok": True, "path": target, "name": os.path.basename(target), "bytes": written}
+
+
+def export_workspace(name: str = "") -> dict:
+    """Zips the workspace into the downloads folder."""
+    if _downloads_dir is None or _workspace_dir is None:
+        return {"ok": False, "error": "downloads are not configured"}
+
+    stamp = time.strftime("%Y%m%d-%H%M%S")
+    target = _unique(_downloads_dir, _safe_name(name or f"workspace-{stamp}.zip"))
+    if not target.endswith(".zip"):
+        target += ".zip"
+
+    count = 0
+    try:
+        with zipfile.ZipFile(target, "w", zipfile.ZIP_DEFLATED) as archive:
+            for root, _, files in os.walk(_workspace_dir):
+                for filename in files:
+                    full = os.path.join(root, filename)
+                    relative = os.path.relpath(full, _workspace_dir)
+                    archive.write(full, relative)
+                    count += 1
+    except OSError as exc:
+        return {"ok": False, "error": f"Could not build the archive: {exc}"}
+
+    return {
+        "ok": True,
+        "path": target,
+        "name": os.path.basename(target),
+        "files": count,
+        "bytes": os.path.getsize(target),
+    }
+
+
+def listing() -> list:
+    """Everything in the downloads folder, newest first."""
+    if _downloads_dir is None or not os.path.isdir(_downloads_dir):
+        return []
+    rows = []
+    for name in os.listdir(_downloads_dir):
+        full = os.path.join(_downloads_dir, name)
+        if not os.path.isfile(full):
+            continue
+        rows.append({
+            "name": name,
+            "path": full,
+            "bytes": os.path.getsize(full),
+            "modified": int(os.path.getmtime(full)),
+        })
+    rows.sort(key=lambda row: row["modified"], reverse=True)
+    return rows
+
+
+def delete(path: str) -> dict:
+    """Removes one download. Refuses anything outside the downloads folder."""
+    if _downloads_dir is None:
+        return {"ok": False, "error": "downloads are not configured"}
+    full = os.path.abspath(path)
+    if not full.startswith(os.path.abspath(_downloads_dir) + os.sep):
+        return {"ok": False, "error": "That file is not in Downloads."}
+    try:
+        os.remove(full)
+    except OSError as exc:
+        return {"ok": False, "error": str(exc)}
+    return {"ok": True}
+
+
+def copy_to_workspace(path: str) -> dict:
+    """Moves a download into the workspace so it can be edited or served."""
+    if _workspace_dir is None:
+        return {"ok": False, "error": "downloads are not configured"}
+    source = os.path.abspath(path)
+    if not os.path.isfile(source):
+        return {"ok": False, "error": "That file is gone."}
+    target = _unique(_workspace_dir, _safe_name(os.path.basename(source)))
+    try:
+        with open(source, "rb") as src, open(target, "wb") as dst:
+            while True:
+                chunk = src.read(256 * 1024)
+                if not chunk:
+                    break
+                dst.write(chunk)
+    except OSError as exc:
+        return {"ok": False, "error": str(exc)}
+    return {"ok": True, "path": target, "name": os.path.basename(target)}

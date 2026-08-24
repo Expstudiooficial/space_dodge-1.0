@@ -30,6 +30,10 @@ __all__ = [
     "reset_namespace",
     "completions",
     "runtime_info",
+    "run_any",
+    "language_catalogue",
+    "language_for",
+    "template_for",
     "register_channel",
     "unregister_channel",
     "current_channel",
@@ -476,6 +480,75 @@ def run_source(source: str, source_name: str = "<console>", echo_result: bool = 
 
     _sink.onFinished(run_id, status, int((time.monotonic() - started) * 1000))
     return status
+
+
+def run_any(path: str) -> str:
+    """Runs a file with whichever engine its extension calls for.
+
+    Python still goes through run_file so it keeps the console's namespace and
+    the REPL behaviour. Anything else is handed to the language registry, which
+    either runs it or explains why it cannot.
+    """
+    import os
+
+    if _sink is None:
+        raise RuntimeError("pycmd_runtime.configure() has not been called")
+
+    if path.lower().endswith((".py", ".pyw")):
+        return run_file(path)
+
+    try:
+        from pycmd_langs import registry
+    except Exception as exc:  # noqa: BLE001
+        sys.stderr.write(f"language support failed to load: {exc}\n")
+        return "error"
+
+    language = registry.for_path(path)
+    name = os.path.basename(path)
+    _sink.onOutput("system", f"Running {name} as {language['name']}\n", CONSOLE)
+
+    started = time.monotonic()
+    try:
+        result = registry.run_file(path, stdout=sys.stdout, stdin=sys.stdin)
+    except KeyboardInterrupt:
+        sys.stderr.write("\nKeyboardInterrupt: execution stopped\n")
+        return "stopped"
+    except BaseException as exc:  # noqa: BLE001
+        sys.stderr.write(_format_exception(exc, name))
+        return "error"
+
+    millis = int((time.monotonic() - started) * 1000)
+    if result.get("ok"):
+        code = result.get("exit", 0)
+        if code:
+            sys.stderr.write(f"{language['name']} exited with status {code}\n")
+            _sink.onFinished(0, "error", millis)
+            return "error"
+        _sink.onFinished(0, "ok", millis)
+        return "ok"
+
+    sys.stderr.write(result.get("error", "could not run this file") + "\n")
+    _sink.onFinished(0, "error", millis)
+    return "error"
+
+
+def language_catalogue(include_all: bool = True) -> list:
+    """Every file type the new-file menu offers."""
+    from pycmd_langs import registry
+
+    return registry.catalogue(include_all)
+
+
+def language_for(path: str) -> dict:
+    from pycmd_langs import registry
+
+    return registry.for_path(path)
+
+
+def template_for(name: str) -> str:
+    from pycmd_langs import registry
+
+    return registry.template_for(name)
 
 
 def run_file(path: str, args=None) -> str:

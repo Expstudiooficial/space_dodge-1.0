@@ -477,6 +477,72 @@ time.sleep(0.4)
 check("nothing is left running", pycmd_servers.count() == 0, pycmd_servers.listing())
 check("ports were freed", pycmd_servers.port_available(8131), "8131 still bound")
 
+report("\n== languages: registry ==")
+from pycmd_langs import registry  # noqa: E402
+
+check("python is runnable", registry.for_path("a.py")["mode"] == "run", registry.for_path("a.py"))
+check("C is runnable", registry.for_path("a.c")["mode"] == "run", registry.for_path("a.c"))
+check("javascript is runnable", registry.for_path("a.js")["mode"] == "run", registry.for_path("a.js"))
+check("html previews", registry.for_path("a.html")["mode"] == "preview", registry.for_path("a.html"))
+check("rust is edit-only", registry.for_path("a.rs")["mode"] == "edit", registry.for_path("a.rs"))
+check(
+    "rust says why it cannot run",
+    "compiler" in registry.for_path("a.rs")["note"],
+    registry.for_path("a.rs")["note"],
+)
+check("unknown extension falls back to text", registry.for_path("a.zzz")["id"] == "text",
+      registry.for_path("a.zzz"))
+check("README is markdown", registry.for_path("README.md")["id"] == "markdown",
+      registry.for_path("README.md"))
+check("catalogue is large", len(registry.catalogue()) >= 25, len(registry.catalogue()))
+check(
+    "restricted catalogue is python-only",
+    all(r["id"] in ("python", "text", "markdown") for r in registry.catalogue(False)),
+    registry.catalogue(False),
+)
+check("C template compiles", "int main" in registry.template_for("x.c"), registry.template_for("x.c"))
+check("LICENSE template is the MIT text", "MIT License" in registry.template_for("LICENSE"),
+      registry.template_for("LICENSE")[:40])
+check("gitignore template", "__pycache__" in registry.template_for(".gitignore"),
+      registry.template_for(".gitignore"))
+
+report("\n== languages: running a C file through the runtime ==")
+c_file = os.path.join(workspace, "demo.c")
+with open(c_file, "w", encoding="utf-8") as handle:
+    handle.write(
+        "#include <stdio.h>\n"
+        "int main(void) {\n"
+        "    for (int i = 1; i <= 3; i++) printf(\"%d \", i * i);\n"
+        "    printf(\"\\n\");\n"
+        "    return 0;\n"
+        "}\n"
+    )
+sink.reset()
+status = pycmd_runtime.run_any(c_file)
+check("run_any runs C", status == "ok", status)
+check("C output reached the console", "1 4 9" in sink.text("stdout"), repr(sink.text()))
+check("it announced the language", "as C" in sink.text("system"), sink.text("system"))
+
+bad_c = os.path.join(workspace, "bad.c")
+with open(bad_c, "w", encoding="utf-8") as handle:
+    handle.write("int main() { int x = ; }\n")
+sink.reset()
+status = pycmd_runtime.run_any(bad_c)
+check("a broken C file reports an error", status == "error", status)
+check("the C error is explained", "C syntax error" in sink.text("stderr"), sink.text("stderr"))
+
+rust_file = os.path.join(workspace, "demo.rs")
+with open(rust_file, "w", encoding="utf-8") as handle:
+    handle.write('fn main() { println!("hi"); }\n')
+sink.reset()
+status = pycmd_runtime.run_any(rust_file)
+check("rust is refused", status == "error", status)
+check("and says why", "compiler" in sink.text("stderr"), sink.text("stderr"))
+
+sink.reset()
+status = pycmd_runtime.run_any(os.path.join(workspace, "sample.py"))
+check("run_any still runs python", status == "ok", status)
+
 report("\n== channels ==")
 sink.reset()
 pycmd_runtime.run_source("print('console line')")

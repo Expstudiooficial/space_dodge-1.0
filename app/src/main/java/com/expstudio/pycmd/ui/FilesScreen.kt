@@ -12,17 +12,22 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -34,6 +39,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.expstudio.pycmd.python.LanguageInfo
 import com.expstudio.pycmd.util.WorkspaceEntry
 import java.io.File
 
@@ -47,6 +53,8 @@ fun FilesScreen(
     onRunFile: (File) -> Unit,
     onUp: () -> Unit,
     onNewFile: (String) -> Unit,
+    onNewFileOfType: (String, String) -> Unit,
+    languages: List<LanguageInfo>,
     onNewFolder: (String) -> Unit,
     onRename: (File, String) -> Unit,
     onDelete: (File) -> Unit,
@@ -159,15 +167,12 @@ fun FilesScreen(
     }
 
     when (val current = dialog) {
-        FileDialog.NewFile -> TextPromptDialog(
-            title = "New file",
-            label = "File name",
-            initial = "script.py",
-            confirmLabel = "Create",
+        FileDialog.NewFile -> NewFileDialog(
+            languages = languages,
             onDismiss = { dialog = null },
-            onConfirm = {
+            onCreate = { name, extension ->
                 dialog = null
-                onNewFile(it)
+                if (extension.isEmpty()) onNewFile(name) else onNewFileOfType(name, extension)
             },
         )
 
@@ -367,4 +372,118 @@ private fun PickerBanner(
         }
         TextButton(onClick = onCancel) { Text("Cancel") }
     }
+}
+
+/**
+ * New-file dialog with a type picker.
+ *
+ * The list comes from the language registry, so it grows and shrinks with the
+ * Polyglot Files plugin rather than being hard-coded here. Each type carries a
+ * starter template, which is what makes "new Dockerfile" useful rather than
+ * just an empty buffer with a name.
+ */
+@Composable
+private fun NewFileDialog(
+    languages: List<LanguageInfo>,
+    onDismiss: () -> Unit,
+    onCreate: (String, String) -> Unit,
+) {
+    var name by remember { mutableStateOf("script") }
+    var chosen by remember(languages) {
+        mutableStateOf(languages.firstOrNull { it.id == "python" } ?: languages.firstOrNull())
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = MaterialTheme.colorScheme.surface,
+        shape = RoundedCornerShape(18.dp),
+        title = { Text("New file", style = MaterialTheme.typography.titleMedium) },
+        text = {
+            Column {
+                OutlinedTextField(
+                    value = name,
+                    onValueChange = { name = it },
+                    label = { Text("Name") },
+                    singleLine = true,
+                    shape = RoundedCornerShape(12.dp),
+                    textStyle = MaterialTheme.typography.bodyMedium.copy(fontFamily = MonoFamily),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = MaterialTheme.colorScheme.primary,
+                        unfocusedBorderColor = MaterialTheme.colorScheme.outline,
+                    ),
+                    modifier = Modifier.fillMaxWidth(),
+                )
+
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    text = chosen?.let { "${it.name}  ->  $name${it.extension}" } ?: name,
+                    style = MaterialTheme.typography.labelSmall,
+                    fontFamily = MonoFamily,
+                    color = MaterialTheme.colorScheme.secondary,
+                )
+
+                if (chosen?.note?.isNotBlank() == true) {
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        chosen!!.note,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+
+                Spacer(Modifier.height(10.dp))
+                SectionTitle("Type")
+                LazyColumn(Modifier.heightIn(max = 260.dp)) {
+                    items(languages, key = { it.id }) { language ->
+                        val selected = chosen?.id == language.id
+                        Row(
+                            Modifier
+                                .fillMaxWidth()
+                                .clickable { chosen = language }
+                                .padding(vertical = 8.dp, horizontal = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Column(Modifier.weight(1f)) {
+                                Text(
+                                    language.name,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = if (selected) {
+                                        MaterialTheme.colorScheme.primary
+                                    } else {
+                                        MaterialTheme.colorScheme.onSurface
+                                    },
+                                )
+                                Text(
+                                    language.extension + runLabel(language),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontFamily = MonoFamily,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                            if (selected) {
+                                Text(
+                                    "selected",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.primary,
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = { onCreate(name.trim(), chosen?.extension.orEmpty()) },
+                enabled = name.isNotBlank() && chosen != null,
+            ) { Text("Create") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+    )
+}
+
+private fun runLabel(language: LanguageInfo): String = when (language.mode) {
+    "run" -> "   runs on the device"
+    "preview" -> "   previewable"
+    else -> ""
 }

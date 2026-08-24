@@ -6,4 +6,4 @@ to run it. These are interpreters instead: they walk the parsed program, which
 is exactly how CPython runs here too.
 """
 
-__all__ = ["c_interp", "c_lexer", "c_parser", "c_stdlib"]
+__all__ = ["c_interp", "c_lexer", "c_parser", "c_stdlib", "registry"]

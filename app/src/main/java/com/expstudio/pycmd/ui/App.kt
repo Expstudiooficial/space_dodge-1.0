@@ -44,6 +44,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.expstudio.pycmd.plugins.PluginIds
 import com.expstudio.pycmd.python.OutputChunk
 import java.io.File
 import kotlinx.coroutines.delay
@@ -68,6 +69,9 @@ fun PyCmdRoot(viewModel: MainViewModel = viewModel()) {
     val debugEntries by viewModel.debugEntries.collectAsState()
     val debugErrors by viewModel.debugErrorCount.collectAsState()
     val pickingFor by viewModel.pickingFor.collectAsState()
+    val downloadsState by viewModel.downloads.collectAsState()
+    val pluginsEnabled by viewModel.pluginsEnabled.collectAsState()
+    val languages by viewModel.languages.collectAsState()
 
     // Both WebViews are created once and reused for the life of the screen, so
     // console history and editor state survive tab switches.
@@ -109,7 +113,13 @@ fun PyCmdRoot(viewModel: MainViewModel = viewModel()) {
     // else it returns to the console first.
     BackHandler(enabled = tab != Tab.CONSOLE) {
         if (tab == Tab.FILES && viewModel.navigateUp()) return@BackHandler
-        viewModel.selectTab(Tab.CONSOLE)
+        // A destination reached through More goes back to More first.
+        val parent = if (tab in setOf(Tab.PACKAGES, Tab.DOWNLOADS, Tab.PLUGINS)) {
+            Tab.MORE
+        } else {
+            Tab.CONSOLE
+        }
+        viewModel.selectTab(parent)
     }
 
     Scaffold(
@@ -190,8 +200,16 @@ fun PyCmdRoot(viewModel: MainViewModel = viewModel()) {
                 TabItem(Tab.CONSOLE, PyIcons.Terminal, tab, viewModel::selectTab)
                 TabItem(Tab.EDITOR, PyIcons.Edit, tab, viewModel::selectTab, dot = editorState.isDirty)
                 TabItem(Tab.FILES, PyIcons.Folder, tab, viewModel::selectTab)
-                TabItem(Tab.PACKAGES, PyIcons.Inventory2, tab, viewModel::selectTab)
                 TabItem(Tab.SERVERS, PyIcons.Dns, tab, viewModel::selectTab, count = serverCount)
+                TabItem(
+                    Tab.MORE,
+                    PyIcons.MoreVert,
+                    tab,
+                    viewModel::selectTab,
+                    // The other destinations live here, so More has to show
+                    // that one of them is the current screen.
+                    forceSelected = tab in setOf(Tab.PACKAGES, Tab.DOWNLOADS, Tab.PLUGINS),
+                )
             }
         },
     ) { padding ->
@@ -243,6 +261,8 @@ fun PyCmdRoot(viewModel: MainViewModel = viewModel()) {
                     onRunFile = viewModel::runFile,
                     onUp = { viewModel.navigateUp() },
                     onNewFile = viewModel::createFile,
+                    onNewFileOfType = viewModel::createFileOfType,
+                    languages = languages,
                     onNewFolder = viewModel::createFolder,
                     onRename = viewModel::renameEntry,
                     onDelete = viewModel::deleteEntry,
@@ -281,6 +301,35 @@ fun PyCmdRoot(viewModel: MainViewModel = viewModel()) {
                         copyToClipboard(context, text)
                         viewModel.showToast("Copied $text")
                     },
+                )
+
+                Tab.MORE -> MoreScreen(
+                    serverCount = serverCount,
+                    downloadCount = downloadsState.files.size,
+                    pluginCount = pluginsEnabled.size,
+                    errorCount = debugErrors,
+                    onSelect = viewModel::selectTab,
+                )
+
+                Tab.DOWNLOADS -> DownloadsScreen(
+                    state = downloadsState,
+                    downloaderOn = viewModel.isPluginOn(PluginIds.DOWNLOADER),
+                    exportOn = viewModel.isPluginOn(PluginIds.WORKSPACE_EXPORT),
+                    onDownload = viewModel::downloadUrl,
+                    onOpen = viewModel::openDownload,
+                    onCopyToWorkspace = viewModel::copyDownloadToWorkspace,
+                    onDelete = viewModel::deleteDownload,
+                    onExport = viewModel::exportWorkspace,
+                )
+
+                Tab.PLUGINS -> PluginsScreen(
+                    enabled = pluginsEnabled,
+                    onToggle = viewModel::setPluginEnabled,
+                    onOpen = { spec ->
+                        viewModel.showToast("${spec.name} opens from here in a later build")
+                    },
+                    onEnableAll = viewModel::enableAllPlugins,
+                    onReset = viewModel::resetPlugins,
                 )
 
                 Tab.DEBUG -> DebugScreen(
@@ -328,9 +377,10 @@ private fun androidx.compose.foundation.layout.RowScope.TabItem(
     onSelect: (Tab) -> Unit,
     count: Int = 0,
     dot: Boolean = false,
+    forceSelected: Boolean = false,
 ) {
     NavigationBarItem(
-        selected = current == target,
+        selected = current == target || forceSelected,
         onClick = { onSelect(target) },
         icon = {
             BadgedBox(

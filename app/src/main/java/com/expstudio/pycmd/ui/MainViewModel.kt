@@ -6,11 +6,15 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.expstudio.pycmd.python.CONSOLE_CHANNEL
 import com.expstudio.pycmd.python.EngineStatus
+import com.expstudio.pycmd.python.DownloadedFile
 import com.expstudio.pycmd.python.InstalledPackage
+import com.expstudio.pycmd.python.LanguageInfo
 import com.expstudio.pycmd.python.OutputChunk
 import com.expstudio.pycmd.python.PythonEngine
 import com.expstudio.pycmd.python.RunningServer
 import com.expstudio.pycmd.python.ServerService
+import com.expstudio.pycmd.plugins.PluginIds
+import com.expstudio.pycmd.plugins.Plugins
 import com.expstudio.pycmd.util.DebugLog
 import com.expstudio.pycmd.util.LogEntry
 import com.expstudio.pycmd.util.Workspace
@@ -22,15 +26,34 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 
-/** Which screen is showing. DEBUG is reached from the top bar, not the tab row. */
+/**
+ * Which screen is showing.
+ *
+ * Only the first five are in the bottom bar - seven destinations wrap their
+ * labels onto two lines on a phone - so Packages, Downloads and Plugins live
+ * behind More, and Debug stays in the top bar where it is reachable from
+ * anywhere.
+ */
 enum class Tab(val label: String) {
     CONSOLE("Console"),
     EDITOR("Editor"),
     FILES("Files"),
-    PACKAGES("Packages"),
     SERVERS("Servers"),
+    MORE("More"),
+    PACKAGES("Packages"),
+    DOWNLOADS("Downloads"),
+    PLUGINS("Plugins"),
     DEBUG("Debug"),
 }
+
+/** The five destinations in the bottom bar; the rest live behind More. */
+val BOTTOM_TABS = listOf(Tab.CONSOLE, Tab.EDITOR, Tab.FILES, Tab.SERVERS, Tab.MORE)
+
+data class DownloadsState(
+    val files: List<DownloadedFile> = emptyList(),
+    val busy: Boolean = false,
+    val progress: String = "",
+)
 
 /** What a launch form is set up to start. */
 enum class ServerKind(val label: String) {
@@ -150,6 +173,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _packages = MutableStateFlow(PackagesState())
     val packages: StateFlow<PackagesState> = _packages.asStateFlow()
 
+    private val _downloads = MutableStateFlow(DownloadsState())
+    val downloads: StateFlow<DownloadsState> = _downloads.asStateFlow()
+
+    val pluginsEnabled: StateFlow<Set<String>> = Plugins.enabled
+
+    private val _languages = MutableStateFlow<List<LanguageInfo>>(emptyList())
+    val languages: StateFlow<List<LanguageInfo>> = _languages.asStateFlow()
+
     private val _servers = MutableStateFlow(ServersState())
     val servers: StateFlow<ServersState> = _servers.asStateFlow()
 
@@ -192,6 +223,110 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             refreshFiles(workspace.root)
             refreshPackages()
             refreshServers()
+            refreshDownloads()
+            refreshLanguages()
+        }
+    }
+
+    // --------------------------------------------------------------- plugins
+
+    fun setPluginEnabled(id: String, on: Boolean) {
+        Plugins.setEnabled(id, on)
+        // Polyglot Files decides which file types exist, so the catalogue has
+        // to follow it rather than be read once at startup.
+        if (id == PluginIds.POLYGLOT_FILES || id == PluginIds.POWER_PACK) refreshLanguages()
+    }
+
+    fun enableAllPlugins() {
+        Plugins.enableAll()
+        refreshLanguages()
+        showToast("Every plugin is on")
+    }
+
+    fun resetPlugins() {
+        Plugins.resetToDefaults()
+        refreshLanguages()
+        showToast("Plugins reset")
+    }
+
+    fun isPluginOn(id: String): Boolean = Plugins.isOn(id)
+
+    private fun refreshLanguages() {
+        viewModelScope.launch {
+            _languages.value = engine.languageCatalogue(Plugins.isOn(PluginIds.POLYGLOT_FILES))
+        }
+    }
+
+    // ------------------------------------------------------------- downloads
+
+    fun refreshDownloads() {
+        viewModelScope.launch {
+            _downloads.value = _downloads.value.copy(files = engine.listDownloads())
+        }
+    }
+
+    fun downloadUrl(url: String) {
+        if (url.isBlank()) {
+            showToast("Enter a URL.")
+            return
+        }
+        viewModelScope.launch {
+            _downloads.value = _downloads.value.copy(busy = true, progress = "Starting...")
+            val result = engine.downloadUrl(url) { message ->
+                _downloads.value = _downloads.value.copy(progress = message)
+            }
+            _downloads.value = _downloads.value.copy(busy = false, progress = "")
+            showToast(if (result.ok) "Saved ${result.name}" else result.error.ifBlank { "Download failed." })
+            refreshDownloads()
+        }
+    }
+
+    fun exportWorkspace() {
+        viewModelScope.launch {
+            _downloads.value = _downloads.value.copy(busy = true, progress = "Zipping the workspace...")
+            val result = engine.exportWorkspace()
+            _downloads.value = _downloads.value.copy(busy = false, progress = "")
+            showToast(
+                if (result.ok) "Exported ${result.files} files to ${result.name}"
+                else result.error.ifBlank { "Export failed." },
+            )
+            refreshDownloads()
+        }
+    }
+
+    fun deleteDownload(file: DownloadedFile) {
+        viewModelScope.launch {
+            if (engine.deleteDownload(file.path)) {
+                showToast("Deleted ${file.name}")
+            } else {
+                showToast("Could not delete it.")
+            }
+            refreshDownloads()
+        }
+    }
+
+    fun copyDownloadToWorkspace(file: DownloadedFile) {
+        viewModelScope.launch {
+            val result = engine.copyDownloadToWorkspace(file.path)
+            if (result.ok) {
+                showToast("Copied to the workspace")
+                refreshFiles(_files.value.directory ?: workspace.root)
+            } else {
+                showToast(result.error.ifBlank { "Could not copy it." })
+            }
+        }
+    }
+
+    /** Opens a download in the editor, copying it across first. */
+    fun openDownload(file: DownloadedFile) {
+        viewModelScope.launch {
+            val result = engine.copyDownloadToWorkspace(file.path)
+            if (!result.ok) {
+                showToast(result.error.ifBlank { "Could not open it." })
+                return@launch
+            }
+            refreshFiles(_files.value.directory ?: workspace.root)
+            openInEditor(File(result.path))
         }
     }
 
@@ -211,6 +346,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             Tab.FILES -> refreshFiles(_files.value.directory ?: workspace.root)
             Tab.PACKAGES -> refreshPackages()
             Tab.SERVERS -> refreshServers()
+            Tab.DOWNLOADS -> refreshDownloads()
             else -> Unit
         }
     }
@@ -446,9 +582,31 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun runFile(file: File) {
         _tab.value = Tab.CONSOLE
         viewModelScope.launch {
-            engine.echo("\nRunning ${file.name}\n", OutputChunk.Stream.SYSTEM)
-            engine.runFile(file.absolutePath)
+            engine.echo("\n", OutputChunk.Stream.SYSTEM)
+            // runAny picks the engine from the extension: Python keeps the
+            // console namespace, C goes through the interpreter, and anything
+            // without an engine explains itself rather than failing silently.
+            engine.runAny(file.absolutePath)
             refreshServers()
+        }
+    }
+
+    /** New-file creation with a starter template for the chosen type. */
+    fun createFileOfType(name: String, extension: String) {
+        val directory = _files.value.directory ?: workspace.root
+        val fileName = if (name.contains('.') || extension.isEmpty()) name else name + extension
+        viewModelScope.launch {
+            workspace.createFile(directory, fileName)
+                .onSuccess { created ->
+                    val template = engine.templateFor(created.name)
+                    if (template.isNotEmpty()) {
+                        workspace.write(created, template)
+                    }
+                    refreshFiles(directory)
+                    showToast("Created ${created.name}")
+                    openInEditor(created)
+                }
+                .onFailure { showToast(it.message ?: "Could not create the file.") }
         }
     }
 

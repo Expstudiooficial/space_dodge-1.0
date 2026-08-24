@@ -4,6 +4,7 @@ import android.content.Context
 import com.chaquo.python.PyObject
 import com.chaquo.python.Python
 import com.chaquo.python.android.AndroidPlatform
+import com.expstudio.pycmd.js.JsEngine
 import com.expstudio.pycmd.util.DebugLog
 import java.io.File
 import java.util.concurrent.ConcurrentHashMap
@@ -63,6 +64,9 @@ object PythonEngine {
     private const val TAG = "engine"
     private const val OUTPUT_BUFFER = 512
 
+    /** Files the device's own JavaScript engine runs, rather than Python. */
+    private val JS_EXTENSIONS = setOf("js", "mjs", "cjs")
+
     /** The single thread every ordinary Python call runs on. */
     private val pythonExecutor = Executors.newSingleThreadExecutor { runnable ->
         Thread(runnable, "python-main").apply { isDaemon = true }
@@ -116,9 +120,12 @@ object PythonEngine {
     private lateinit var runtime: PyObject
     private lateinit var packages: PyObject
     private lateinit var servers: PyObject
+    private lateinit var downloads: PyObject
 
+    private lateinit var appContext: Context
     private lateinit var workspaceDir: File
     private lateinit var sitePackagesDir: File
+    private lateinit var downloadsDir: File
 
     private fun queueFor(channel: String): LinkedBlockingQueue<String> =
         stdinQueues.getOrPut(channel) { LinkedBlockingQueue(64) }
@@ -141,22 +148,7 @@ object PythonEngine {
             }
         }
 
-        fun onReadLine(channel: String): String? {
-            markAwaiting(channel, true)
-            try {
-                val queue = queueFor(channel)
-                while (true) {
-                    if (cancelledChannels.remove(channel) != null) return null
-                    val line = queue.poll(150, TimeUnit.MILLISECONDS)
-                    if (line != null) return line
-                }
-            } catch (interrupted: InterruptedException) {
-                Thread.currentThread().interrupt()
-                return null
-            } finally {
-                markAwaiting(channel, false)
-            }
-        }
+        fun onReadLine(channel: String): String? = readLineFor(channel)
 
         fun onFinished(runId: Int, status: String, millis: Int) {
             DebugLog.debug(TAG, "run $runId finished: $status in ${millis}ms")
@@ -200,6 +192,30 @@ object PythonEngine {
         }
     }
 
+    /**
+     * Waits for one line on [channel].
+     *
+     * Shared by Python's `input()` and JavaScript's `readLine()`: both are the
+     * same promise to the user - the console shows an input box, and whatever
+     * they type comes back here - so both should queue in the same place.
+     */
+    private fun readLineFor(channel: String): String? {
+        markAwaiting(channel, true)
+        try {
+            val queue = queueFor(channel)
+            while (true) {
+                if (cancelledChannels.remove(channel) != null) return null
+                val line = queue.poll(150, TimeUnit.MILLISECONDS)
+                if (line != null) return line
+            }
+        } catch (interrupted: InterruptedException) {
+            Thread.currentThread().interrupt()
+            return null
+        } finally {
+            markAwaiting(channel, false)
+        }
+    }
+
     private fun markAwaiting(channel: String, waiting: Boolean) {
         _awaitingInput.value = _awaitingInput.value.toMutableSet().apply {
             if (waiting) add(channel) else remove(channel)
@@ -223,7 +239,7 @@ object PythonEngine {
     suspend fun start(context: Context): EngineStatus = withContext(pythonDispatcher) {
         if (_status.value.ready) return@withContext _status.value
 
-        val appContext = context.applicationContext
+        appContext = context.applicationContext
         workspaceDir = File(appContext.filesDir, "workspace").apply { mkdirs() }
         sitePackagesDir = File(appContext.filesDir, "site-packages").apply { mkdirs() }
 
@@ -237,6 +253,7 @@ object PythonEngine {
             runtime = python.getModule("pycmd_runtime")
             packages = python.getModule("pycmd_packages")
             servers = python.getModule("pycmd_servers")
+            downloads = python.getModule("pycmd_download")
 
             val version = runtime.callAttr(
                 "configure",
@@ -245,6 +262,8 @@ object PythonEngine {
                 sitePackagesDir.absolutePath,
             ).toString()
             packages.callAttr("configure", sitePackagesDir.absolutePath)
+            downloadsDir = File(appContext.filesDir, "downloads").apply { mkdirs() }
+            downloads.callAttr("configure", downloadsDir.absolutePath, workspaceDir.absolutePath)
 
             val short = version.trim().split(" ").firstOrNull().orEmpty()
             _status.value = EngineStatus(ready = true, pythonVersion = short)
@@ -312,6 +331,138 @@ object PythonEngine {
         }
     }
 
+    /**
+     * Runs a file with whichever engine its extension calls for.
+     *
+     * Python keeps the console's namespace; C goes through the interpreter
+     * built into the app; anything without an engine reports why rather than
+     * failing silently.
+     */
+    suspend fun runAny(path: String): String {
+        if (!_status.value.ready) return "error"
+        if (path.substringAfterLast('.', "").lowercase() in JS_EXTENSIONS) {
+            return runJavaScript(path)
+        }
+        cancelledChannels.remove(CONSOLE_CHANNEL)
+        queueFor(CONSOLE_CHANNEL).clear()
+        _status.value = _status.value.copy(running = true)
+        return try {
+            withContext(pythonDispatcher) { runtime.callAttr("run_any", path).toString() }
+        } catch (error: Throwable) {
+            emit(OutputChunk.Stream.STDERR, "Internal error: ${error.message}\n")
+            DebugLog.error(TAG, "run_any failed: $path", error)
+            "error"
+        } finally {
+            _status.value = _status.value.copy(running = false, awaitingInput = false)
+            refreshServerCount()
+        }
+    }
+
+    /**
+     * Runs a `.js` file in the device's own JavaScript engine.
+     *
+     * This one deliberately never reaches Python. Writing a JavaScript
+     * interpreter in Python, to run on a device that already ships a complete
+     * one, would be slower and less correct in every corner that matters -
+     * so the file goes straight to the real engine, and its output arrives on
+     * the console channel exactly as Python's does.
+     */
+    private suspend fun runJavaScript(path: String): String {
+        val file = File(path)
+        val source = try {
+            file.readText()
+        } catch (error: Throwable) {
+            emit(OutputChunk.Stream.STDERR, "cannot open $path: ${error.message}\n")
+            return "error"
+        }
+
+        cancelledChannels.remove(CONSOLE_CHANNEL)
+        queueFor(CONSOLE_CHANNEL).clear()
+        _status.value = _status.value.copy(running = true)
+        emit(OutputChunk.Stream.SYSTEM, "Running ${file.name} as JavaScript\n")
+
+        val host = object : JsEngine.Host {
+            override fun stdout(text: String) = emit(OutputChunk.Stream.STDOUT, text)
+            override fun stderr(text: String) {
+                emit(OutputChunk.Stream.STDERR, text)
+                bufferStderr(CONSOLE_CHANNEL, text)
+            }
+            override fun readLine(): String? = readLineFor(CONSOLE_CHANNEL)
+        }
+
+        val started = System.currentTimeMillis()
+        return try {
+            val result = JsEngine.run(appContext, source, file.name, host)
+            val millis = (System.currentTimeMillis() - started).toInt()
+            when {
+                result.status == "stopped" -> {
+                    emit(OutputChunk.Stream.STDERR, "\nJavaScript stopped\n")
+                    DebugLog.debug(TAG, "javascript run stopped after ${millis}ms")
+                    "stopped"
+                }
+                result.status != "ok" -> "error"
+                result.exitCode != 0 -> {
+                    emit(
+                        OutputChunk.Stream.STDERR,
+                        "JavaScript exited with status ${result.exitCode}\n",
+                    )
+                    "error"
+                }
+                else -> "ok"
+            }
+        } catch (error: Throwable) {
+            emit(OutputChunk.Stream.STDERR, "Internal error: ${error.message}\n")
+            DebugLog.error(TAG, "javascript run failed: $path", error)
+            "error"
+        } finally {
+            _status.value = _status.value.copy(running = false, awaitingInput = false)
+        }
+    }
+
+    /** Every file type the new-file menu offers. */
+    suspend fun languageCatalogue(includeAll: Boolean): List<LanguageInfo> =
+        withContext(pythonDispatcher) {
+            if (!_status.value.ready) return@withContext emptyList()
+            runCatching {
+                runtime.callAttr("language_catalogue", includeAll).asList().map { row ->
+                    val map = row.asMap()
+                    LanguageInfo(
+                        id = map.str("id"),
+                        name = map.str("name"),
+                        extension = map.str("extension"),
+                        mode = map.str("mode"),
+                        highlight = map.str("highlight"),
+                        note = map.str("note"),
+                    )
+                }
+            }.getOrElse {
+                DebugLog.error(TAG, "language catalogue failed", it)
+                emptyList()
+            }
+        }
+
+    suspend fun languageFor(path: String): LanguageInfo = withContext(pythonDispatcher) {
+        val fallback = LanguageInfo("text", "Plain text", ".txt", "edit", "text", "")
+        if (!_status.value.ready) return@withContext fallback
+        runCatching {
+            val map = runtime.callAttr("language_for", path).asMap()
+            LanguageInfo(
+                id = map.str("id"),
+                name = map.str("name"),
+                extension = map.str("extension"),
+                mode = map.str("mode"),
+                highlight = map.str("highlight"),
+                note = map.str("note"),
+            )
+        }.getOrDefault(fallback)
+    }
+
+    /** Starter content for a new file, chosen by its name. */
+    suspend fun templateFor(name: String): String = withContext(pythonDispatcher) {
+        if (!_status.value.ready) return@withContext ""
+        runCatching { runtime.callAttr("template_for", name).toString() }.getOrDefault("")
+    }
+
     suspend fun runFile(path: String): String {
         if (!_status.value.ready) return "error"
         cancelledChannels.remove(CONSOLE_CHANNEL)
@@ -338,6 +489,9 @@ object PythonEngine {
     fun requestStop() {
         cancelledChannels[CONSOLE_CHANNEL] = true
         queueFor(CONSOLE_CHANNEL).clear()
+        // Harmless when no JavaScript is running, and the only thing that
+        // works when some is.
+        JsEngine.stop()
         if (!_status.value.ready) return
         DebugLog.info(TAG, "stop requested")
         controlExecutor.execute {
@@ -429,6 +583,82 @@ object PythonEngine {
         runCatching { packages.callAttr("bundled").asList().map { it.toString() } }
             .getOrDefault(emptyList())
     }
+
+    // ------------------------------------------------------------------
+    // Downloads
+    // ------------------------------------------------------------------
+
+    suspend fun downloadUrl(url: String, onProgress: (String) -> Unit): DownloadResult =
+        withContext(controlDispatcher) {
+            if (!_status.value.ready) return@withContext DownloadResult(false, error = "Interpreter is not ready.")
+            DebugLog.info(TAG, "downloading $url")
+            runCatching {
+                val map = downloads.callAttr("download", url, ProgressSink(onProgress)).asMap()
+                DownloadResult(
+                    ok = map.str("ok") == "True",
+                    name = map.str("name"),
+                    path = map.str("path"),
+                    bytes = map.str("bytes").toLongOrNull() ?: 0L,
+                    error = map.str("error"),
+                )
+            }.getOrElse {
+                DebugLog.error(TAG, "download failed", it)
+                DownloadResult(false, error = it.friendlyMessage())
+            }
+        }.also { if (!it.ok) DebugLog.warn(TAG, "download failed: ${it.error}") }
+
+    suspend fun exportWorkspace(): DownloadResult = withContext(controlDispatcher) {
+        if (!_status.value.ready) return@withContext DownloadResult(false, error = "Interpreter is not ready.")
+        runCatching {
+            val map = downloads.callAttr("export_workspace", "").asMap()
+            DownloadResult(
+                ok = map.str("ok") == "True",
+                name = map.str("name"),
+                path = map.str("path"),
+                bytes = map.str("bytes").toLongOrNull() ?: 0L,
+                files = map.str("files").toIntOrNull() ?: 0,
+                error = map.str("error"),
+            )
+        }.getOrElse {
+            DebugLog.error(TAG, "export failed", it)
+            DownloadResult(false, error = it.friendlyMessage())
+        }
+    }
+
+    suspend fun listDownloads(): List<DownloadedFile> = withContext(controlDispatcher) {
+        if (!_status.value.ready) return@withContext emptyList()
+        runCatching {
+            downloads.callAttr("listing").asList().map { row ->
+                val map = row.asMap()
+                DownloadedFile(
+                    name = map.str("name"),
+                    path = map.str("path"),
+                    bytes = map.str("bytes").toLongOrNull() ?: 0L,
+                    modifiedSeconds = map.str("modified").toLongOrNull() ?: 0L,
+                )
+            }
+        }.getOrDefault(emptyList())
+    }
+
+    suspend fun deleteDownload(path: String): Boolean = withContext(controlDispatcher) {
+        if (!_status.value.ready) return@withContext false
+        runCatching { downloads.callAttr("delete", path).asMap().str("ok") == "True" }
+            .getOrDefault(false)
+    }
+
+    suspend fun copyDownloadToWorkspace(path: String): DownloadResult =
+        withContext(controlDispatcher) {
+            if (!_status.value.ready) return@withContext DownloadResult(false, error = "Interpreter is not ready.")
+            runCatching {
+                val map = downloads.callAttr("copy_to_workspace", path).asMap()
+                DownloadResult(
+                    ok = map.str("ok") == "True",
+                    name = map.str("name"),
+                    path = map.str("path"),
+                    error = map.str("error"),
+                )
+            }.getOrElse { DownloadResult(false, error = it.friendlyMessage()) }
+        }
 
     // ------------------------------------------------------------------
     // Servers
@@ -597,6 +827,43 @@ object PythonEngine {
             runCatching { _serverCount.value = servers.callAttr("count").toInt() }
         }
     }
+}
+
+/** What the app knows about a file type. */
+data class LanguageInfo(
+    val id: String,
+    val name: String,
+    val extension: String,
+    /** "run", "preview" or "edit". */
+    val mode: String,
+    val highlight: String,
+    val note: String,
+) {
+    val canRun: Boolean get() = mode == "run"
+    val canPreview: Boolean get() = mode == "preview"
+}
+
+data class DownloadResult(
+    val ok: Boolean,
+    val name: String = "",
+    val path: String = "",
+    val bytes: Long = 0L,
+    val files: Int = 0,
+    val error: String = "",
+)
+
+data class DownloadedFile(
+    val name: String,
+    val path: String,
+    val bytes: Long,
+    val modifiedSeconds: Long,
+) {
+    val readableSize: String
+        get() = when {
+            bytes < 1024 -> "$bytes B"
+            bytes < 1024 * 1024 -> "%.1f KB".format(java.util.Locale.US, bytes / 1024.0)
+            else -> "%.1f MB".format(java.util.Locale.US, bytes / (1024.0 * 1024.0))
+        }
 }
 
 data class PackageResult(
