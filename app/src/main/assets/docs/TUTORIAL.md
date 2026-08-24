@@ -195,7 +195,148 @@ device — a JSON API, served from your phone.
 
 ---
 
-## 6. Debug console — when something breaks
+## 6. Other languages — Go, Rust, C and JavaScript
+
+Files → **New file** → pick a language. Or paste one of these into the editor,
+save it with the right extension, and press ▶.
+
+`hello.go`
+
+```go
+package main
+
+import "fmt"
+
+func main() {
+	ch := make(chan string, 1)
+	go func() { ch <- "from a goroutine" }()
+	fmt.Println(<-ch)
+
+	squares := []int{}
+	for i := 1; i <= 5; i++ {
+		squares = append(squares, i*i)
+	}
+	fmt.Println(squares, len(squares))
+}
+```
+
+`hello.rs`
+
+```rust
+use std::collections::HashMap;
+
+fn main() {
+    let mut counts: HashMap<&str, i32> = HashMap::new();
+    for word in "a b a c a".split_whitespace() {
+        *counts.entry(word).or_insert(0) += 1;
+    }
+    let mut keys: Vec<&str> = counts.keys().cloned().collect();
+    keys.sort();
+    for key in keys {
+        print!("{}={} ", key, counts[key]);
+    }
+    println!();
+
+    let squares: Vec<i32> = (1..=5).map(|n| n * n).collect();
+    println!("{:?} sum={}", squares, squares.iter().sum::<i32>());
+}
+```
+
+`hello.js`
+
+```javascript
+class Greeter {
+  constructor(name) { this.name = name; }
+  greet() { return `hello, ${this.name}`; }
+}
+console.log(new Greeter("phone").greet());
+setTimeout(() => console.log("this still prints before the run ends"), 30);
+```
+
+None of these is compiled — Android has not let an app run code it generated
+itself since Android 10. C, Go and Rust run on interpreters inside the app, and
+JavaScript goes to the engine your phone already has. Each language's card in
+**More → Guides** says what that costs: no type checking in Go, no borrow
+checker in Rust.
+
+---
+
+## 7. Preview — HTML, CSS, Markdown, JSON, CSV, images
+
+Make `page.html` in Files:
+
+```html
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <style>
+    body { font: 16px system-ui; padding: 24px; background: #101820; color: #eee; }
+    button { font: inherit; padding: 10px 18px; border-radius: 10px; }
+  </style>
+</head>
+<body>
+  <h1 id="title">Tap the button</h1>
+  <button onclick="document.getElementById('title').textContent = 'It works ' + new Date().toLocaleTimeString()">
+    Press me
+  </button>
+</body>
+</html>
+```
+
+Press ▶ on it in Files. The button **works** — the page is served over a local
+HTTP server rooted at its own folder, so scripts run, stylesheets load, and
+`fetch` works. Anything the page logs or throws lands in the debug console.
+
+The same button previews Markdown, a JSON file (validated and pretty-printed),
+a CSV (as a table), an SVG or an image, and a `.js` file (which runs it and
+shows what it logged).
+
+---
+
+## 8. Plugins you write yourself
+
+**More → Plugins**. Two examples are already in `examples/plugins`.
+
+1. Scroll to **Install a plugin → From the workspace**.
+2. Read the warning — a plugin is not sandboxed and runs with everything the
+   app can do — and continue.
+3. Pick `greet.py`. It appears under **Installed by you**, switched off.
+4. Turn it on. Now type `greet Ada` in the console: a plugin command, not
+   Python.
+5. Install `hello-panel` the same way, turn it on, and press **Open**. That is
+   a plugin's own screen, with its buttons calling its Python.
+
+**Plugins → How do I write one?** opens the full guide on the phone:
+the manifest, the API, the events, the panel bridge, four complete plugins,
+and a prompt you can paste into an AI to have one written for you.
+
+---
+
+## 9. When something goes wrong, it offers a fix
+
+Make a file called `index2.html` in a folder, then a script next to it:
+
+```python
+with open("index.html") as handle:
+    print(handle.read())
+```
+
+Run it. The console says:
+
+```
+[fix] index.html was not found, but index2.html is sitting next to it.
+[fix] Rename index2.html to index.html?
+[fix] Type yes to do it, no to leave it alone.
+```
+
+Type `no` and nothing happens. Type `yes` and the rename is done. The same
+offers appear for a package that is not installed, a port already in use, and
+a served folder with no index page. It never changes anything without a yes.
+
+---
+
+## 10. Debug console — when something breaks
 
 Tap the **bug icon** in the top bar, from any tab. This is not your script's
 output — it is everything around it: interpreter startup, server lifecycles,

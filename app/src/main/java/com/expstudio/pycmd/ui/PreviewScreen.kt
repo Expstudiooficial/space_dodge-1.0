@@ -147,6 +147,7 @@ fun PreviewScreen(
                 request: WebResourceRequest,
                 error: WebResourceError,
             ) {
+                if (request.url.lastPathSegment == "favicon.ico") return
                 // A missing stylesheet is the single most common reason a
                 // preview looks wrong, and the only place it can be reported.
                 problems += 1
@@ -162,6 +163,10 @@ fun PreviewScreen(
                 request: WebResourceRequest,
                 response: WebResourceResponse,
             ) {
+                // Every browser asks for a favicon and almost no page has one.
+                // Reporting that as a problem would put a red badge on a page
+                // with nothing wrong with it.
+                if (request.url.lastPathSegment == "favicon.ico") return
                 if (response.statusCode >= 400) {
                     problems += 1
                     DebugLog.error(
