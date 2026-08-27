@@ -30,6 +30,7 @@ echo "== Plugins, doctor, preview =="
 echo
 echo "== WebView JavaScript =="
 node tools/test_js.js
+node tools/test_editor.js
 
 echo
 echo "== Build and lint =="

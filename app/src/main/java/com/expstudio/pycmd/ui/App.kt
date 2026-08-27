@@ -54,7 +54,11 @@ import com.expstudio.pycmd.python.forFileName
 import com.expstudio.pycmd.util.WorkspaceEntry
 import com.expstudio.pycmd.python.OutputChunk
 import java.io.File
+import kotlinx.coroutines.channels.BufferOverflow
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -149,9 +153,31 @@ fun PyCmdRoot(viewModel: MainViewModel = viewModel()) {
 
     // Collected here rather than inside ConsoleScreen: output must keep
     // arriving while the user is looking at another tab.
+    //
+    // Chunks are coalesced before they cross into the WebView. A script that
+    // prints in a loop emits one chunk per line, and one `evaluateJavascript`
+    // per line is what made a chatty program crawl; waiting a frame and
+    // sending the burst as one script costs nothing when output is slow and
+    // everything when it is fast.
     LaunchedEffect(consoleHost) {
-        viewModel.output.collect { chunk ->
-            consoleHost.eval(consoleAppendScript(chunk))
+        // Bounded and dropping the oldest, the same bargain the output flow
+        // itself makes: a program that outruns the screen loses its earliest
+        // lines rather than growing a queue until memory runs out.
+        val queue = Channel<OutputChunk>(4096, BufferOverflow.DROP_OLDEST)
+        launch { viewModel.output.collect { queue.send(it) } }
+        val batch = ArrayList<OutputChunk>(CONSOLE_BATCH)
+        while (isActive) {
+            batch.clear()
+            // Suspends here while nothing is happening, so an idle console
+            // costs no wake-ups at all.
+            batch += queue.receive()
+            while (batch.size < CONSOLE_BATCH) {
+                batch += queue.tryReceive().getOrNull() ?: break
+            }
+            consoleHost.eval(consoleAppendScript(batch))
+            // Let the next burst gather rather than returning immediately for
+            // the line that arrived while this one was being sent.
+            delay(16)
         }
     }
 
@@ -433,6 +459,13 @@ fun PyCmdRoot(viewModel: MainViewModel = viewModel()) {
                     pluginCount = pluginsEnabled.size,
                     errorCount = debugErrors,
                     onSelect = viewModel::selectTab,
+                    // Only tabs from plugins that are switched on: a tab is a
+                    // way into running code, so an installed-but-off plugin
+                    // must not have one.
+                    pluginTabs = installedPlugins.filter {
+                        it.hasTab && installedEnabled.contains(it.id)
+                    },
+                    onOpenPluginTab = viewModel::openPluginPanel,
                 )
 
                 Tab.DOWNLOADS -> DownloadsScreen(
@@ -635,32 +668,54 @@ private fun InfoRow(label: String, value: String) {
     }
 }
 
+private fun streamName(stream: OutputChunk.Stream): String = when (stream) {
+    OutputChunk.Stream.STDERR -> "stderr"
+    OutputChunk.Stream.SYSTEM -> "system"
+    OutputChunk.Stream.INPUT -> "input"
+    OutputChunk.Stream.STDOUT -> "stdout"
+}
+
 /**
- * Builds the JS that appends one chunk.
+ * Builds the JS that appends a batch of chunks.
+ *
+ * A batch rather than a chunk because every call to `evaluateJavascript` is a
+ * separate parse and a separate hop to the WebView's thread, and a loop that
+ * prints a thousand lines produces a thousand chunks. One script carrying a
+ * thousand entries is the difference between a console that keeps up and one
+ * that falls behind the program it is showing.
  *
  * Output can arrive before console.js has finished loading, so anything early
  * is parked in a queue the script drains on start-up.
  */
-private fun consoleAppendScript(chunk: OutputChunk): String {
-    val stream = when (chunk.stream) {
-        OutputChunk.Stream.STDERR -> "stderr"
-        OutputChunk.Stream.SYSTEM -> "system"
-        OutputChunk.Stream.INPUT -> "input"
-        OutputChunk.Stream.STDOUT -> "stdout"
+private fun consoleAppendScript(chunks: List<OutputChunk>): String {
+    val payload = StringBuilder(chunks.sumOf { it.text.length } + 64 * chunks.size)
+    payload.append('[')
+    chunks.forEachIndexed { index, chunk ->
+        if (index > 0) payload.append(',')
+        payload.append("{s:").append(jsString(streamName(chunk.stream)))
+            .append(",t:").append(jsString(chunk.text)).append('}')
     }
-    val text = jsString(chunk.text)
+    payload.append(']')
+
     return """
         (function () {
-          var payload = { stream: ${jsString(stream)}, text: $text };
+          var batch = $payload;
           if (window.PyConsole) {
-            window.PyConsole.append(payload.stream, payload.text);
+            for (var i = 0; i < batch.length; i += 1) {
+              window.PyConsole.append(batch[i].s, batch[i].t);
+            }
           } else {
             window.PyConsoleQueue = window.PyConsoleQueue || [];
-            window.PyConsoleQueue.push(payload);
+            for (var j = 0; j < batch.length; j += 1) {
+              window.PyConsoleQueue.push({ stream: batch[j].s, text: batch[j].t });
+            }
           }
         })();
     """.trimIndent()
 }
+
+/** How many lines go into the WebView in one script. */
+private const val CONSOLE_BATCH = 400
 
 private fun copyToClipboard(context: Context, text: String) {
     val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager

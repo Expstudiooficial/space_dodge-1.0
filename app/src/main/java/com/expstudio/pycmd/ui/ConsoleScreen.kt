@@ -50,6 +50,19 @@ private val CONSOLE_KEYS = listOf(
 /** The identifier (possibly dotted) immediately before the caret. */
 private val WORD_BEFORE_CARET = Regex("[A-Za-z_][A-Za-z0-9_.]*$")
 
+/**
+ * Past this, what was pasted is a program, not a command.
+ *
+ * A Compose text field lays out every line it holds before it can draw six of
+ * them, so pasting a few thousand lines into the box meant measuring a few
+ * thousand lines - on every recomposition, which is where the twenty seconds
+ * went. Above this the text is held to one side and the box stays empty.
+ */
+private const val TOO_BIG_TO_EDIT = 2000
+
+/** No identifier is longer than this, so completion need not read further back. */
+private const val COMPLETION_LOOKBACK = 96
+
 @Composable
 fun ConsoleScreen(
     host: WebHost,
@@ -64,15 +77,17 @@ fun ConsoleScreen(
     modifier: Modifier = Modifier,
 ) {
     var field by remember { mutableStateOf(TextFieldValue("")) }
+    // A pasted program, kept out of the text field entirely. See TOO_BIG_TO_EDIT.
+    var pasted by remember { mutableStateOf("") }
     var historyOpen by remember { mutableStateOf(false) }
     var suggestions by remember { mutableStateOf<List<String>>(emptyList()) }
     var wrapLines by remember { mutableStateOf(true) }
 
     val awaitingInput = status.awaitingInput
-    val canSubmit = field.text.isNotBlank()
+    val canSubmit = field.text.isNotBlank() || pasted.isNotEmpty()
 
     fun submit() {
-        val text = field.text
+        val text = pasted.ifEmpty { field.text }
         if (text.isBlank()) return
         if (awaitingInput) {
             onStdin(text)
@@ -80,12 +95,17 @@ fun ConsoleScreen(
             onRun(text)
         }
         field = TextFieldValue("")
+        pasted = ""
     }
 
     // The word the caret sits in, which is what completion should act on.
     val prefix = remember(field) {
         val caret = field.selection.end.coerceIn(0, field.text.length)
-        WORD_BEFORE_CARET.find(field.text.substring(0, caret))?.value.orEmpty()
+        // Only the tail: an identifier cannot span more than a few characters,
+        // and running an end-anchored pattern over the whole buffer would make
+        // every keystroke cost as much as the buffer is long.
+        val from = (caret - COMPLETION_LOOKBACK).coerceAtLeast(0)
+        WORD_BEFORE_CARET.find(field.text.substring(from, caret))?.value.orEmpty()
     }
 
     LaunchedEffect(prefix, awaitingInput) {
@@ -182,7 +202,15 @@ fun ConsoleScreen(
                                     )
                                 },
                                 onClick = {
-                                    field = TextFieldValue(entry, TextRange(entry.length))
+                                    // A recalled entry can be a whole pasted
+                                    // program, and putting that back in the
+                                    // box would bring the lag back with it.
+                                    if (entry.length > TOO_BIG_TO_EDIT) {
+                                        pasted = entry
+                                        field = TextFieldValue("")
+                                    } else {
+                                        field = TextFieldValue(entry, TextRange(entry.length))
+                                    }
                                     historyOpen = false
                                 },
                             )
@@ -190,9 +218,26 @@ fun ConsoleScreen(
                     }
                 }
 
+                if (pasted.isNotEmpty()) {
+                    PastedBlock(
+                        text = pasted,
+                        onClear = { pasted = "" },
+                        modifier = Modifier.weight(1f),
+                    )
+                } else {
                 OutlinedTextField(
                     value = field,
-                    onValueChange = { field = it },
+                    onValueChange = { value ->
+                        // Catch the paste here, before the field is ever
+                        // composed holding it: by the next frame the text is
+                        // in `pasted` and the box is empty again.
+                        if (value.text.length > TOO_BIG_TO_EDIT) {
+                            pasted = value.text
+                            field = TextFieldValue("")
+                        } else {
+                            field = value
+                        }
+                    },
                     modifier = Modifier
                         .weight(1f)
                         .heightIn(min = 52.dp, max = 160.dp),
@@ -213,6 +258,7 @@ fun ConsoleScreen(
                     keyboardActions = KeyboardActions(onSend = { submit() }),
                     maxLines = 6,
                 )
+                }
 
                 Spacer(Modifier.width(6.dp))
 
@@ -284,6 +330,56 @@ fun ConsoleScreen(
                         )
                     }
                 }
+            }
+        }
+    }
+}
+
+/**
+ * What a pasted program looks like in the console.
+ *
+ * It is deliberately not editable. A six-line box was never where you edit a
+ * thousand-line file, and pretending otherwise is what made pasting one take
+ * twenty seconds; the honest offer is to run it or open it where it can
+ * actually be edited.
+ */
+@Composable
+private fun PastedBlock(
+    text: String,
+    onClear: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val lines = remember(text) { text.count { it == '\n' } + 1 }
+    val firstLine = remember(text) { text.lineSequence().firstOrNull { it.isNotBlank() }.orEmpty().take(48) }
+
+    Box(
+        modifier
+            .heightIn(min = 52.dp)
+            .background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(12.dp))
+            .padding(horizontal = 12.dp, vertical = 8.dp),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text(
+                    "$lines lines pasted  -  ${text.length / 1024 + 1} KB",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.primary,
+                )
+                Text(
+                    firstLine.ifBlank { "(blank)" },
+                    style = MaterialTheme.typography.bodySmall,
+                    fontFamily = MonoFamily,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                )
+            }
+            IconButton(onClick = onClear, modifier = Modifier.size(32.dp)) {
+                Icon(
+                    PyIcons.Clear,
+                    contentDescription = "Discard what was pasted",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(16.dp),
+                )
             }
         }
     }

@@ -6,6 +6,7 @@ import os
 import shutil
 import sys
 import tempfile
+import time
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, "app", "src", "main", "python"))
@@ -21,6 +22,23 @@ def check(name, condition, detail=""):
     else:
         print(f"  FAIL  {name}  {detail}")
         FAILURES.append(name)
+
+
+def settle(predicate, seconds=5.0):
+    """Waits for the fix thread. Answering is deliberately not blocking."""
+    deadline = time.monotonic() + seconds
+    while time.monotonic() < deadline:
+        if predicate():
+            return True
+        time.sleep(0.02)
+    return predicate()
+
+
+SAID = []
+
+
+def listen(line):
+    SAID.append(line)
 
 
 scratch = tempfile.mkdtemp(prefix="pycmd-doctor-")
@@ -60,16 +78,36 @@ print("\n== no ==")
 result = doctor.answer("s1", "no")
 check("is handled", result["handled"], result)
 check("but changes nothing", not result["applied"], result)
+check("and says so in plain words", "no fixing today" in result["message"], result)
 check("the file is untouched", os.path.isfile(os.path.join(scratch, "index2.html")))
 check("and the offer is gone", doctor.pending("s1") is None)
 
 print("\n== yes ==")
 doctor.diagnose(traceback, {"kind": "script", "channel": "s1", "directory": scratch})
-result = doctor.answer("s1", "yes")
-check("is applied", result["applied"], result)
-check("the file was renamed", os.path.isfile(os.path.join(scratch, "index.html")))
+SAID.clear()
+result = doctor.answer("s1", "yes", emit=listen)
+check("is handled", result["handled"], result)
+check("and answers at once, rather than after the work",
+      result["done"] is False, result)
+check("saying what it is about to do", "renaming" in result["message"], result)
+check("the file was renamed",
+      settle(lambda: os.path.isfile(os.path.join(scratch, "index.html"))))
 check("and the old name is gone", not os.path.exists(os.path.join(scratch, "index2.html")))
-check("it says what it did", "Renamed" in result["message"], result)
+check("it says what it did on the console",
+      settle(lambda: any("Renamed" in line for line in SAID)), SAID)
+
+print("\n== a reply that is neither ==")
+write("index3.html", "<h1>hi</h1>")
+doctor.diagnose(
+    traceback.replace("index.html", "index3x.html"),
+    {"kind": "script", "channel": "s9", "directory": scratch},
+)
+result = doctor.answer("s9", "what does that mean")
+check("is passed on as ordinary input", not result["handled"], result)
+check("but the console is told why nothing happened",
+      "yes or no" in result.get("hint", ""), result)
+check("and the offer is still waiting", doctor.pending("s9") is not None)
+doctor.answer("s9", "no")
 
 print("\n== a missing package ==")
 offer = doctor.diagnose("ModuleNotFoundError: No module named 'flask'",
@@ -116,8 +154,9 @@ check("is spotted", offer is not None, offer)
 check("and offers to copy rather than rename",
       offer["fix"]["kind"] == "copy", offer)
 doctor.answer("s4", "yes")
+check("and makes the index",
+      settle(lambda: os.path.isfile(os.path.join(folder, "index.html"))))
 check("copying leaves the original", os.path.isfile(os.path.join(folder, "home.html")))
-check("and makes the index", os.path.isfile(os.path.join(folder, "index.html")))
 
 with open(os.path.join(folder, "about.html"), "w") as handle:
     handle.write("<h1>about</h1>")

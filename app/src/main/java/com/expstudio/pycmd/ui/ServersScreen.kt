@@ -216,7 +216,7 @@ private fun LaunchCard(
         Spacer(Modifier.height(12.dp))
 
         // Target
-        FieldLabel(if (form.kind == ServerKind.STATIC) "Folder" else "Script")
+        FieldLabel(if (form.kind == ServerKind.STATIC) "Folder" else "File")
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(
                 text = form.target?.let {
@@ -237,6 +237,22 @@ private fun LaunchCard(
             GhostButton("Choose", PyIcons.Folder, onPickTarget)
         }
 
+        // What pressing Run will actually do with it. Worth saying before it
+        // happens: a page is served rather than executed, a .go file goes to
+        // an interpreter, and a .java file cannot run here at all.
+        if (form.kind == ServerKind.SCRIPT && form.plan.note.isNotBlank()) {
+            Spacer(Modifier.height(6.dp))
+            Text(
+                text = form.plan.note,
+                style = MaterialTheme.typography.labelSmall,
+                color = if (form.plan.runnable) {
+                    MaterialTheme.colorScheme.onSurfaceVariant
+                } else {
+                    MaterialTheme.colorScheme.error
+                },
+            )
+        }
+
         Spacer(Modifier.height(12.dp))
 
         // Port
@@ -249,7 +265,15 @@ private fun LaunchCard(
                 singleLine = true,
                 placeholder = { Text("8000", fontFamily = MonoFamily) },
                 supportingText = if (form.kind == ServerKind.SCRIPT) {
-                    { Text("Optional - only so the address can be shown and the port checked.") }
+                    {
+                        Text(
+                            if (form.plan.how == "serve") {
+                                "The folder this file sits in is served on this port."
+                            } else {
+                                "Optional - only so the address can be shown and the port checked."
+                            },
+                        )
+                    }
                 } else {
                     null
                 },

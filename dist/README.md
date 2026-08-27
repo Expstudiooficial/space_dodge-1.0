@@ -1,17 +1,62 @@
 # Prebuilt APK
 
-`PyCmd-1.3-debug.apk` — ready to install, nothing else needed.
+`PyCmd-1.4-debug.apk` — ready to install, nothing else needed.
 
 | | |
 |---|---|
 | Package | `com.expstudio.pycmd.debug` |
-| Version | 1.3-debug |
+| Version | 1.4-debug |
 | Size | 33 MB |
 | Signed with | the standard Android debug key |
 | Works on | Android 7.0 (API 24) and newer, **arm64-v8a** (every phone since about 2016) |
 | SHA-256 | see [SHA256SUMS.txt](SHA256SUMS.txt) |
 
-## What is new in 1.3
+## What is new in 1.4
+
+**The Servers tab runs anything, not just Python.** A C, Go or Rust file goes
+to its interpreter; a `.js` file to the device's own JavaScript engine; an
+HTML page serves the folder it sits in and opens on that page. The form says
+which of those it is about to do *before* you press Run, and refuses up front
+anything that cannot run here at all, with the reason.
+
+**Plugins can add a tab of their own.** A `tab` block in the manifest - a name,
+one line of description, and an image file the plugin ships - puts a row in
+**More** that opens the plugin's panel. No change to the app, and it only
+appears while the plugin is switched on. PLUGINS.md documents it, and
+**Server Pro** is a working example of it.
+
+**Server Pro**, a plugin that ships switched off. Turn it on and you get a live
+board of everything running with a health check that says whether the port
+actually answers, Restart and Kill on each one, a free-port finder, an
+index-page writer for a folder that has none, and the console commands
+`servers`, `serve`, `restart`, `shut` and `ports`.
+
+**Answering the doctor no longer freezes anything.** Saying `yes` to "install
+pygame" used to run the download on the thread the Stop and Kill buttons come
+in on - so the server froze, and the button meant to rescue it was stuck behind
+the same queue. The fix now runs on its own thread, Stop and Kill have threads
+nothing else can occupy, and the console says what is happening as it happens:
+*OK - downloading pygame from PyPI*, *OK - renaming index2.html to index.html*,
+*OK - no fixing today*. A reply that is neither yes nor no gets an answer too,
+instead of silence.
+
+**Kill works on a wedged server.** A script parked in its own `accept()` cannot
+be interrupted - an async exception has nowhere to land inside a blocking C
+call - so Kill now knocks on the port first, which makes the call return and
+the exception fire. Before this it detached and left the port held.
+
+**Pasting a long program is instant.** It used to take about twenty seconds:
+the console's input box laid out every line of what you pasted before it could
+draw six of them, on every redraw. A pasted program is now held beside the box
+as *"2 599 lines pasted"* with Run and Clear. The editor got the same
+treatment - a big document repaints immediately in plain text and colours
+itself once you stop typing - and console output is now sent to the screen in
+batches rather than one line at a time.
+
+**A server's console keeps what the script printed.** It only ever kept its own
+two lines, so reopening a server console showed "Running x" and nothing else.
+
+## What was new in 1.3
 
 **Previews that scroll.** A code block used to be its own sideways scroll
 strip, and on a touch screen a strip like that swallows a vertical drag - which
@@ -72,15 +117,19 @@ on, its console command answered, and its panel called back into its own
 Python. The APK here is that source built for arm64 instead, which changes
 the CPython binaries and nothing else.
 
-503 checks run on a desktop CPython before any of this is committed:
-`test_c.py` (54), `test_go.py` (92), `test_rust.py` (73), `test_js.js` (43),
-`test_runtime.py` (124), `test_plugins.py` (62), `test_doctor.py` (31) and
-`test_preview.py` (24). Each language check is a real program paired with the
-output the real compiler produces; the preview checks fetch pages back off the
-loopback server and open the exported zips. `tools/run-tests.sh` runs the lot,
-then a debug build and Android Lint.
+553 checks run before any of this is committed: `test_runtime.py` (145),
+`test_go.py` (92), `test_plugins.py` (74), `test_rust.py` (73), `test_c.py`
+(54), `test_js.js` (43), `test_doctor.py` (37), `test_preview.py` (23) and
+`test_editor.js` (12). Each language check is a real program paired with the
+output the real compiler produces. The rest go after the things that are
+awkward to be sure of by looking: a script wedged in `accept()` is started for
+real and killed, to prove the port comes back; the preview checks fetch pages
+back off the loopback server; the editor checks count how often the
+highlighter runs, so a change that makes typing slow again fails rather than
+being noticed on a phone weeks later. `tools/run-tests.sh` runs the lot, then
+a debug build and Android Lint.
 
-The 1.3 changes were verified by those checks and by Lint on the built APK,
+The 1.4 changes were verified by those checks and by Lint on the built APK,
 not on an emulator: this build machine has no hardware virtualisation, so no
 emulator could be started for it.
 
@@ -108,7 +157,7 @@ every tab with things to paste in and try.
 ## Installing over USB
 
 ```bash
-adb install -r dist/PyCmd-1.3-debug.apk
+adb install -r dist/PyCmd-1.4-debug.apk
 ```
 
 ## Checking the download

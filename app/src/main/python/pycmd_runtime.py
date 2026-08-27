@@ -68,6 +68,29 @@ def current_channel() -> str:
         return _channels.get(threading.get_ident(), CONSOLE)
 
 
+# Someone who wants a copy of everything written to a channel. The servers
+# module uses it to keep each server's own log, so that reopening a server's
+# console shows what the script printed rather than only the two lines the
+# server module wrote itself.
+_observer = None
+
+
+def set_observer(observer) -> None:
+    """Registers one callable, `observer(stream, text, channel)`."""
+    global _observer
+
+    _observer = observer if callable(observer) else None
+
+
+def _observe(stream: str, text: str, channel: str) -> None:
+    if _observer is None:
+        return
+    try:
+        _observer(stream, text, channel)
+    except Exception:  # noqa: BLE001 - an observer must never break output
+        pass
+
+
 # ---------------------------------------------------------------------------
 # Streams
 # ---------------------------------------------------------------------------
@@ -103,7 +126,9 @@ class _SinkStream(io.TextIOBase):
         if not isinstance(text, str):
             raise TypeError(f"write() argument must be str, not {type(text).__name__}")
         if text:
-            self._sink.onOutput(self._name, text, current_channel())
+            channel = current_channel()
+            self._sink.onOutput(self._name, text, channel)
+            _observe(self._name, text, channel)
         return len(text)
 
     def flush(self) -> None:  # pragma: no cover - nothing is buffered
@@ -359,6 +384,7 @@ def emit(stream: str, text: str, channel: str = CONSOLE) -> None:
     """Push a line to a channel without going through Python's streams."""
     if _sink is not None and text:
         _sink.onOutput(stream, text, channel)
+        _observe(stream, text, channel)
 
 
 def configure(sink, workspace_dir: str, site_packages_dir: str) -> str:
@@ -452,15 +478,32 @@ def _offer_fix(report: str, source_name: str) -> None:
 
 
 def answer_fix(channel: str, text: str) -> dict:
-    """Applies or dismisses whatever the doctor offered on `channel`."""
+    """Applies or dismisses whatever the doctor offered on `channel`.
+
+    Returns immediately. A fix that takes real time - installing a package -
+    runs on its own thread and reports through `emit`, so the thread the app
+    called in on is free the whole time. It has to be: that same thread
+    carries Stop and Kill.
+    """
     try:
         import pycmd_doctor
-
-        result = pycmd_doctor.answer(channel, text)
     except Exception as exc:  # noqa: BLE001
         return {"handled": False, "error": str(exc)}
-    if result.get("handled"):
-        sys.stdout.write(result.get("message", "") + "\n")
+
+    def say(line: str) -> None:
+        # emit(), not sys.stdout: this runs on a helper thread, and stdout is
+        # bound to whichever channel *that* thread belongs to.
+        emit("system", line, channel)
+
+    try:
+        result = pycmd_doctor.answer(channel, text, emit=say)
+    except Exception as exc:  # noqa: BLE001
+        return {"handled": False, "error": str(exc)}
+
+    if result.get("handled") and result.get("done"):
+        say(result.get("message", "") + "\n")
+    elif not result.get("handled") and result.get("hint"):
+        say(result["hint"] + "\n")
     return result
 
 

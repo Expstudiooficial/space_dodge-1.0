@@ -22,6 +22,11 @@ import pycmd_runtime
 __all__ = [
     "start_static",
     "start_script",
+    "start_file",
+    "how_to_run",
+    "register_runner",
+    "unregister_runner",
+    "runners",
     "stop",
     "kill",
     "stop_all",
@@ -38,6 +43,10 @@ __all__ = [
 GRACEFUL_TIMEOUT = 4.0
 # Per-server log kept in Python as well, so a console reopened later is not blank.
 LOG_LIMIT = 2000
+# How long before the same server may offer another fix. Long enough that a
+# refresh loop cannot spam the console, short enough that a real second problem
+# still gets asked about.
+OFFER_COOLDOWN = 20.0
 
 _servers: dict[str, "_Entry"] = {}
 _lock = threading.RLock()
@@ -59,9 +68,10 @@ class _Entry:
         self.started_at = time.time()
         self.requests = 0
         self.target = ""
-        # One offer per server: a 404 storm must not become a wall of the same
-        # question.
-        self.offered = False
+        # A 404 storm must not become a wall of the same question, but one
+        # answered offer must not silence the server for good either: a
+        # cooldown does both.
+        self.offered_at = 0.0
         self.log: list[tuple[str, str]] = []
         self.log_lock = threading.RLock()
 
@@ -106,10 +116,39 @@ def _next_handle() -> str:
         return f"srv{_counter}"
 
 
+# Set while _log is emitting, so the observer does not file the same line
+# twice. Thread-local, because two servers log at once and a shared flag would
+# make one of them swallow the other's output.
+_filing = threading.local()
+
+
 def _log(entry: _Entry, stream: str, text: str) -> None:
     """Record on the Python side and push to the UI channel in one step."""
     entry.add_log(stream, text)
-    pycmd_runtime.emit(stream, text, entry.handle)
+    _filing.busy = True
+    try:
+        pycmd_runtime.emit(stream, text, entry.handle)
+    finally:
+        _filing.busy = False
+
+
+def _observe(stream: str, text: str, channel: str) -> None:
+    """Keeps a copy of everything a server prints, in that server's own log.
+
+    Without this, a script server's log held only the two lines this module
+    writes itself, and reopening its console after switching tabs showed
+    "Running x" and nothing the script had actually printed.
+    """
+    if getattr(_filing, "busy", False):
+        return
+    with _lock:
+        entry = _servers.get(channel)
+    if entry is None:
+        return
+    entry.add_log(stream, text)
+
+
+pycmd_runtime.set_observer(_observe)
 
 
 # ---------------------------------------------------------------------------
@@ -207,8 +246,8 @@ def start_static(
             # A 404 on the page a browser asks for first is the most common
             # way a static server looks broken, and it is usually one rename
             # away from working.
-            if "404" in text and not entry.offered:
-                entry.offered = True
+            if "404" in text and time.time() - entry.offered_at > OFFER_COOLDOWN:
+                entry.offered_at = time.time()
                 _offer_index(entry, directory)
 
     class Threaded(socketserver.ThreadingTCPServer):
@@ -272,6 +311,156 @@ def start_static(
 # ---------------------------------------------------------------------------
 
 
+# Extensions a plugin has claimed, and the callable that runs them. A plugin
+# that teaches PyCmd a new file type gets it served here too, rather than only
+# in the Files tab.
+_runners: dict[str, object] = {}
+_runner_notes: dict[str, str] = {}
+
+
+def register_runner(extension: str, runner, note: str = "") -> bool:
+    """Lets a plugin run its own file type as a server.
+
+    `runner(path, channel)` is called on the server's thread, with stdout and
+    stdin already pointed at that server's console. Returning normally means it
+    finished; raising is reported like any other server error.
+
+    `note` is what the launcher says this will do, before it does it. Without
+    one the form can only say "a plugin runs this", which tells the user
+    nothing they wanted to know.
+    """
+    extension = str(extension or "").strip().lower()
+    if not extension.startswith("."):
+        extension = "." + extension
+    if extension in (".py", ".pyw") or _callable_of(runner) is None:
+        # Python is ours, and something that cannot be called would only fail
+        # later, deep inside a thread, where the message would be useless.
+        return False
+    _runners[extension] = runner
+    _runner_notes[extension] = str(note or "")[:200]
+    return True
+
+
+def _callable_of(runner):
+    """A plain callable, or an object with a `run` method.
+
+    Kotlin registers the JavaScript runner this way: a Java object handed to
+    Python is not callable, but its methods are, and insisting on a lambda
+    would mean no cross-language runners at all.
+    """
+    if callable(runner):
+        return runner
+    method = getattr(runner, "run", None)
+    return method if callable(method) else None
+
+
+def unregister_runner(extension: str) -> None:
+    extension = str(extension or "").strip().lower()
+    if not extension.startswith("."):
+        extension = "." + extension
+    _runners.pop(extension, None)
+    _runner_notes.pop(extension, None)
+
+
+def runners() -> str:
+    """Every extension a plugin has claimed, comma separated."""
+    return ",".join(sorted(_runners))
+
+
+def how_to_run(path: str) -> dict:
+    """What pressing Run in the Servers tab would actually do with this file.
+
+    The Servers tab asks first so it can say so in the form, rather than
+    starting something and explaining afterwards.
+    """
+    extension = os.path.splitext(path)[1].lower()
+
+    if extension in (".py", ".pyw"):
+        return {"how": "script", "language": "Python",
+                "note": "Runs as a background script on its own thread."}
+
+    try:
+        from pycmd_langs import registry
+
+        language = registry.for_path(path)
+    except Exception:  # noqa: BLE001
+        language = None
+
+    if extension in _runners:
+        # A registered runner wins, but the language registry still supplies
+        # the name: JavaScript is run by a registered runner too, and calling
+        # it "js, run by a plugin" would be a worse answer than the truth.
+        note = _runner_notes.get(extension, "")
+        return {
+            "how": "plugin",
+            "language": (language or {}).get("name") or extension.lstrip("."),
+            "note": note or "Run by a plugin that claimed this file type.",
+        }
+
+    if language is None:
+        return {"how": "unknown", "language": "", "note": "Unknown file type."}
+
+    if language["mode"] == "run":
+        if language["id"] == "javascript":
+            # Only reachable when the JavaScript runner failed to register,
+            # which means the engine is not there to run it.
+            return {"how": "unsupported", "language": language["name"],
+                    "note": "The JavaScript engine is not available in this session."}
+        return {"how": "language", "language": language["name"],
+                "note": f"Runs on the built-in {language['name']} interpreter."}
+
+    if language["mode"] == "preview":
+        return {"how": "serve", "language": language["name"],
+                "note": f"Serves this folder over HTTP and opens {os.path.basename(path)}."}
+
+    return {"how": "unsupported", "language": language["name"],
+            "note": language.get("note") or f"{language['name']} cannot run on the device."}
+
+
+def start_file(
+    path: str,
+    port: int = 0,
+    host: str = "0.0.0.0",
+    label: str = "",
+    args=None,
+) -> dict:
+    """Runs whatever kind of file this is as a server.
+
+    A server used to mean a Python script, which made the Servers tab a Python
+    tab wearing a different hat. A page is a server too - serve its folder - and
+    so is a Go or Rust or C program that listens on a socket, or anything a
+    plugin has taught the app to run.
+    """
+    path = os.path.abspath(path)
+    if not os.path.isfile(path):
+        return {"ok": False, "error": f"No such file: {path}"}
+
+    plan = how_to_run(path)
+
+    if plan["how"] == "serve":
+        # A page is served, not executed: the folder becomes the site and the
+        # file it was started from becomes the page to open.
+        folder = os.path.dirname(path)
+        result = start_static(
+            folder,
+            port=port or suggest_port(8000, host),
+            host=host,
+            label=label or os.path.basename(path),
+        )
+        if result.get("ok") and result.get("url"):
+            result["url"] = result["url"].rstrip("/") + "/" + os.path.basename(path)
+            result["opens"] = os.path.basename(path)
+        return result
+
+    if plan["how"] == "unsupported":
+        return {"ok": False, "error": plan["note"]}
+
+    if plan["how"] == "unknown":
+        return {"ok": False, "error": "PyCmd does not know how to run that file."}
+
+    return start_script(path, port=port, host=host, label=label, args=args)
+
+
 def start_script(
     path: str,
     port: int = 0,
@@ -279,7 +468,7 @@ def start_script(
     label: str = "",
     args=None,
 ) -> dict:
-    """Run a script on a background thread and track it as a server.
+    """Run a file on a background thread and track it as a server.
 
     `port` is informational for a script - the script binds it itself - but it
     is checked first so a doomed run fails immediately with a clear message
@@ -294,6 +483,21 @@ def start_script(
         if problem:
             return {"ok": False, "error": problem}
 
+    extension = os.path.splitext(path)[1].lower()
+    plugin_runner = _runners.get(extension)
+    language = None
+    if plugin_runner is None and extension not in (".py", ".pyw"):
+        try:
+            from pycmd_langs import registry
+
+            language = registry.for_path(path)
+            if language["mode"] != "run":
+                return {"ok": False,
+                        "error": language.get("note")
+                        or f"{language['name']} cannot be run on the device."}
+        except Exception as exc:  # noqa: BLE001
+            return {"ok": False, "error": f"language support failed to load: {exc}"}
+
     entry = _Entry(_next_handle(), label or os.path.basename(path), "script", port, host)
     entry.target = path
     entry.status = "running"
@@ -301,9 +505,17 @@ def start_script(
     def run() -> None:
         entry.thread_id = threading.get_ident()
         pycmd_runtime.register_channel(entry.handle)
-        _log(entry, "system", f"Running {os.path.basename(path)}\n")
+        what = "Python" if language is None else language["name"]
+        if plugin_runner is not None:
+            what = "a plugin"
+        _log(entry, "system", f"Running {os.path.basename(path)} ({what})\n")
         try:
-            pycmd_runtime.exec_isolated(path, args=args, channel=entry.handle)
+            if plugin_runner is not None:
+                _callable_of(plugin_runner)(path, entry.handle)
+            elif language is None:
+                pycmd_runtime.exec_isolated(path, args=args, channel=entry.handle)
+            else:
+                _run_language(entry, path, language)
         except KeyboardInterrupt:
             entry.status = "stopped"
             _log(entry, "system", "Stopped.\n")
@@ -337,6 +549,28 @@ def start_script(
     result = entry.as_dict()
     result["ok"] = True
     return result
+
+
+def _run_language(entry: "_Entry", path: str, language: dict) -> None:
+    """Runs a C, Go or Rust file through its interpreter, on this thread."""
+    import sys
+
+    from pycmd_langs import registry
+
+    result = registry.run_file(path, stdout=sys.stdout, stdin=sys.stdin)
+    if result.get("ok"):
+        code = result.get("exit", 0)
+        if code:
+            entry.status = "error"
+            entry.error = f"exited with status {code}"
+            _log(entry, "stderr", f"{language['name']} exited with status {code}\n")
+        return
+
+    problem = result.get("error", "could not run this file")
+    entry.status = "error"
+    entry.error = problem
+    _log(entry, "stderr", problem + "\n")
+    _offer_fix(entry, problem, path=path)
 
 
 # ---------------------------------------------------------------------------
@@ -386,11 +620,21 @@ def _safe_shutdown(entry: _Entry) -> None:
 def kill(handle: str) -> dict:
     """Force a server down, for when a graceful stop will not do.
 
-    Three escalating steps, because a thread can be stuck in different places:
-    close the listening socket (frees the port and unblocks accept), raise
-    SystemExit inside the thread (unblocks bytecode), and if it still will not
-    die, stop tracking it so the port and the UI are not held hostage by a
-    thread that is wedged in a C call.
+    A thread can be stuck in several different places, so this works through
+    all of them rather than trying one and hoping:
+
+    1. Close the listening socket we own. That frees the port even if
+       ``serve_forever`` is wedged.
+    2. Raise SystemExit inside the thread. That unblocks anything executing
+       bytecode.
+    3. Knock on the port. A script that opened its own socket is usually
+       parked in ``accept()``, and an async exception cannot interrupt a
+       blocking C call - but a connection arriving makes ``accept()`` return,
+       and the exception fires the moment it does. This is the step that was
+       missing, and why Kill appeared to do nothing to a script server that
+       had frozen.
+    4. Give up tracking it, so a thread wedged in a call that will never
+       return does not hold the port, the list and the UI hostage.
     """
     with _lock:
         entry = _servers.get(handle)
@@ -411,14 +655,26 @@ def kill(handle: str) -> dict:
     pycmd_runtime.interrupt_thread(entry.thread_id, SystemExit)
 
     if entry.thread is not None:
-        entry.thread.join(timeout=2.0)
+        entry.thread.join(timeout=1.0)
+
+    if entry.alive():
+        # Still there: wake whatever blocking call it is parked in, then ask
+        # again. Two rounds, because the first poke often gets it as far as
+        # the next bytecode and no further.
+        for _ in range(2):
+            _wake_blocking_call(entry)
+            pycmd_runtime.interrupt_thread(entry.thread_id, SystemExit)
+            entry.thread.join(timeout=1.0)
+            if not entry.alive():
+                break
 
     still_running = entry.alive()
     entry.status = "error" if still_running else "stopped"
     if still_running:
         entry.error = "Killed, but the thread is still finishing a blocking call."
-        _log(entry, "stderr", "Killed. The thread is wedged in a blocking call "
-                              "and will end when that call returns.\n")
+        _log(entry, "stderr", "Killed. The thread is wedged in a call that has not "
+                              "returned yet; it will end when that call does. The "
+                              "server is no longer listed either way.\n")
     else:
         _log(entry, "system", "Killed.\n")
 
@@ -427,8 +683,46 @@ def kill(handle: str) -> dict:
         "ok": True,
         "killed": True,
         "detached": still_running,
-        "port_freed": freed_port or not still_running,
+        "port_freed": freed_port or not still_running or not _port_held(entry),
     }
+
+
+def _wake_blocking_call(entry: "_Entry") -> None:
+    """Nudges a thread out of accept() or recv() so its exception can land.
+
+    Nothing here can fail in a way that matters: every step is a best-effort
+    poke at a socket that may not exist, and a kill must not itself raise.
+    """
+    # A script that bound a port is almost certainly blocked accepting on it.
+    ports = [entry.port] if entry.port else []
+    if not ports:
+        # No port was declared, so try the one it is actually listening on, if
+        # the listing knows. Nothing else can be guessed safely.
+        return
+    for port in ports:
+        for host in ("127.0.0.1", "::1"):
+            try:
+                family = socket.AF_INET6 if ":" in host else socket.AF_INET
+                with socket.socket(family, socket.SOCK_STREAM) as poke:
+                    poke.settimeout(0.3)
+                    poke.connect((host, port))
+                    try:
+                        poke.sendall(b"\r\n")
+                    except OSError:
+                        pass
+            except OSError:
+                continue
+
+    # A script parked on input() needs no poke here: the app marks the channel
+    # cancelled before it calls kill, and the reader hands back end-of-input
+    # within a tick of that.
+
+
+def _port_held(entry: "_Entry") -> bool:
+    """Whether the port is still bound by something after a kill."""
+    if not entry.port:
+        return False
+    return not port_available(entry.port, "127.0.0.1")
 
 
 def _forget(handle: str) -> None:
@@ -530,17 +824,44 @@ def _offer_index(entry, directory: str) -> None:
 
 
 def answer_fix(handle: str, text: str) -> dict:
-    """Answers a pending offer on a server's console. Called from the app."""
+    """Answers a pending offer on a server's console. Called from the app.
+
+    Returns the moment the reply is understood. The fix runs on its own thread
+    and talks through `say`, so answering yes to "install pygame" cannot wedge
+    the thread the Stop and Kill buttons come in on - which is what used to
+    make a server freeze and then refuse to be killed.
+    """
     try:
         import pycmd_doctor
-
-        result = pycmd_doctor.answer(handle, text)
     except Exception as exc:  # noqa: BLE001
         return {"handled": False, "error": str(exc)}
 
-    if result.get("handled"):
-        with _lock:
-            entry = _servers.get(handle)
-        if entry is not None:
-            _log(entry, "system", result.get("message", "") + "\n")
+    with _lock:
+        entry = _servers.get(handle)
+
+    def say(line: str) -> None:
+        target = entry
+        if target is None:
+            with _lock:
+                target = _servers.get(handle)
+        if target is not None:
+            _log(target, "system", line)
+        else:
+            pycmd_runtime.emit("system", line, handle)
+
+    try:
+        result = pycmd_doctor.answer(handle, text, emit=say)
+    except Exception as exc:  # noqa: BLE001
+        return {"handled": False, "error": str(exc)}
+
+    if entry is not None and result.get("handled"):
+        # Answered, so the next real problem may ask again straight away.
+        entry.offered_at = 0.0
+
+    if result.get("handled") and result.get("done"):
+        # A fix that finished on the spot said nothing through `say`, so its
+        # one line is written here instead.
+        say(result.get("message", "") + "\n")
+    elif not result.get("handled") and result.get("hint"):
+        say(result["hint"] + "\n")
     return result

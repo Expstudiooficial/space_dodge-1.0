@@ -19,6 +19,7 @@ from __future__ import annotations
 import difflib
 import os
 import re
+import threading
 
 __all__ = ["diagnose", "pending", "answer", "clear", "describe"]
 
@@ -240,41 +241,109 @@ def describe(offer: dict) -> str:
     )
 
 
-YES = {"y", "yes", "yeah", "yep", "ok", "okay", "do it", "sure", "ano", "hej"}
-NO = {"n", "no", "nope", "nah", "leave it", "nie", "ne"}
+YES = {"y", "yes", "yeah", "yep", "yup", "ok", "okay", "k", "do it", "doit",
+       "sure", "go", "go on", "go ahead", "please", "yes please", "fix it",
+       "ano", "hej", "jasne", "davaj", "urob to", "si", "ja", "oui"}
+NO = {"n", "no", "nope", "nah", "not now", "later", "leave it", "leave it alone",
+      "stop", "cancel", "skip", "nie", "ne", "nay", "non"}
+
+# What a fix says it is about to do, before it starts. The user asked to be
+# told - "ok, fixing that", not silence followed by a result thirty seconds
+# later - and on a slow network the silence is the whole complaint.
+def _acknowledge(fix: dict) -> str:
+    kind = fix.get("kind")
+    if kind == "rename":
+        return (f"[fix] OK - renaming {os.path.basename(fix['source'])} to "
+                f"{os.path.basename(fix['target'])}, so the code finds what it asks for.")
+    if kind == "copy":
+        return (f"[fix] OK - copying {os.path.basename(fix['source'])} to "
+                f"{os.path.basename(fix['target'])}, leaving the original where it is.")
+    if kind == "install":
+        return f"[fix] OK - downloading {fix['package']} from PyPI. This can take a minute."
+    if kind == "port":
+        return f"[fix] OK - moving to port {fix['port']}."
+    return "[fix] OK - working on it."
 
 
-def answer(channel: str, text: str) -> dict:
-    """Applies or dismisses the offer waiting on `channel`.
+def answer(channel: str, text: str, emit=None) -> dict:
+    """Answers the offer waiting on `channel`, without blocking the caller.
 
-    Returns `handled: False` when there was nothing pending or the reply was
-    not a yes or a no - the caller then treats the line as ordinary input,
-    which matters because a server's stdin is a real thing people type into.
+    Returns as soon as the reply is understood. The fix itself runs on its own
+    thread and reports through `emit(text)`, because the one fix that takes
+    real time - a pip install - used to run on the thread the app calls in on,
+    which is the same thread the Stop and Kill buttons need. Answering yes
+    could therefore freeze the server *and* the button meant to rescue it.
+
+    `handled: False` means the line was not an answer, so the caller passes it
+    on as ordinary input - a server's stdin is a real thing people type into,
+    and a program may well be asking a yes/no question of its own.
     """
     offer = _pending.get(channel)
     if offer is None:
         return {"handled": False}
 
-    reply = (text or "").strip().lower()
+    reply = " ".join((text or "").strip().lower().replace("!", " ").split())
     if reply in NO:
         _pending.pop(channel, None)
-        return {"handled": True, "applied": False, "message": "[fix] Left alone."}
+        return {"handled": True, "applied": False, "done": True,
+                "message": "[fix] OK - no fixing today. The error stays as it is."}
+
     if reply not in YES:
-        return {"handled": False}
+        # Not an answer. Say so once, quietly, and let the line through: a
+        # silent non-response is exactly what made this feel broken.
+        return {"handled": False, "hint": "[fix] Still waiting on yes or no."}
 
     _pending.pop(channel, None)
-    result = _apply(offer["fix"])
-    reply = {"handled": True, "applied": result["ok"], "message": result["message"],
-             "fix": offer["fix"]}
+    fix = offer["fix"]
+    ack = _acknowledge(fix)
+
+    reply_dict = {
+        "handled": True,
+        "applied": False,
+        "done": False,
+        "message": ack,
+        "fix_kind": fix.get("kind", ""),
+    }
+
     # The port fix is the one thing this module cannot do itself: the app owns
     # the launcher form, so it gets the number back and moves it.
-    if offer["fix"].get("kind") == "port" and result["ok"]:
-        reply["port"] = offer["fix"]["port"]
-    return reply
+    if fix.get("kind") == "port":
+        _report(emit, ack)
+        result = _apply(fix)
+        reply_dict.update(applied=result["ok"], done=True,
+                          message=ack + "\n" + result["message"],
+                          port=fix["port"])
+        return reply_dict
+
+    def work() -> None:
+        _report(emit, ack)
+        try:
+            result = _apply(fix, lambda line: _report(emit, line))
+        except Exception as error:  # noqa: BLE001
+            result = {"ok": False, "message": f"[fix] That did not work: {error}"}
+        _report(emit, result["message"])
+
+    thread = threading.Thread(target=work, name=f"pycmd-fix-{channel}", daemon=True)
+    thread.start()
+    return reply_dict
 
 
-def _apply(fix: dict) -> dict:
+def _report(emit, line: str) -> None:
+    """Says a line on the channel the offer was made on, whatever happens."""
+    if emit is None:
+        return
+    try:
+        emit(line if line.endswith("\n") else line + "\n")
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def _apply(fix: dict, say=None) -> dict:
     kind = fix.get("kind")
+
+    def note(line: str) -> None:
+        if say is not None:
+            say(line)
 
     if kind in ("rename", "copy"):
         source = fix["source"]
@@ -302,10 +371,18 @@ def _apply(fix: dict) -> dict:
 
     if kind == "install":
         package = fix["package"]
+        note(f"[fix] Asking PyPI for {package}...")
+
+        class _Progress:
+            """Passes the installer's own running commentary straight through."""
+
+            def onProgress(self, message):  # noqa: N802 - the installer's name
+                note(f"[fix] {message}")
+
         try:
             import pycmd_packages
 
-            result = pycmd_packages.install(package)
+            result = pycmd_packages.install(package, progress=_Progress() if say else None)
         except Exception as error:  # noqa: BLE001
             return {"ok": False, "message": f"[fix] Could not install {package}: {error}"}
         if isinstance(result, dict) and not result.get("ok", True):

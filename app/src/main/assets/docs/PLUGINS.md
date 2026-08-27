@@ -80,7 +80,11 @@ wrapping directory if it finds one.
   "description": "Counts words, lines and characters in the open file.",
   "entry": "main.py",
   "panel": "ui.html",
-  "tab": { "title": "Words", "icon": "puzzle" },
+  "tab": {
+    "title": "Words",
+    "description": "Counts what you have written",
+    "icon": "icon.png"
+  },
   "commands": [
     { "name": "wc", "help": "wc <text> — count words in some text" }
   ],
@@ -97,9 +101,33 @@ wrapping directory if it finds one.
 | `description` | no | One paragraph. Up to 600 characters. |
 | `entry` | no | The module PyCmd imports. Defaults to `main.py`. |
 | `panel` | no | An HTML file. Having one is what gives the plugin an **Open** button and a tab. |
-| `tab` | no | `{"title": "…"}` or just a string. Needs `panel`. An `icon` is accepted and kept for a future version; nothing draws it yet. |
+| `tab` | no | Publishes a place of your own in the **More** screen. Needs `panel` — the tab is what opens it. See below. |
 | `commands` | no | Console commands, for the list and the help text. You still register the handler in code. |
 | `permissions` | no | `files`, `network`, `console`, `servers`, `packages`. **Documentation, not enforcement** — they are shown to the user so they know what to expect. Declare honestly. |
+
+### Your own tab in More
+
+`tab` is how a plugin adds a destination without the app changing to make room
+for it. Three things, and that is the whole of it:
+
+```json
+"tab": {
+  "title": "Words",
+  "description": "Counts what you have written",
+  "icon": "icon.png"
+}
+```
+
+| Field | What it is |
+|---|---|
+| `title` | What the row says. Up to 24 characters — it is a tab name, not a sentence. |
+| `description` | The line under it. Up to 120 characters. Falls back to the plugin's `description`. |
+| `icon` | A **picture that ships inside your plugin**: `.png`, `.jpg`, `.webp` or `.gif`, alongside `main.py`. Around 96×96 is right. Naming a file that is not there is an error, not a shrug — a tab with a broken icon would look like the app's fault. `.svg` is accepted in the manifest but not drawn; those fall back to a generic mark. |
+
+The row appears in **More**, under *From your plugins*, and only while the
+plugin is switched **on**. Tapping it opens your panel. A plugin with a `panel`
+but no `tab` still gets its **Open** button in the plugin list — the tab is for
+something you will come back to often enough to want it one tap away.
 
 For a single-file plugin, put the same object in the module as a `PLUGIN`
 dict:
@@ -213,11 +241,16 @@ def todo(argument):
 ```
 
 The user types `todo add milk` in the console and your handler gets
-`"add milk"` — everything after the first word, as one string.
+`"add milk"` — everything after the first word, as one string. Split it
+yourself if you want arguments: `argument.split()`.
 
 A command wins over Python only when the first word matches a command you
 registered **and** the line has no `=` in it, so an ordinary assignment is
-never swallowed. Anything you return is ignored; print what you want seen.
+never swallowed.
+
+Two ways to show something, and both work: call `api.print(...)`, or just
+**return a string** and PyCmd prints it. Returning was silently ignored until
+version 1.4, which was a trap worth closing — it is the obvious thing to write.
 
 ### Functions the panel can call
 
@@ -234,6 +267,35 @@ def load(payload=None):
 An export takes one argument — whatever the panel passed, already decoded from
 JSON — and returns anything JSON can carry. If your export takes no argument,
 the panel can call it with none.
+
+### Running your own file type
+
+If your plugin teaches PyCmd about a new kind of file, it can run one too — in
+the Servers tab, alongside a Python script or a served page:
+
+```python
+import pycmd_servers
+
+def setup(api):
+    def run_widget(path, channel):
+        # Called on the server's own thread, with stdout, stderr and stdin
+        # already pointed at that server's console. Return when it is done;
+        # raise and the error is reported like any other server error.
+        with open(path) as handle:
+            api.print(handle.read())
+
+    pycmd_servers.register_runner(".widget", run_widget,
+                                  "Run by the Widget plugin")
+```
+
+The third argument is what the launcher shows *before* anything starts, so the
+user knows what pressing Run will do. `.py` cannot be claimed — that one is the
+app's. Call `pycmd_servers.unregister_runner(".widget")` if you ever need it
+back.
+
+This is the same mechanism the app uses for JavaScript: a `.js` file is run by
+a runner registered from Kotlin, because the engine is the device's WebView and
+Python cannot reach it.
 
 ### Events
 
@@ -582,8 +644,13 @@ plugin.json / PLUGIN keys:
   name         required
   version, author, description   optional strings
   entry        optional, default "main.py"
-  panel        optional HTML file; having one gives the plugin its own tab
-  tab          optional {"title": "...", "icon": "..."}
+  panel        optional HTML file; having one gives the plugin an Open button
+  tab          optional, publishes a row in the app's More screen. Needs panel.
+               {"title": "<=24 chars",
+                "description": "<=120 chars, one line",
+                "icon": "icon.png"}   <- a real image file inside the plugin
+                                         (.png/.jpg/.webp/.gif, about 96x96).
+               Naming a file that is not there is rejected at install time.
   commands     optional [{"name": "...", "help": "..."}]
   permissions  optional subset of ["files","network","console","servers","packages"]
                (documentation only - shown to the user, not enforced)
@@ -606,9 +673,18 @@ THE API
   api.send(obj)                           -> pushes a message to the panel
 
   @api.command("name", help="...")        -> console command; handler(argument: str)
+                                             argument is everything after the
+                                             first word, as one string; return
+                                             a string and it is printed
   @api.export                             -> callable from the panel; f(payload) -> JSON
   @api.export(name="other_name")
   @api.on("event")                        -> handler(event: dict)
+
+RUNNING YOUR OWN FILE TYPE (optional)
+  import pycmd_servers
+  pycmd_servers.register_runner(".ext", fn, "what the launcher should say")
+  fn(path, channel) runs on the server's thread with stdout/stdin already
+  bound to that server's console. ".py" cannot be claimed.
 
 EVENTS
   file_saved {path,name} | file_opened {path,name} | run_started {path,language}

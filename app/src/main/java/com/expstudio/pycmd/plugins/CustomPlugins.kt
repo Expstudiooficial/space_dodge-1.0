@@ -23,6 +23,10 @@ data class InstalledPlugin(
     val description: String,
     val panel: String?,
     val tabTitle: String?,
+    /** One line under the tab's name in More. */
+    val tabDescription: String,
+    /** Absolute path of the image the plugin ships for its tab, if any. */
+    val tabImage: String,
     val commands: List<PluginCommand>,
     val permissions: List<String>,
     val sizeBytes: Long,
@@ -32,6 +36,9 @@ data class InstalledPlugin(
     val broken: Boolean,
 ) {
     val hasPanel: Boolean get() = !panel.isNullOrEmpty()
+
+    /** Whether this plugin asked for a place of its own in the More screen. */
+    val hasTab: Boolean get() = !tabTitle.isNullOrEmpty() && hasPanel
 
     val readableSize: String
         get() = when {
@@ -70,6 +77,8 @@ data class InstalledPlugin(
                 description = json.optString("description"),
                 panel = json.optString("panel").takeIf { it.isNotEmpty() },
                 tabTitle = tab?.optString("title")?.takeIf { it.isNotEmpty() },
+                tabDescription = tab?.optString("description").orEmpty(),
+                tabImage = tab?.optString("image").orEmpty(),
                 commands = commands,
                 permissions = permissions,
                 sizeBytes = json.optLong("size"),

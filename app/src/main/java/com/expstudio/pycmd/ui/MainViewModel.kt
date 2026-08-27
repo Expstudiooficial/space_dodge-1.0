@@ -13,6 +13,7 @@ import com.expstudio.pycmd.python.OutputChunk
 import com.expstudio.pycmd.python.PreviewPage
 import com.expstudio.pycmd.python.forFileName
 import com.expstudio.pycmd.python.PythonEngine
+import com.expstudio.pycmd.python.RunPlan
 import com.expstudio.pycmd.python.RunningServer
 import com.expstudio.pycmd.python.ServerService
 import com.expstudio.pycmd.plugins.CustomPlugins
@@ -34,7 +35,10 @@ import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.channels.BufferOverflow
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -74,7 +78,7 @@ data class DownloadsState(
 /** What a launch form is set up to start. */
 enum class ServerKind(val label: String) {
     STATIC("Serve a folder"),
-    SCRIPT("Run a script"),
+    SCRIPT("Run a file"),
 }
 
 /**
@@ -91,6 +95,8 @@ data class LaunchForm(
     val label: String = "",
     val exposeToNetwork: Boolean = true,
     val logRequests: Boolean = true,
+    /** What starting the picked file would do, looked up before it is started. */
+    val plan: RunPlan = RunPlan(),
 ) {
     val target: File? get() = if (kind == ServerKind.STATIC) folder else script
 
@@ -98,7 +104,8 @@ data class LaunchForm(
 
     /** Why the Run button is disabled, or null when it is ready to go. */
     fun problem(): String? = when {
-        target == null -> if (kind == ServerKind.STATIC) "Pick a folder to serve." else "Pick a script to run."
+        target == null -> if (kind == ServerKind.STATIC) "Pick a folder to serve." else "Pick a file to run."
+        kind == ServerKind.SCRIPT && plan.how.isNotEmpty() && !plan.runnable -> plan.note
         port.isNotBlank() && portNumber == null -> "Port must be a number."
         portNumber != null && portNumber !in 1..65535 -> "Port must be between 1 and 65535."
         kind == ServerKind.STATIC && portNumber == null -> "A folder server needs a port."
@@ -256,12 +263,33 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     init {
         // Everything a server prints is tagged with its handle; the console
         // ignores those and each server console keeps only its own.
+        //
+        // Batched, because the state this writes is a map of immutable lists:
+        // copying both for every single line meant a server logging a request
+        // per file did more work rebuilding lists than serving. Collecting a
+        // burst first turns hundreds of copies into one.
         viewModelScope.launch {
-            engine.output.collect { chunk ->
-                if (chunk.channel == CONSOLE_CHANNEL) return@collect
-                val current = _serverConsoles.value[chunk.channel].orEmpty()
-                val updated = (current + chunk).takeLast(CONSOLE_LIMIT)
-                _serverConsoles.value = _serverConsoles.value + (chunk.channel to updated)
+            val queue = Channel<OutputChunk>(4096, BufferOverflow.DROP_OLDEST)
+            launch {
+                engine.output.collect { chunk ->
+                    if (chunk.channel != CONSOLE_CHANNEL) queue.send(chunk)
+                }
+            }
+            val batch = ArrayList<OutputChunk>(CONSOLE_LIMIT)
+            while (isActive) {
+                batch.clear()
+                batch += queue.receive()
+                while (batch.size < CONSOLE_LIMIT) {
+                    batch += queue.tryReceive().getOrNull() ?: break
+                }
+                val grouped = batch.groupBy { it.channel }
+                var consoles = _serverConsoles.value
+                for ((channel, chunks) in grouped) {
+                    val current = consoles[channel].orEmpty()
+                    consoles = consoles + (channel to (current + chunks).takeLast(CONSOLE_LIMIT))
+                }
+                _serverConsoles.value = consoles
+                delay(16)
             }
         }
 
@@ -276,7 +304,45 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             refreshLanguages()
             _previewable.value = engine.previewableExtensions()
             refreshCustomPlugins()
+            installBundledPlugins()
         }
+    }
+
+    /**
+     * Installs the plugins that ship with the app, without switching them on.
+     *
+     * A bundled plugin is still a plugin: it lands in the same folder, shows
+     * the same switch, and stays off until the user turns it on. Installing it
+     * for them only saves the file-picker trip - it does not decide anything
+     * on their behalf. A version already installed is replaced only when the
+     * app ships a different one, so a plugin somebody edited is left alone
+     * between updates.
+     */
+    private suspend fun installBundledPlugins() {
+        val staged = workspace.stageBundledPlugins()
+        if (staged.isEmpty()) return
+
+        var installedAny = false
+        for (folder in staged) {
+            val manifest = runCatching {
+                JSONObject(File(folder, "plugin.json").readText())
+            }.getOrNull() ?: continue
+            val id = manifest.optString("id")
+            val version = manifest.optString("version")
+            if (id.isEmpty()) continue
+
+            val existing = CustomPlugins.installed.value.firstOrNull { it.id == id }
+            if (existing != null && existing.version == version) continue
+
+            val reply = engine.installPlugin(folder.absolutePath, folder.name)
+            if (reply.optBoolean("ok")) {
+                installedAny = true
+                DebugLog.info(TAG_VIEW, "bundled plugin ready: $id", version)
+            } else {
+                DebugLog.warn(TAG_VIEW, "bundled plugin $id failed", reply.optString("error"))
+            }
+        }
+        if (installedAny) refreshCustomPlugins()
     }
 
     // --------------------------------------------------------------- plugins
@@ -542,18 +608,24 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    /** Where the open panel was opened from, so closing it goes back there. */
+    private var panelCameFrom = Tab.PLUGINS
+
     fun openPluginPanel(plugin: InstalledPlugin) {
         if (!CustomPlugins.isOn(plugin.id)) {
             showToast("${plugin.name} is switched off.")
             return
         }
+        panelCameFrom = _tab.value.takeIf { it != Tab.PLUGIN_PANEL } ?: Tab.PLUGINS
         _openPanel.value = plugin
         _tab.value = Tab.PLUGIN_PANEL
     }
 
     fun closePluginPanel() {
         _openPanel.value = null
-        _tab.value = Tab.PLUGINS
+        // A panel opened from its tab in More belongs to More; closing it into
+        // the plugin list would be a different screen than the one you left.
+        _tab.value = panelCameFrom
     }
 
     suspend fun pluginPanelHtml(id: String): String = engine.pluginPanel(id)
@@ -979,9 +1051,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 }
                 _editor.value = _editor.value.copy(savedContent = state.content)
             }
-            updateLaunchForm { it.copy(kind = ServerKind.SCRIPT, script = file) }
+            updateLaunchForm { it.copy(kind = ServerKind.SCRIPT, script = file, plan = RunPlan()) }
             _tab.value = Tab.SERVERS
-            showToast("Set as the script to run - check the port, then press Run")
+            showToast("Set as the file to run - check the port, then press Run")
+            refreshRunPlan(file)
         }
     }
 
@@ -1289,11 +1362,29 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             if (kind == ServerKind.STATIC) {
                 form.copy(kind = ServerKind.STATIC, folder = file)
             } else {
-                form.copy(kind = ServerKind.SCRIPT, script = file)
+                form.copy(kind = ServerKind.SCRIPT, script = file, plan = RunPlan())
             }
         }
         _tab.value = Tab.SERVERS
         showToast("Selected ${file.name}")
+        if (kind == ServerKind.SCRIPT) refreshRunPlan(file)
+    }
+
+    /**
+     * Asks what starting this file would do, and puts the answer in the form.
+     *
+     * The Servers tab used to run Python and nothing else, so there was
+     * nothing to say. Now a page is served, a Go file is interpreted and a
+     * plugin may claim a type of its own - so the form says which it will be
+     * before anything starts, and refuses up front what cannot run at all.
+     */
+    private fun refreshRunPlan(file: File) {
+        viewModelScope.launch {
+            val plan = engine.howToRun(file.absolutePath)
+            updateLaunchForm { form ->
+                if (form.script?.absolutePath == file.absolutePath) form.copy(plan = plan) else form
+            }
+        }
     }
 
     fun launchServer() {
@@ -1318,7 +1409,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     logRequests = form.logRequests,
                 )
 
-                ServerKind.SCRIPT -> engine.startScriptServer(
+                ServerKind.SCRIPT -> engine.startFileServer(
                     path = target.absolutePath,
                     port = port,
                     host = host,

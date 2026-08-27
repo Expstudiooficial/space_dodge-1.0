@@ -278,10 +278,32 @@ def _validate(manifest: dict, folder: str) -> dict:
     if isinstance(tab, str):
         tab = {"title": tab}
     if isinstance(tab, dict):
+        # A tab is how a plugin adds a place of its own to the More screen.
+        # It needs a name, one line about what it is for, and a picture - the
+        # picture is a file inside the plugin, because asking an author to add
+        # an icon to the app's own drawables would mean editing the app.
+        icon = str(tab.get("icon") or "").strip()[:64]
+        image = ""
+        if icon and _is_image_name(icon):
+            candidate = _safe_join(folder, icon)
+            if not os.path.isfile(candidate):
+                raise PluginError(f"the tab icon {icon!r} is not in the plugin")
+            # The *relative* name is what gets stored. An absolute path would
+            # be the staging folder's, and staging is thrown away the moment
+            # the plugin is moved into place - which is how the icon came out
+            # the far side pointing at nothing.
+            image = candidate
         manifest["tab"] = {
             "title": str(tab.get("title") or manifest["name"])[:24],
-            "icon": str(tab.get("icon") or "puzzle")[:24],
+            "description": str(
+                tab.get("description") or manifest.get("description") or ""
+            )[:120],
+            "icon": icon or "puzzle",
+            # Resolved fresh every time the manifest is read, and never saved.
+            "image": image,
         }
+        if not manifest.get("panel"):
+            raise PluginError("a tab needs a panel: the tab is what opens it")
     else:
         manifest.pop("tab", None)
 
@@ -303,6 +325,13 @@ def _validate(manifest: dict, folder: str) -> dict:
     return manifest
 
 
+TAB_IMAGES = (".png", ".jpg", ".jpeg", ".webp", ".svg", ".gif")
+
+
+def _is_image_name(value: str) -> bool:
+    return value.lower().endswith(TAB_IMAGES)
+
+
 def _safe_id(value: str) -> str:
     kept = [c for c in value.strip().lower() if c.isalnum() or c in "._-"]
     identifier = "".join(kept).strip("._-")
@@ -312,8 +341,17 @@ def _safe_id(value: str) -> str:
 
 
 def _write_manifest(folder: str, manifest: dict) -> None:
+    """Saves the manifest, minus anything that is only true where it is now.
+
+    The tab icon's absolute path is the example: written down in the staging
+    folder it would be wrong the instant the plugin was moved into place.
+    """
+    saved = dict(manifest)
+    tab = saved.get("tab")
+    if isinstance(tab, dict):
+        saved["tab"] = {k: v for k, v in tab.items() if k != "image"}
     with open(os.path.join(folder, MANIFEST_NAME), "w", encoding="utf-8") as handle:
-        json.dump(manifest, handle, indent=2)
+        json.dump(saved, handle, indent=2)
 
 
 # ------------------------------------------------------------------- listing
@@ -700,6 +738,13 @@ def run_command(name: str, argument: str = "") -> str:
             detail = _format_error(error, entry["manifest"]["name"])
             sys.stderr.write(detail + "\n")
             return _json({"ok": False, "handled": True, "error": detail})
+        # Printing is the documented way to show something, but returning a
+        # string is the obvious thing to write, and a command that silently
+        # returned its answer into the void was a trap worth closing.
+        if result is not None and not isinstance(result, bool):
+            text = str(result)
+            if text:
+                sys.stdout.write(text if text.endswith("\n") else text + "\n")
         return _json({"ok": True, "handled": True, "plugin": plugin_id,
                       "result": None if result is None else str(result)})
     return _json({"ok": True, "handled": False})

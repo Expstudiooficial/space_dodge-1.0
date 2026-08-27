@@ -1,0 +1,144 @@
+<h1>Servers+</h1>
+
+<div class="card">
+  <p id="summary">Loading…</p>
+  <p>
+    <button id="refresh">Refresh</button>
+    <button id="auto">Auto-refresh: on</button>
+  </p>
+</div>
+
+<div id="board"></div>
+
+<div class="card">
+  <h2>Free ports</h2>
+  <p>
+    <input id="from" value="8000" inputmode="numeric" style="width:7em">
+    <button id="scan">Find free ports</button>
+  </p>
+  <p id="ports">—</p>
+</div>
+
+<div class="card">
+  <h2>A folder with no index page</h2>
+  <p>Serving a folder that has no <code>index.html</code> shows a bare file
+     listing. This writes a real page that links to everything in it.</p>
+  <p><input id="folder" placeholder="/full/path/to/the/folder" style="width:100%"></p>
+  <p><button id="index">Write index.html</button></p>
+  <p id="indexed">—</p>
+</div>
+
+<script>
+  const $ = (id) => document.getElementById(id);
+  let timer = null;
+  let autoOn = true;
+
+  const escape = (text) => String(text ?? '').replace(/[&<>"]/g, (c) => (
+    { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]
+  ));
+
+  function healthColour(health) {
+    if (health === 'answering') return '#4dd0a0';
+    if (health === 'not answering') return '#ff8a7a';
+    return '#9db2c9';
+  }
+
+  function draw(data) {
+    $('summary').textContent =
+      `${data.running} running of ${data.servers.length} · this device is ${data.address} · ${data.at}`;
+
+    if (!data.servers.length) {
+      $('board').innerHTML =
+        '<div class="card"><p>Nothing is running. Start something in the Servers tab, '
+        + 'or type <code>serve .</code> in the console.</p></div>';
+      return;
+    }
+
+    $('board').innerHTML = data.servers.map((row) => `
+      <div class="card">
+        <p><strong>${escape(row.label)}</strong>
+           <span style="opacity:.7">${escape(row.handle)} · ${escape(row.kind)}</span></p>
+        <p>
+          <span style="color:${healthColour(row.health)}">●</span>
+          ${escape(row.status)} · ${escape(row.health)} · up ${escape(row.uptime_text)}
+          · ${row.requests} request${row.requests === 1 ? '' : 's'}
+        </p>
+        ${row.url ? `<p><code>${escape(row.url)}</code></p>` : ''}
+        ${row.error ? `<p style="color:#ff8a7a">${escape(row.error)}</p>` : ''}
+        <p>
+          <button data-stop="${escape(row.handle)}">Stop</button>
+          <button data-restart="${escape(row.handle)}">Restart</button>
+          <button data-kill="${escape(row.handle)}">Kill</button>
+        </p>
+      </div>
+    `).join('');
+
+    for (const button of $('board').querySelectorAll('button')) {
+      button.onclick = () => act(button);
+    }
+  }
+
+  async function act(button) {
+    const handle = button.dataset.stop || button.dataset.restart || button.dataset.kill;
+    const what = button.dataset.stop ? 'stop_one'
+      : button.dataset.restart ? 'restart_one' : 'kill_one';
+    button.disabled = true;
+    button.textContent = '…';
+    try {
+      const result = await pycmd.call(what, { handle });
+      pycmd.toast(result.ok ? 'Done' : (result.error || 'That did not work'));
+    } catch (error) {
+      pycmd.toast('That failed: ' + error.message);
+    }
+    refresh();
+  }
+
+  async function refresh() {
+    try {
+      draw(await pycmd.call('board_now', {}));
+    } catch (error) {
+      $('summary').textContent = 'Could not read the servers: ' + error.message;
+    }
+  }
+
+  function schedule() {
+    if (timer) clearInterval(timer);
+    // Two seconds is often enough to watch a server come up, and rare enough
+    // that a panel left open is not a background job of its own.
+    if (autoOn) timer = setInterval(refresh, 2000);
+  }
+
+  $('refresh').onclick = refresh;
+  $('auto').onclick = () => {
+    autoOn = !autoOn;
+    $('auto').textContent = 'Auto-refresh: ' + (autoOn ? 'on' : 'off');
+    schedule();
+  };
+
+  $('scan').onclick = async () => {
+    $('ports').textContent = 'looking…';
+    try {
+      const data = await pycmd.call('free_ports', { from: Number($('from').value) || 8000 });
+      $('ports').textContent = data.ports.length
+        ? 'Free: ' + data.ports.join(', ')
+        : 'Nothing free in that range.';
+    } catch (error) {
+      $('ports').textContent = 'that failed: ' + error.message;
+    }
+  };
+
+  $('index').onclick = async () => {
+    $('indexed').textContent = 'writing…';
+    try {
+      const result = await pycmd.call('write_index', { folder: $('folder').value.trim() });
+      $('indexed').textContent = result.ok
+        ? `Wrote index.html listing ${result.files} file${result.files === 1 ? '' : 's'}.`
+        : result.error;
+    } catch (error) {
+      $('indexed').textContent = 'that failed: ' + error.message;
+    }
+  };
+
+  refresh();
+  schedule();
+</script>

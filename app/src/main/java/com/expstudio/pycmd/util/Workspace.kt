@@ -231,6 +231,30 @@ class Workspace(context: Context) {
         return copied
     }
 
+    /**
+     * Unpacks the plugins that ship in the APK into a scratch folder.
+     *
+     * They are not installed from here - the installer does that, from Python,
+     * so a bundled plugin goes through exactly the same manifest checks as one
+     * a user picked off their phone. Returns one folder per bundled plugin.
+     */
+    suspend fun stageBundledPlugins(): List<File> = withContext(Dispatchers.IO) {
+        val names = runCatching { appContext.assets.list("plugins").orEmpty() }
+            .getOrDefault(emptyArray())
+        if (names.isEmpty()) return@withContext emptyList()
+
+        val root = File(appContext.cacheDir, "bundled-plugins")
+        root.deleteRecursively()
+        root.mkdirs()
+        names.mapNotNull { name ->
+            val target = File(root, name)
+            runCatching { copyAssets("plugins/$name", target) }
+                .map { target }
+                .getOrNull()
+                ?.takeIf { File(it, "plugin.json").isFile }
+        }
+    }
+
     /** Text of a document that ships in the APK, for the in-app guides. */
     suspend fun readAsset(path: String): String? = withContext(Dispatchers.IO) {
         runCatching {

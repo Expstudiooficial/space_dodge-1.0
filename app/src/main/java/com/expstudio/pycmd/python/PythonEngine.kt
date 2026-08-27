@@ -14,13 +14,18 @@ import java.util.concurrent.ScheduledFuture
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicLong
 import kotlinx.coroutines.asCoroutineDispatcher
+import kotlinx.coroutines.async
 import kotlinx.coroutines.channels.BufferOverflow
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
 
@@ -82,10 +87,27 @@ object PythonEngine {
      * code they are trying to control, nor block the UI thread waiting for the
      * GIL.
      */
-    private val controlExecutor = Executors.newFixedThreadPool(2) { runnable ->
+    private val controlExecutor = Executors.newFixedThreadPool(4) { runnable ->
         Thread(runnable, "python-control").apply { isDaemon = true }
     }
     private val controlDispatcher = controlExecutor.asCoroutineDispatcher()
+
+    /**
+     * Stop and Kill, and nothing else.
+     *
+     * These used to share the control pool with downloads, exports, previews
+     * and the doctor's fixes. Two of those running at once filled the pool,
+     * and the Kill button - the one thing that must always get through -
+     * queued behind a 60 MB download. Its own threads is the only honest way
+     * to promise that a rescue is never waiting on ordinary work.
+     */
+    private val rescueExecutor = Executors.newFixedThreadPool(2) { runnable ->
+        Thread(runnable, "python-rescue").apply {
+            isDaemon = true
+            priority = Thread.NORM_PRIORITY + 2
+        }
+    }
+    private val rescueDispatcher = rescueExecutor.asCoroutineDispatcher()
 
     private val _output = MutableSharedFlow<OutputChunk>(
         replay = OUTPUT_BUFFER,
@@ -279,6 +301,12 @@ object PythonEngine {
             pluginRuntime.callAttr(
                 "configure", pluginsDir.absolutePath, workspaceDir.absolutePath, pluginHost,
             )
+            // JavaScript is the one runnable language Python cannot start, so
+            // the Servers tab reaches it by handing Python a way back out.
+            val jsNote = "Runs in the device's own JavaScript engine. One at a time."
+            for (extension in JS_EXTENSIONS) {
+                servers.callAttr("register_runner", ".$extension", jsFileRunner, jsNote)
+            }
 
             val short = version.trim().split(" ").firstOrNull().orEmpty()
             _status.value = EngineStatus(ready = true, pythonVersion = short)
@@ -469,13 +497,17 @@ object PythonEngine {
     /**
      * Answers a fix the app offered after an error.
      *
-     * Goes through the control dispatcher so a server whose script is wedged
+     * Goes through the rescue dispatcher so a server whose script is wedged
      * can still be answered, and returns whether the line was consumed - a
      * server's stdin is a real thing people type into, and "yes" might have
      * been meant for the program rather than for us.
+     *
+     * It returns as soon as the reply is understood. `done` says whether the
+     * fix is already finished; when it is false the work is running on its own
+     * thread and narrating itself into the console it was asked in.
      */
     suspend fun answerFix(channel: String, text: String): JSONObject =
-        withContext(controlDispatcher) {
+        withContext(rescueDispatcher) {
             if (!_status.value.ready) return@withContext JSONObject().put("handled", false)
             runCatching {
                 // The console's offers live in the runtime, a server's in the
@@ -485,7 +517,9 @@ object PythonEngine {
                 JSONObject()
                     .put("handled", map.str("handled") == "True")
                     .put("applied", map.str("applied") == "True")
+                    .put("done", map.str("done") == "True")
                     .put("message", map.str("message"))
+                    .put("kind", map.str("fix_kind"))
                     .put("port", map.str("port"))
             }.getOrElse {
                 DebugLog.debug(TAG, "no fix was pending", it.message.orEmpty())
@@ -748,6 +782,61 @@ object PythonEngine {
         }
     }
 
+
+    /**
+     * Runs a `.js` file as a server, on the server's own thread.
+     *
+     * Registered into `pycmd_servers` at startup so that a JavaScript file is
+     * a first-class thing to launch from the Servers tab, rather than the one
+     * runnable language the tab could not start. Python cannot run it - the
+     * engine is a WebView - so Python calls back out here instead.
+     *
+     * The thread it runs on is blocked for the whole run, which is what makes
+     * the server's lifetime honest. A kill marks the channel cancelled, and
+     * this notices within a tick and tears the engine down: a `while (true)`
+     * in JavaScript cannot be interrupted any other way.
+     */
+    @Suppress("unused") // Called from pycmd_servers.py
+    private val jsFileRunner = object {
+        fun run(path: String, channel: String) {
+            val file = File(path)
+            val source = file.readText()
+            cancelledChannels.remove(channel)
+            queueFor(channel).clear()
+
+            val host = object : JsEngine.Host {
+                override fun stdout(text: String) = emit(OutputChunk.Stream.STDOUT, text, channel)
+                override fun stderr(text: String) {
+                    emit(OutputChunk.Stream.STDERR, text, channel)
+                    bufferStderr(channel, text)
+                }
+                override fun readLine(): String? = readLineFor(channel)
+            }
+
+            val result = runBlocking {
+                val run = async { JsEngine.run(appContext, source, file.name, host) }
+                val watcher = launch {
+                    while (isActive) {
+                        if (cancelledChannels.containsKey(channel)) {
+                            JsEngine.stop()
+                            return@launch
+                        }
+                        delay(120)
+                    }
+                }
+                try {
+                    run.await()
+                } finally {
+                    watcher.cancel()
+                }
+            }
+
+            if (result.status == "error") {
+                throw RuntimeException("JavaScript exited with status ${result.exitCode}")
+            }
+        }
+    }
+
     /**
      * What a custom plugin reaches when it logs, toasts, or messages its panel.
      *
@@ -949,22 +1038,39 @@ object PythonEngine {
         }
     }.also { logServerResult("static", it); refreshServerCount() }
 
-    suspend fun startScriptServer(
+    /**
+     * Starts whatever kind of file this is as a server.
+     *
+     * A script, a C or Go or Rust program, a JavaScript file, a page whose
+     * folder gets served, or a type a plugin taught the app about - the choice
+     * is Python's, which is where the language registry and the plugin runners
+     * both live.
+     */
+    suspend fun startFileServer(
         path: String,
         port: Int,
         host: String,
         label: String,
     ): ServerActionResult = withContext(pythonDispatcher) {
         if (!_status.value.ready) return@withContext ServerActionResult(false, "Interpreter is not ready.")
-        DebugLog.info(TAG, "starting script server on port $port", path)
+        DebugLog.info(TAG, "starting a server on port $port", path)
         runCatching {
-            servers.callAttr("start_script", path, port, host, label)
+            servers.callAttr("start_file", path, port, host, label)
                 .asMap().toServerActionResult()
         }.getOrElse {
-            DebugLog.error(TAG, "script server failed to start", it)
+            DebugLog.error(TAG, "server failed to start", it)
             ServerActionResult(false, it.friendlyMessage())
         }
-    }.also { logServerResult("script", it); refreshServerCount() }
+    }.also { logServerResult("file", it); refreshServerCount() }
+
+    /** What starting this file would do, so the launcher can say so up front. */
+    suspend fun howToRun(path: String): RunPlan = withContext(controlDispatcher) {
+        if (!_status.value.ready) return@withContext RunPlan()
+        runCatching {
+            val map = servers.callAttr("how_to_run", path).asMap()
+            RunPlan(map.str("how"), map.str("language"), map.str("note"))
+        }.getOrDefault(RunPlan())
+    }
 
     private fun logServerResult(kind: String, result: ServerActionResult) {
         if (result.ok) {
@@ -975,7 +1081,7 @@ object PythonEngine {
     }
 
     /** Graceful stop. Runs off the main Python thread so it works while it is busy. */
-    suspend fun stopServer(handle: String): ServerActionResult = withContext(controlDispatcher) {
+    suspend fun stopServer(handle: String): ServerActionResult = withContext(rescueDispatcher) {
         if (!_status.value.ready) return@withContext ServerActionResult(false, "Interpreter is not ready.")
         DebugLog.info(TAG, "stopping server $handle")
         runCatching {
@@ -998,7 +1104,7 @@ object PythonEngine {
      * tracking it either way, so a thread wedged in a blocking call can never
      * hold the UI or the port hostage.
      */
-    suspend fun killServer(handle: String): ServerActionResult = withContext(controlDispatcher) {
+    suspend fun killServer(handle: String): ServerActionResult = withContext(rescueDispatcher) {
         if (!_status.value.ready) return@withContext ServerActionResult(false, "Interpreter is not ready.")
         DebugLog.warn(TAG, "killing server $handle")
         cancelledChannels[handle] = true
@@ -1015,7 +1121,7 @@ object PythonEngine {
         }
     }.also { refreshServerCount() }
 
-    suspend fun stopAllServers(): Int = withContext(controlDispatcher) {
+    suspend fun stopAllServers(): Int = withContext(rescueDispatcher) {
         if (!_status.value.ready) return@withContext 0
         runCatching { servers.callAttr("stop_all").asMap().str("stopped").toIntOrNull() ?: 0 }
             .getOrElse {
@@ -1025,7 +1131,7 @@ object PythonEngine {
     }.also { refreshServerCount() }
 
     /** Panic button: force every server down regardless of state. */
-    suspend fun killAllServers(): Int = withContext(controlDispatcher) {
+    suspend fun killAllServers(): Int = withContext(rescueDispatcher) {
         if (!_status.value.ready) return@withContext 0
         DebugLog.warn(TAG, "killing every server")
         cancelledChannels.clear()
@@ -1218,6 +1324,21 @@ data class ServerActionResult(
     val needsKill: Boolean = false,
     val detached: Boolean = false,
 )
+
+/**
+ * What starting a given file as a server would actually do.
+ *
+ * `how` is one of `script`, `language`, `javascript`, `serve`, `plugin`,
+ * `unsupported` or `unknown`. The launcher shows [note] before anything runs,
+ * so a page that is about to be served rather than executed says so first.
+ */
+data class RunPlan(
+    val how: String = "",
+    val language: String = "",
+    val note: String = "",
+) {
+    val runnable: Boolean get() = how.isNotEmpty() && how != "unsupported" && how != "unknown"
+}
 
 /** Chaquopy maps are `Map<PyObject, PyObject>`; missing keys must read as empty. */
 private fun Map<PyObject, PyObject>.str(key: String): String =

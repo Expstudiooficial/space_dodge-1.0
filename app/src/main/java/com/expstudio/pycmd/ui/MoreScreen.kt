@@ -1,5 +1,7 @@
 package com.expstudio.pycmd.ui
 
+import android.graphics.BitmapFactory
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -14,22 +16,32 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.expstudio.pycmd.plugins.InstalledPlugin
+import java.io.File
 
 /**
  * The destinations that do not fit in the bottom bar.
  *
  * Five items is the most a phone-width navigation bar can label without
- * wrapping, and there are eight screens, so the three least-used sit here.
+ * wrapping, and there are eight screens, so the least-used sit here - along
+ * with any a plugin has published, which is the only way a plugin can add a
+ * place of its own without the app's source changing to make room for it.
  */
 @Composable
 fun MoreScreen(
@@ -39,6 +51,8 @@ fun MoreScreen(
     errorCount: Int,
     onSelect: (Tab) -> Unit,
     modifier: Modifier = Modifier,
+    pluginTabs: List<InstalledPlugin> = emptyList(),
+    onOpenPluginTab: (InstalledPlugin) -> Unit = {},
 ) {
     LazyColumn(
         modifier.fillMaxSize(),
@@ -103,6 +117,16 @@ fun MoreScreen(
             )
         }
 
+        if (pluginTabs.isNotEmpty()) {
+            item {
+                Spacer(Modifier.height(4.dp))
+                SectionTitle("From your plugins")
+            }
+            items(pluginTabs, key = { it.id }) { plugin ->
+                PluginTabRow(plugin) { onOpenPluginTab(plugin) }
+            }
+        }
+
         if (serverCount > 0) {
             item {
                 Spacer(Modifier.height(4.dp))
@@ -124,6 +148,94 @@ fun MoreScreen(
             }
         }
     }
+}
+
+/**
+ * A destination a plugin published.
+ *
+ * The icon is a file the plugin ships, decoded from its own folder: an author
+ * writing a plugin cannot add a drawable to this app, so the picture has to
+ * come from their side of the line. A plugin with no usable image still gets
+ * a row - a missing icon is not a reason to hide the tab.
+ */
+@Composable
+private fun PluginTabRow(plugin: InstalledPlugin, onClick: () -> Unit) {
+    val image = remember(plugin.tabImage) { loadTabImage(plugin.tabImage) }
+
+    PyCard(contentPadding = PaddingValues(0.dp)) {
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .clickable(onClick = onClick)
+                .padding(14.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            if (image != null) {
+                Image(
+                    bitmap = image,
+                    contentDescription = null,
+                    contentScale = ContentScale.Fit,
+                    modifier = Modifier.size(24.dp).clip(RoundedCornerShape(6.dp)),
+                )
+            } else {
+                Icon(
+                    PyIcons.Add,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.tertiary,
+                    modifier = Modifier.size(22.dp),
+                )
+            }
+            Spacer(Modifier.width(14.dp))
+            Column(Modifier.weight(1f)) {
+                Text(
+                    plugin.tabTitle ?: plugin.name,
+                    style = MaterialTheme.typography.bodyLarge,
+                    fontWeight = FontWeight.Medium,
+                )
+                Text(
+                    plugin.tabDescription.ifBlank { plugin.description }.ifBlank { plugin.name },
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 2,
+                )
+            }
+            StatusChip("plugin", MaterialTheme.colorScheme.tertiary)
+        }
+    }
+}
+
+/** The icon is drawn at 24dp; decoding anything much larger is wasted work. */
+private const val ICON_TARGET_PIXELS = 128
+
+/**
+ * Decodes a plugin's own icon file, or gives up quietly.
+ *
+ * The file comes from a plugin, so its size is not ours to assume. It is
+ * measured first and decoded scaled down, because a plugin that ships a photo
+ * by mistake should cost a small bitmap and a shrug rather than a stutter on
+ * the More screen every time it is opened.
+ */
+private fun loadTabImage(path: String): ImageBitmap? {
+    if (path.isBlank()) return null
+    // An SVG is not something BitmapFactory can read, and pulling in a vector
+    // loader for a 24dp icon is not worth it; those fall back to the glyph.
+    if (path.lowercase().endsWith(".svg")) return null
+    val file = File(path)
+    if (!file.isFile || file.length() > 4L * 1024 * 1024) return null
+
+    return runCatching {
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        BitmapFactory.decodeFile(path, bounds)
+        val largest = maxOf(bounds.outWidth, bounds.outHeight)
+        if (largest <= 0) return null
+
+        var sample = 1
+        while (largest / sample > ICON_TARGET_PIXELS * 2) sample *= 2
+
+        BitmapFactory
+            .decodeFile(path, BitmapFactory.Options().apply { inSampleSize = sample })
+            ?.asImageBitmap()
+    }.getOrNull()
 }
 
 @Composable

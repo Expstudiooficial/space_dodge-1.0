@@ -466,6 +466,32 @@ check("kill stops the stubborn script", killed.get("ok") is True, killed)
 time.sleep(0.4)
 check("stubborn server is untracked", pycmd_servers.count() == 0, pycmd_servers.listing())
 
+report("\n== servers: kill a script wedged in its own accept() ==")
+listener = os.path.join(workspace, "listener.py")
+with open(listener, "w", encoding="utf-8") as handle_file:
+    # accept() is a blocking C call. An async exception cannot land inside one,
+    # so the only way out is to make the call return - which is what kill does
+    # by connecting to the port before raising again.
+    handle_file.write(
+        "import socket\n"
+        "s = socket.socket()\n"
+        "s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)\n"
+        "s.bind(('0.0.0.0', 8151))\n"
+        "s.listen(1)\n"
+        "print('listening')\n"
+        "while True:\n"
+        "    conn, _ = s.accept()\n"
+        "    conn.close()\n"
+    )
+started = pycmd_servers.start_file(listener, port=8151, label="listener")
+check("the listener starts", started.get("ok") is True, started)
+time.sleep(1.0)
+check("and holds the port", not pycmd_servers.port_available(8151, "127.0.0.1"))
+killed = pycmd_servers.kill(started["handle"])
+check("kill ends it rather than detaching", killed.get("detached") is False, killed)
+time.sleep(0.4)
+check("and the port comes back", pycmd_servers.port_available(8151, "127.0.0.1"))
+
 report("\n== servers: kill_all ==")
 pycmd_servers.start_static(workspace, 8131)
 pycmd_servers.start_static(workspace, 8132)
@@ -476,6 +502,85 @@ check("kill_all reports both", result.get("killed") == 2, result)
 time.sleep(0.4)
 check("nothing is left running", pycmd_servers.count() == 0, pycmd_servers.listing())
 check("ports were freed", pycmd_servers.port_available(8131), "8131 still bound")
+
+report("\n== servers: running things that are not Python ==")
+plan = pycmd_servers.how_to_run(os.path.join(workspace, "hello.py"))
+check("a script says it is a script", plan["how"] == "script", plan)
+
+go_file = os.path.join(workspace, "server.go")
+with open(go_file, "w", encoding="utf-8") as handle_file:
+    handle_file.write(
+        'package main\n\nimport "fmt"\n\n'
+        'func main() {\n\tfmt.Println("go server up")\n}\n'
+    )
+plan = pycmd_servers.how_to_run(go_file)
+check("a Go file says which interpreter", plan["how"] == "language" and plan["language"] == "Go", plan)
+started = pycmd_servers.start_file(go_file, label="go")
+check("and it starts", started.get("ok") is True, started)
+time.sleep(0.8)
+check("its output lands in its own log",
+      any("go server up" in text for _stream, text in
+          [(row["stream"], row["text"]) for row in pycmd_servers.log_lines(started["handle"])]),
+      pycmd_servers.log_lines(started["handle"]))
+pycmd_servers.kill_all()
+
+page_dir = os.path.join(workspace, "pages")
+os.makedirs(page_dir, exist_ok=True)
+page = os.path.join(page_dir, "home.html")
+with open(page, "w", encoding="utf-8") as handle_file:
+    handle_file.write("<h1>hi</h1>")
+plan = pycmd_servers.how_to_run(page)
+check("a page is served, not executed", plan["how"] == "serve", plan)
+served = pycmd_servers.start_file(page, port=8141)
+check("serving it works", served.get("ok") is True, served)
+check("and the address opens that page", served.get("url", "").endswith("/home.html"), served)
+time.sleep(0.3)
+import urllib.request  # noqa: E402
+
+fetched = urllib.request.urlopen(f"http://127.0.0.1:8141/home.html", timeout=3).read()
+check("the page really is served", b"<h1>hi</h1>" in fetched, fetched)
+pycmd_servers.kill_all()
+time.sleep(0.3)
+
+java_file = os.path.join(workspace, "A.java")
+with open(java_file, "w", encoding="utf-8") as handle_file:
+    handle_file.write("class A {}\n")
+refused = pycmd_servers.start_file(java_file)
+check("something with no engine is refused up front", refused.get("ok") is False, refused)
+check("with the reason, not a stack trace", "compiler" in refused.get("error", ""), refused)
+
+report("\n== servers: a plugin can claim a file type ==")
+
+
+class _Runner:
+    """What Kotlin registers for JavaScript, in miniature."""
+
+    def __init__(self):
+        self.ran = []
+
+    def run(self, path, channel):
+        self.ran.append((path, channel))
+
+
+runner = _Runner()
+check("a runner registers",
+      pycmd_servers.register_runner(".widget", runner, "Run by the widget plugin") is True)
+check("Python cannot be claimed", pycmd_servers.register_runner(".py", runner) is False)
+check("nor can something uncallable", pycmd_servers.register_runner(".x", object()) is False)
+widget = os.path.join(workspace, "thing.widget")
+with open(widget, "w", encoding="utf-8") as handle_file:
+    handle_file.write("anything\n")
+plan = pycmd_servers.how_to_run(widget)
+check("the launcher says what the plugin will do",
+      plan["how"] == "plugin" and plan["note"] == "Run by the widget plugin", plan)
+started = pycmd_servers.start_file(widget)
+check("and starting it reaches the plugin", started.get("ok") is True, started)
+time.sleep(0.5)
+check("with the file and its channel", runner.ran and runner.ran[0][0] == widget, runner.ran)
+pycmd_servers.unregister_runner(".widget")
+check("unregistering puts it back", pycmd_servers.how_to_run(widget)["how"] == "unsupported")
+pycmd_servers.kill_all()
+time.sleep(0.3)
 
 report("\n== languages: registry ==")
 from pycmd_langs import registry  # noqa: E402

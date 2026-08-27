@@ -70,6 +70,22 @@ def result(raw):
     return json.loads(raw)
 
 
+SAID = []
+
+
+def capture(call):
+    """Runs `call`, collecting whatever it wrote to the console."""
+    buffer = io.StringIO()
+    previous = sys.stdout
+    sys.stdout = buffer
+    try:
+        return call()
+    finally:
+        sys.stdout = previous
+        if buffer.getvalue():
+            SAID.append(buffer.getvalue())
+
+
 # ------------------------------------------------- shape 1: a single .py file
 
 print("\n== a single-file plugin ==")
@@ -183,6 +199,86 @@ check("the panel is recorded",
       installed.get("manifest", {}).get("panel") == "ui.html", installed)
 check("the tab is normalised",
       installed.get("manifest", {}).get("tab", {}).get("title") == "Notes", installed)
+
+
+print("\n== a command that returns its answer ==")
+returner = os.path.join(scratch, "src", "returner")
+write(os.path.join(returner, "plugin.json"), json.dumps({
+    "id": "demo.returner", "name": "Returner", "entry": "main.py",
+}))
+write(os.path.join(returner, "main.py"), """
+def setup(api):
+    @api.command("echo2", help="echo2 <text>")
+    def echo2(argument):
+        return "you said " + argument.strip()
+
+    @api.command("quiet", help="says nothing")
+    def quiet(argument):
+        return None
+""")
+result(plugins.install(returner))
+result(plugins.load("demo.returner"))
+SAID.clear()
+reply = capture(lambda: result(plugins.run_command("echo2", "hello there")))
+check("the command is handled", reply.get("handled"), reply)
+check("and what it returned is printed",
+      any("you said hello there" in text for text in SAID), SAID)
+SAID.clear()
+capture(lambda: result(plugins.run_command("quiet", "")))
+check("returning nothing prints nothing", SAID == [], SAID)
+
+print("\n== a tab in the More screen ==")
+# The icon is a real file inside the plugin, because a plugin author cannot
+# add a drawable to the app.
+icon_folder = os.path.join(scratch, "src", "withicon")
+write(os.path.join(icon_folder, "plugin.json"), json.dumps({
+    "id": "demo.icon",
+    "name": "With Icon",
+    "entry": "main.py",
+    "panel": "ui.html",
+    "tab": {"title": "Board", "description": "A live board", "icon": "logo.png"},
+}))
+write(os.path.join(icon_folder, "main.py"), "def setup(api):\n    pass\n")
+write(os.path.join(icon_folder, "ui.html"), "<h1>Board</h1>")
+with open(os.path.join(icon_folder, "logo.png"), "wb") as handle:
+    handle.write(b"\x89PNG\r\n\x1a\n" + b"0" * 32)
+
+installed = result(plugins.install(icon_folder))
+check("a plugin with an image icon installs", installed.get("ok"), installed)
+
+listed = result(plugins.listing())["plugins"]
+row = next((p for p in listed if p["id"] == "demo.icon"), None)
+check("its tab survives the install", row and row["tab"]["title"] == "Board", row)
+check("with its own description", row["tab"]["description"] == "A live board", row)
+check("and the icon resolves to where it now lives",
+      os.path.isfile(row["tab"]["image"]), row["tab"])
+check("which is inside the installed plugin, not the staging folder",
+      "staging" not in row["tab"]["image"], row["tab"]["image"])
+
+saved = json.load(open(os.path.join(plugins.plugin_dir("demo.icon"), "plugin.json")))
+check("the absolute path is not written down",
+      "image" not in saved["tab"], saved["tab"])
+
+print("\n== a tab needs something to open ==")
+bad = os.path.join(scratch, "src", "tabnopanel")
+write(os.path.join(bad, "plugin.json"), json.dumps({
+    "id": "demo.tabnopanel", "name": "No Panel", "entry": "main.py",
+    "tab": {"title": "Nowhere"},
+}))
+write(os.path.join(bad, "main.py"), "def setup(api):\n    pass\n")
+refused = result(plugins.install(bad))
+check("a tab without a panel is refused", not refused.get("ok"), refused)
+check("and says why", "panel" in refused.get("error", ""), refused)
+
+missing = os.path.join(scratch, "src", "tabnoicon")
+write(os.path.join(missing, "plugin.json"), json.dumps({
+    "id": "demo.tabnoicon", "name": "Missing Icon", "entry": "main.py",
+    "panel": "ui.html", "tab": {"title": "Gone", "icon": "absent.png"},
+}))
+write(os.path.join(missing, "main.py"), "def setup(api):\n    pass\n")
+write(os.path.join(missing, "ui.html"), "<h1>x</h1>")
+refused = result(plugins.install(missing))
+check("an icon that is not there is refused", not refused.get("ok"), refused)
 
 loaded = result(plugins.load("demo.notes"))
 check("the folder plugin loads", loaded.get("ok"), loaded)

@@ -79,7 +79,7 @@ running, and housekeeping that touches nothing you wrote.
 ## Just want to try it
 
 A ready-to-install debug APK is in [`dist/`](dist/) - download
-[`PyCmd-1.3-debug.apk`](dist/PyCmd-1.3-debug.apk), open it on the phone, and
+[`PyCmd-1.4-debug.apk`](dist/PyCmd-1.4-debug.apk), open it on the phone, and
 allow the install when Android asks. It is signed with the standard debug key,
 so no keystore or store account is involved. See [dist/README.md](dist/README.md)
 for the details.
