@@ -34,6 +34,10 @@ data class InstalledPlugin(
     val loaded: Boolean,
     val error: String?,
     val broken: Boolean,
+    /** True when this plugin came out of the APK rather than from the user. */
+    val bundled: Boolean,
+    /** Sections this plugin adds to the app's own screens. */
+    val extensions: List<PluginExtension>,
 ) {
     val hasPanel: Boolean get() = !panel.isNullOrEmpty()
 
@@ -68,6 +72,24 @@ data class InstalledPlugin(
             json.optJSONArray("files")?.let { array ->
                 for (index in 0 until array.length()) files += array.optString(index)
             }
+            val extensions = mutableListOf<PluginExtension>()
+            json.optJSONArray("extends")?.let { array ->
+                for (index in 0 until array.length()) {
+                    val row = array.optJSONObject(index) ?: continue
+                    val tab = row.optString("tab")
+                    val panel = row.optString("panel")
+                    if (tab.isEmpty() || panel.isEmpty()) continue
+                    extensions += PluginExtension(
+                        tab = tab,
+                        title = row.optString("title"),
+                        description = row.optString("description"),
+                        panel = panel,
+                        height = row.optString("height").ifEmpty { "medium" },
+                        startsOpen = row.optBoolean("open"),
+                        image = row.optString("image"),
+                    )
+                }
+            }
 
             return InstalledPlugin(
                 id = json.optString("id"),
@@ -86,12 +108,33 @@ data class InstalledPlugin(
                 loaded = json.optBoolean("loaded"),
                 error = json.optString("error").takeIf { it.isNotEmpty() },
                 broken = json.optBoolean("broken"),
+                bundled = json.optBoolean("bundled"),
+                extensions = extensions,
             )
         }
     }
 }
 
 data class PluginCommand(val name: String, val help: String)
+
+/**
+ * A section a plugin adds to one of the app's own screens.
+ *
+ * The counterpart of a tab: a tab is a place of your own, this is a card
+ * inside a screen that already exists - which is what you want when the
+ * plugin is *about* that screen. `tab` is one of the names in
+ * `EXTENDABLE_TABS` in pycmd_plugins.py.
+ */
+data class PluginExtension(
+    val tab: String,
+    val title: String,
+    val description: String,
+    val panel: String,
+    val height: String,
+    val startsOpen: Boolean,
+    /** Absolute path of a picture the plugin ships for this section, if any. */
+    val image: String,
+)
 
 /**
  * Which installed plugins the user has switched on.

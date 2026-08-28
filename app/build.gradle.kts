@@ -29,8 +29,8 @@ android {
         applicationId = "com.expstudio.pycmd"
         minSdk = 24
         targetSdk = 35
-        versionCode = 5
-        versionName = "1.4"
+        versionCode = 6
+        versionName = "2.0"
 
         ndk {
             abiFilters += targetAbis
@@ -152,6 +152,7 @@ val syncDocs by tasks.registering(Copy::class) {
     from(rootProject.file("README.md"))
     from(rootProject.file("TUTORIAL.md"))
     from(rootProject.file("PLUGINS.md"))
+    from(rootProject.file("BUILTINS.md"))
     into(layout.projectDirectory.dir("src/main/assets/docs"))
 }
 

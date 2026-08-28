@@ -67,6 +67,8 @@ fun PluginsScreen(
     onToggleInstalled: (String, Boolean) -> Unit,
     onOpenPanel: (InstalledPlugin) -> Unit,
     onRemoveInstalled: (InstalledPlugin) -> Unit,
+    /** Sections plugins have added to this screen; empty when none are on. */
+    pluginSections: @Composable () -> Unit = {},
     onReadGuide: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -81,9 +83,11 @@ fun PluginsScreen(
     fun matches(vararg fields: String?): Boolean =
         needle.isEmpty() || fields.any { it?.lowercase()?.contains(needle) == true }
 
-    val shownInstalled = installed.filter {
-        matches(it.name, it.description, it.author, it.id)
-    }
+    val matching = installed.filter { matches(it.name, it.description, it.author, it.id) }
+    // Plugins that shipped in the APK are ours, not the user's. Listing them
+    // under "installed by you" was simply untrue.
+    val shownBundled = matching.filter { it.bundled }
+    val shownInstalled = matching.filterNot { it.bundled }
     val shownBuiltIn = Plugins.ALL.filter {
         matches(it.name, it.tagline, it.description, it.id)
     }
@@ -126,6 +130,24 @@ fun PluginsScreen(
             }
         }
 
+        if (shownBundled.isNotEmpty()) {
+            item {
+                Spacer(Modifier.height(4.dp))
+                SectionTitle("Ships with PyCmd (${shownBundled.size})")
+            }
+            items(shownBundled, key = { "bundled-${it.id}" }) { plugin ->
+                InstalledRow(
+                    plugin = plugin,
+                    isOn = plugin.id in installedEnabled,
+                    onToggle = { on -> onToggleInstalled(plugin.id, on) },
+                    onOpen = { onOpenPanel(plugin) },
+                    // Removing one would only bring it back on the next start,
+                    // which is a worse answer than not offering it.
+                    onRemove = null,
+                )
+            }
+        }
+
         if (shownInstalled.isNotEmpty()) {
             item {
                 Spacer(Modifier.height(4.dp))
@@ -164,7 +186,7 @@ fun PluginsScreen(
             }
         }
 
-        if (shownBuiltIn.isEmpty() && shownInstalled.isEmpty()) {
+        if (shownBuiltIn.isEmpty() && shownInstalled.isEmpty() && shownBundled.isEmpty()) {
             item {
                 EmptyState(
                     icon = PyIcons.Search,
@@ -173,6 +195,8 @@ fun PluginsScreen(
                 )
             }
         }
+
+        item { pluginSections() }
 
         if (needle.isEmpty()) {
             item {
@@ -337,7 +361,8 @@ private fun InstalledRow(
     isOn: Boolean,
     onToggle: (Boolean) -> Unit,
     onOpen: () -> Unit,
-    onRemove: () -> Unit,
+    /** Null for a plugin that ships in the APK: it would only come back. */
+    onRemove: (() -> Unit)?,
 ) {
     var expanded by remember { mutableStateOf(false) }
 
@@ -351,7 +376,14 @@ private fun InstalledRow(
                         fontWeight = FontWeight.Medium,
                     )
                     Spacer(Modifier.width(8.dp))
-                    StatusChip("installed", MaterialTheme.colorScheme.tertiary)
+                    StatusChip(
+                        if (plugin.bundled) "built in" else "installed",
+                        if (plugin.bundled) {
+                            MaterialTheme.colorScheme.primary
+                        } else {
+                            MaterialTheme.colorScheme.tertiary
+                        },
+                    )
                     if (plugin.loaded) {
                         Spacer(Modifier.width(6.dp))
                         StatusChip("running", MaterialTheme.colorScheme.primary)
@@ -442,13 +474,15 @@ private fun InstalledRow(
                 { expanded = !expanded },
                 Modifier.weight(1f),
             )
-            IconButton(onClick = onRemove, modifier = Modifier.size(40.dp)) {
-                Icon(
-                    PyIcons.Delete,
-                    contentDescription = "Remove ${plugin.name}",
-                    tint = MaterialTheme.colorScheme.error,
-                    modifier = Modifier.size(19.dp),
-                )
+            if (onRemove != null) {
+                IconButton(onClick = onRemove, modifier = Modifier.size(40.dp)) {
+                    Icon(
+                        PyIcons.Delete,
+                        contentDescription = "Remove ${plugin.name}",
+                        tint = MaterialTheme.colorScheme.error,
+                        modifier = Modifier.size(19.dp),
+                    )
+                }
             }
         }
     }

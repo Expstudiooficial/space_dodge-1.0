@@ -71,8 +71,15 @@ def plugin_dir(plugin_id: str) -> str:
 
 # ----------------------------------------------------------------- installing
 
-def install(source: str, source_name: str = "") -> str:
-    """Installs from a file, a folder or a zip. Returns a JSON result."""
+def install(source: str, source_name: str = "", bundled: str = "") -> str:
+    """Installs from a file, a folder or a zip. Returns a JSON result.
+
+    `bundled` marks a plugin that came out of the APK rather than from the
+    user. It changes nothing about how the plugin runs - it is still ordinary
+    Python with the app's own powers - but the list has to be able to say
+    which is which, because "installed by you" was a lie for the ones we put
+    there ourselves.
+    """
     try:
         manifest, staged = _stage(source, source_name)
     except PluginError as error:
@@ -92,7 +99,16 @@ def install(source: str, source_name: str = "") -> str:
         return _json({"ok": False, "error": f"could not save the plugin: {error}"})
 
     manifest["installed_at"] = int(time.time())
+    manifest["bundled"] = bool(bundled) and bundled != "0"
     _write_manifest(target, manifest)
+
+    # Re-read from where it now lives. The manifest in hand was validated in
+    # the staging folder, so anything resolved to an absolute path - a tab or
+    # section icon - still points at a folder that has just been moved away.
+    try:
+        manifest = read_manifest(target)
+    except PluginError:
+        pass
     return _json({"ok": True, "replaced": replaced, "manifest": manifest})
 
 
@@ -262,6 +278,7 @@ def _validate(manifest: dict, folder: str) -> dict:
     manifest.setdefault("author", "")
     manifest.setdefault("description", "")
     manifest["description"] = str(manifest["description"])[:600]
+    manifest["bundled"] = bool(manifest.get("bundled"))
 
     entry = manifest.get("entry") or "main.py"
     manifest["entry"] = entry
@@ -307,6 +324,8 @@ def _validate(manifest: dict, folder: str) -> dict:
     else:
         manifest.pop("tab", None)
 
+    manifest["extends"] = _validate_extends(manifest.get("extends"), manifest, folder)
+
     commands = []
     for command in manifest.get("commands") or []:
         if isinstance(command, str):
@@ -332,6 +351,82 @@ def _is_image_name(value: str) -> bool:
     return value.lower().endswith(TAB_IMAGES)
 
 
+# Screens a plugin may add a section to. Not an open list on purpose: a name
+# that does not exist would fail silently, and a plugin author would have no
+# way to tell a typo from a section that simply never renders.
+#
+# The console and the editor are absent because both are a WebView filling the
+# screen, with nowhere a card could go that would not be in the way. A plugin
+# reaches those two the ways that already exist: console commands, api.print,
+# and the file events.
+EXTENDABLE_TABS = (
+    "files", "servers", "packages", "downloads",
+    "plugins", "system", "debug", "guides",
+)
+
+EXTENSION_HEIGHTS = ("short", "medium", "tall")
+
+
+def _validate_extends(raw, manifest: dict, folder: str) -> list:
+    """Checks the sections a plugin wants to add to the app's own tabs.
+
+    This is the other half of `tab`. A tab is a place of your own; an
+    extension is a section inside a screen that already exists, which is what
+    you want when your plugin is *about* that screen rather than beside it.
+    """
+    if not raw:
+        return []
+    if isinstance(raw, dict):
+        raw = [raw]
+    if not isinstance(raw, (list, tuple)):
+        raise PluginError("'extends' must be a list of sections")
+
+    sections = []
+    for entry in raw[:8]:
+        if not isinstance(entry, dict):
+            raise PluginError("every entry in 'extends' must be an object")
+        tab = str(entry.get("tab") or "").strip().lower()
+        if tab not in EXTENDABLE_TABS:
+            raise PluginError(
+                f"'{tab}' is not a screen a plugin can extend; "
+                f"pick one of {', '.join(EXTENDABLE_TABS)}"
+            )
+        panel = str(entry.get("panel") or manifest.get("panel") or "").strip()
+        if not panel:
+            raise PluginError(f"the {tab} section needs a panel file")
+        if not os.path.isfile(_safe_join(folder, panel)):
+            raise PluginError(f"the panel file {panel!r} is not in the plugin")
+
+        height = str(entry.get("height") or "medium").strip().lower()
+        if height not in EXTENSION_HEIGHTS:
+            height = "medium"
+
+        # The same picture rule as a tab: a file the plugin ships, resolved
+        # fresh rather than written down, so it survives being installed.
+        icon = str(entry.get("icon") or "").strip()[:64]
+        image = ""
+        if icon and _is_image_name(icon):
+            candidate = _safe_join(folder, icon)
+            if not os.path.isfile(candidate):
+                raise PluginError(f"the section icon {icon!r} is not in the plugin")
+            image = candidate
+
+        sections.append({
+            "tab": tab,
+            "title": str(entry.get("title") or manifest["name"])[:40],
+            "description": str(entry.get("description") or "")[:140],
+            "panel": panel,
+            "height": height,
+            "icon": icon,
+            "image": image,
+            # Whether it starts open. A section that unfolds itself on a screen
+            # the user opened for another reason is a nuisance, so this is off
+            # unless the plugin asks.
+            "open": bool(entry.get("open")),
+        })
+    return sections
+
+
 def _safe_id(value: str) -> str:
     kept = [c for c in value.strip().lower() if c.isalnum() or c in "._-"]
     identifier = "".join(kept).strip("._-")
@@ -350,6 +445,11 @@ def _write_manifest(folder: str, manifest: dict) -> None:
     tab = saved.get("tab")
     if isinstance(tab, dict):
         saved["tab"] = {k: v for k, v in tab.items() if k != "image"}
+    sections = saved.get("extends")
+    if isinstance(sections, list):
+        saved["extends"] = [
+            {k: v for k, v in section.items() if k != "image"} for section in sections
+        ]
     with open(os.path.join(folder, MANIFEST_NAME), "w", encoding="utf-8") as handle:
         json.dump(saved, handle, indent=2)
 
@@ -710,10 +810,25 @@ def call_export(plugin_id: str, name: str, payload: str = "") -> str:
 
 
 def commands() -> str:
-    """Every command every loaded plugin has registered."""
+    """Every command every loaded plugin has registered.
+
+    Two plugins can want the same word. Dispatch gives it to whichever loaded
+    first, which is arbitrary and would be baffling from the outside - so the
+    clash is reported in the debug console rather than left to be discovered by
+    typing the command and getting the wrong plugin.
+    """
     rows = []
+    seen = {}
     for plugin_id, entry in _loaded.items():
         for name in entry["api"].command_names:
+            if name in seen:
+                _report(
+                    "warn",
+                    f"two plugins register the command {name!r}",
+                    f"{seen[name]} has it; {plugin_id} will not be reached by it",
+                )
+            else:
+                seen[name] = plugin_id
             rows.append({
                 "plugin": plugin_id,
                 "name": name,
@@ -722,6 +837,7 @@ def commands() -> str:
                      if c.get("name") == name),
                     "",
                 ),
+                "shadowed": name in seen and seen[name] != plugin_id,
             })
     return _json({"ok": True, "commands": rows})
 
@@ -847,8 +963,13 @@ a { color: #6FB3FF; }
 """
 
 
-def panel_html(plugin_id: str) -> str:
-    """The plugin's panel with the bridge and the house style injected."""
+def panel_html(plugin_id: str, panel_file: str = "") -> str:
+    """The plugin's panel with the bridge and the house style injected.
+
+    `panel_file` picks one of the plugin's other pages - a section it adds to
+    one of the app's own screens has its own file, and it is the same bridge
+    and the same stylesheet either way.
+    """
     plugin_id = _safe_id(plugin_id)
     folder = plugin_dir(plugin_id)
     try:
@@ -856,12 +977,18 @@ def panel_html(plugin_id: str) -> str:
     except PluginError as error:
         return _error_page(str(error))
 
-    panel = manifest.get("panel")
+    panel = panel_file or manifest.get("panel")
     if not panel:
         return _error_page(f"{manifest['name']} has no panel to show.")
+    try:
+        resolved = _safe_join(folder, panel)
+    except PluginError as error:
+        return _error_page(str(error))
+    if not os.path.isfile(resolved):
+        return _error_page(f"{panel} is not in {manifest['name']}.")
 
     try:
-        with open(os.path.join(folder, panel), "r", encoding="utf-8") as handle:
+        with open(resolved, "r", encoding="utf-8") as handle:
             body = handle.read()
     except OSError as error:
         return _error_page(f"could not read {panel}: {error}")

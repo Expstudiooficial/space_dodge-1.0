@@ -1,6 +1,5 @@
 package com.expstudio.pycmd.ui
 
-import android.graphics.BitmapFactory
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -26,14 +25,11 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.ImageBitmap
-import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.expstudio.pycmd.plugins.InstalledPlugin
-import java.io.File
 
 /**
  * The destinations that do not fit in the bottom bar.
@@ -160,7 +156,7 @@ fun MoreScreen(
  */
 @Composable
 private fun PluginTabRow(plugin: InstalledPlugin, onClick: () -> Unit) {
-    val image = remember(plugin.tabImage) { loadTabImage(plugin.tabImage) }
+    val image = remember(plugin.tabImage) { loadPluginImage(plugin.tabImage) }
 
     PyCard(contentPadding = PaddingValues(0.dp)) {
         Row(
@@ -202,40 +198,6 @@ private fun PluginTabRow(plugin: InstalledPlugin, onClick: () -> Unit) {
             StatusChip("plugin", MaterialTheme.colorScheme.tertiary)
         }
     }
-}
-
-/** The icon is drawn at 24dp; decoding anything much larger is wasted work. */
-private const val ICON_TARGET_PIXELS = 128
-
-/**
- * Decodes a plugin's own icon file, or gives up quietly.
- *
- * The file comes from a plugin, so its size is not ours to assume. It is
- * measured first and decoded scaled down, because a plugin that ships a photo
- * by mistake should cost a small bitmap and a shrug rather than a stutter on
- * the More screen every time it is opened.
- */
-private fun loadTabImage(path: String): ImageBitmap? {
-    if (path.isBlank()) return null
-    // An SVG is not something BitmapFactory can read, and pulling in a vector
-    // loader for a 24dp icon is not worth it; those fall back to the glyph.
-    if (path.lowercase().endsWith(".svg")) return null
-    val file = File(path)
-    if (!file.isFile || file.length() > 4L * 1024 * 1024) return null
-
-    return runCatching {
-        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-        BitmapFactory.decodeFile(path, bounds)
-        val largest = maxOf(bounds.outWidth, bounds.outHeight)
-        if (largest <= 0) return null
-
-        var sample = 1
-        while (largest / sample > ICON_TARGET_PIXELS * 2) sample *= 2
-
-        BitmapFactory
-            .decodeFile(path, BitmapFactory.Options().apply { inSampleSize = sample })
-            ?.asImageBitmap()
-    }.getOrNull()
 }
 
 @Composable

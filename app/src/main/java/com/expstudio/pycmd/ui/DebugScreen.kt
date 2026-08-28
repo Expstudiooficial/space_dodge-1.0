@@ -57,6 +57,8 @@ fun DebugScreen(
     onSave: () -> Unit,
     exportText: () -> String,
     modifier: Modifier = Modifier,
+    /** Sections plugins have added to this screen; empty when none are on. */
+    pluginSections: @Composable () -> Unit = {},
 ) {
     var minLevel by remember { mutableStateOf(LogLevel.DEBUG) }
     var query by remember { mutableStateOf("") }
@@ -184,16 +186,23 @@ fun DebugScreen(
         Divider()
 
         if (visible.isEmpty()) {
-            EmptyState(
-                icon = PyIcons.BugReport,
-                title = if (entries.isEmpty()) "Nothing logged yet" else "Nothing matches",
-                hint = if (entries.isEmpty()) {
-                    "Errors, server events and interpreter messages appear here."
-                } else {
-                    "Try a lower level or a different search."
-                },
-                modifier = Modifier.padding(top = 40.dp),
-            )
+            Column(Modifier.fillMaxSize()) {
+                EmptyState(
+                    icon = PyIcons.BugReport,
+                    title = if (entries.isEmpty()) "Nothing logged yet" else "Nothing matches",
+                    hint = if (entries.isEmpty()) {
+                        "Errors, server events and interpreter messages appear here."
+                    } else {
+                        "Try a lower level or a different search."
+                    },
+                    modifier = Modifier.padding(top = 40.dp),
+                )
+                // Also here: a plugin's section should not disappear just
+                // because there is nothing in the log to scroll past.
+                Column(Modifier.padding(horizontal = 14.dp, vertical = 10.dp)) {
+                    pluginSections()
+                }
+            }
         } else {
             LazyColumn(
                 state = listState,
@@ -207,6 +216,12 @@ fun DebugScreen(
                         onToggle = { expanded = if (expanded == entry.id) null else entry.id },
                         onCopy = { onCopy(entry.toPlainText()) },
                     )
+                }
+
+                item {
+                    Column(Modifier.padding(horizontal = 14.dp, vertical = 10.dp)) {
+                        pluginSections()
+                    }
                 }
             }
         }

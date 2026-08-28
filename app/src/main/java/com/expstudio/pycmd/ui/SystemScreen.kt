@@ -53,6 +53,8 @@ fun SystemScreen(
     onClearPycache: () -> Unit,
     onExportLog: () -> Unit,
     modifier: Modifier = Modifier,
+    /** Sections plugins have added to this screen; empty when none are on. */
+    pluginSections: @Composable () -> Unit = {},
 ) {
     LazyColumn(
         modifier.fillMaxSize(),
@@ -95,6 +97,8 @@ fun SystemScreen(
         }
 
         item { SectionTitle("Housekeeping") }
+        item { pluginSections() }
+
         item {
             PyCard {
                 Text(

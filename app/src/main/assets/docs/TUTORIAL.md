@@ -148,9 +148,9 @@ Python packages (the vast majority of PyPI) install fine.
 
 Tap **Servers**. The form at the top is the whole thing:
 
-1. Pick **Serve a folder** or **Run a script**.
-2. Tap **Choose**. You land in Files with a banner. For a folder, open the one
-   you want and tap **Use this folder**; for a script, just tap the `.py` file.
+1. Pick **Serve a folder** or **Run a file**.
+2. Tap **Choose**. You land in Files with a banner. Tap any file to use it, or
+   open a folder and tap **Use this folder** — both work in either mode.
 3. Set the **port** — 8000 is fine. If it is taken, **Free one** finds the next
    one that isn't.
 4. Optionally name it, and decide whether it is reachable on Wi-Fi or only on
@@ -159,6 +159,21 @@ Tap **Servers**. The form at the top is the whole thing:
 
 Run stays greyed out until the form makes sense, and tells you what is missing
 underneath.
+
+**It runs more than Python.** The form says what pressing Run will do before it
+does it:
+
+| You pick | What happens |
+|---|---|
+| `.py` | Runs as a background script on its own thread |
+| `.c`, `.go`, `.rs` | Runs on the interpreter built into the app |
+| `.js` | Runs in the device's own JavaScript engine |
+| `.html`, `.css`, `.md` | Serves the folder it sits in, opening on that page |
+| a folder | Serves it |
+| `.java`, `.cpp`, `.ts` | Refused up front, with the reason — no toolchain can run these here |
+
+A running server has a **View** button that opens it in the preview, so you can
+look at your own site without leaving the app.
 
 You land straight in that server's own **console**. It shows what the server
 printed, and with "Log each request" on you will see every hit as it happens:
@@ -188,6 +203,14 @@ it either way. Your port comes back regardless.
 Try it: run `loop_forever.py` as a script server, then Kill it.
 
 **Kill all** at the top of the list is the panic button, behind a confirmation.
+
+Kill also works on a server that has frozen in its own `accept()` — it knocks
+on the port to make the blocking call return, which is the only way an
+exception can land inside one.
+
+**Turn on Server Pro** (More → Plugins → *Ships with PyCmd*) and the Servers
+tab grows a live board: whether each port really answers, restart, a free-port
+finder, and the commands `servers`, `serve`, `restart`, `shut` and `ports`.
 
 **Try the Flask example:** set **Run a script**, choose `flask_api.py`, set the
 port to 5000, Run. Then visit `http://<your-phone-ip>:5000/` from another
@@ -294,9 +317,41 @@ shows what it logged).
 
 ---
 
-## 8. Plugins you write yourself
+## 8. The plugins that ship with it
 
-**More → Plugins**. Two examples are already in `examples/plugins`.
+**More → Plugins**. Three sit under **Ships with PyCmd**, installed for you and
+switched **off**:
+
+* **Server Pro** — turns the Servers tab into a board you can work in.
+* **Cloud** — Supabase and Firebase, from the console, a panel, or your own
+  scripts.
+* **Scheduler** — run a script again every so often.
+
+Turn Cloud on, open **More → Cloud**, and connect a project. Then, from the
+console:
+
+```
+sb select notes 5
+fb get notes/today
+```
+
+or from a script — the same project, signed in as the same user:
+
+```python
+import pycmd_cloud
+
+sb = pycmd_cloud.supabase()
+for row in sb.table("notes").select("*").eq("done", False).limit(5).run():
+    print(row["text"])
+```
+
+**Guides → The plugins that ship with it** lists everything both kinds can do.
+
+---
+
+## 9. Plugins you write yourself
+
+Two examples are already in `examples/plugins`.
 
 1. Scroll to **Install a plugin → From the workspace**.
 2. Read the warning — a plugin is not sandboxed and runs with everything the
@@ -307,13 +362,18 @@ shows what it logged).
 5. Install `hello-panel` the same way, turn it on, and press **Open**. That is
    a plugin's own screen, with its buttons calling its Python.
 
+A plugin can also put a card of its own **inside** one of the app's screens —
+that is how Server Pro reaches the Servers tab and Cloud reaches Files — and it
+can publish a row in **More** with its own name, description and picture.
+Neither needs the app to change.
+
 **Plugins → How do I write one?** opens the full guide on the phone:
 the manifest, the API, the events, the panel bridge, four complete plugins,
 and a prompt you can paste into an AI to have one written for you.
 
 ---
 
-## 9. When something goes wrong, it offers a fix
+## 10. When something goes wrong, it offers a fix
 
 Make a file called `index2.html` in a folder, then a script next to it:
 
@@ -330,13 +390,23 @@ Run it. The console says:
 [fix] Type yes to do it, no to leave it alone.
 ```
 
-Type `no` and nothing happens. Type `yes` and the rename is done. The same
-offers appear for a package that is not installed, a port already in use, and
-a served folder with no index page. It never changes anything without a yes.
+Type `no` and it says *OK — no fixing today* and leaves the error alone. Type
+`yes` and it tells you what it is doing while it does it:
+
+```
+[fix] OK - renaming index2.html to index.html, so the code finds what it asks for.
+[fix] Renamed index2.html to index.html. Start it again.
+```
+
+The same offers appear for a package that is not installed — where it says *OK
+— downloading pygame from PyPI* and keeps talking while it downloads — a port
+already in use, and a served folder with no index page. Nothing changes without
+a yes, and answering never blocks the app: the work happens on its own thread,
+so Stop and Kill keep working throughout.
 
 ---
 
-## 10. Debug console — when something breaks
+## 11. Debug console — when something breaks
 
 Tap the **bug icon** in the top bar, from any tab. This is not your script's
 output — it is everything around it: interpreter startup, server lifecycles,

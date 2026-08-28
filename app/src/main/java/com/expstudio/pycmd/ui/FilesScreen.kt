@@ -71,6 +71,8 @@ fun FilesScreen(
     pickingFor: ServerKind? = null,
     onUseAsTarget: (File) -> Unit = {},
     onCancelPicking: () -> Unit = {},
+    /** Sections plugins have added to this screen; empty when none are on. */
+    pluginSections: @Composable () -> Unit = {},
 ) {
     var dialog by remember { mutableStateOf<FileDialog?>(null) }
 
@@ -239,6 +241,12 @@ fun FilesScreen(
                         onExportFolder = { onExportFolder(entry.file) },
                         onSaveToDevice = { onSaveToDevice(entry.file) },
                     )
+                }
+
+                item {
+                    Column(Modifier.padding(horizontal = 14.dp, vertical = 10.dp)) {
+                        pluginSections()
+                    }
                 }
             }
         }
@@ -466,7 +474,11 @@ private fun PickerBanner(
     ) {
         Column(Modifier.weight(1f)) {
             Text(
-                text = if (kind == ServerKind.STATIC) "Choose a folder to serve" else "Tap the script to run",
+                text = if (kind == ServerKind.STATIC) {
+                    "Choose a folder to serve"
+                } else {
+                    "Tap the file to run, or use this folder"
+                },
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onPrimaryContainer,
             )
@@ -474,13 +486,16 @@ private fun PickerBanner(
                 text = if (kind == ServerKind.STATIC) {
                     "Open the folder you want, then confirm."
                 } else {
-                    "Any .py file in this workspace."
+                    "Any file the app can run, a page to serve, or a whole folder."
                 },
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onPrimaryContainer,
             )
         }
-        if (kind == ServerKind.STATIC && directory != null) {
+        if (directory != null) {
+            // Also offered while picking a file: a folder is a perfectly good
+            // thing to run - it gets served - and making the user cancel and
+            // switch modes to say so would be a pointless detour.
             TextButton(onClick = { onUse(directory) }) { Text("Use this folder") }
         }
         TextButton(onClick = onCancel) { Text("Cancel") }

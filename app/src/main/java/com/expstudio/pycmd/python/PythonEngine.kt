@@ -150,6 +150,7 @@ object PythonEngine {
     private lateinit var tools: PyObject
     private lateinit var preview: PyObject
     private lateinit var pluginRuntime: PyObject
+    private lateinit var cloudRuntime: PyObject
 
     private lateinit var appContext: Context
     private lateinit var workspaceDir: File
@@ -287,6 +288,7 @@ object PythonEngine {
             tools = python.getModule("pycmd_tools")
             preview = python.getModule("pycmd_preview")
             pluginRuntime = python.getModule("pycmd_plugins")
+            cloudRuntime = python.getModule("pycmd_cloud")
 
             val version = runtime.callAttr(
                 "configure",
@@ -297,6 +299,10 @@ object PythonEngine {
             packages.callAttr("configure", sitePackagesDir.absolutePath)
             downloadsDir = File(appContext.filesDir, "downloads").apply { mkdirs() }
             downloads.callAttr("configure", downloadsDir.absolutePath, workspaceDir.absolutePath)
+            // Cloud keys live in the app's own storage, never in the
+            // workspace: the workspace is the folder people export and share.
+            val cloudDir = File(appContext.filesDir, "cloud").apply { mkdirs() }
+            cloudRuntime.callAttr("configure_storage", cloudDir.absolutePath)
             pluginsDir = File(appContext.filesDir, "plugins").apply { mkdirs() }
             pluginRuntime.callAttr(
                 "configure", pluginsDir.absolutePath, workspaceDir.absolutePath, pluginHost,
@@ -882,8 +888,11 @@ object PythonEngine {
      * that hangs on load must not take the console's thread with it, and the
      * user needs the list to keep answering so they can switch the thing off.
      */
-    suspend fun installPlugin(path: String, sourceName: String = ""): JSONObject =
-        pluginCall("install", path, sourceName)
+    suspend fun installPlugin(
+        path: String,
+        sourceName: String = "",
+        bundled: Boolean = false,
+    ): JSONObject = pluginCall("install", path, sourceName, if (bundled) "1" else "")
 
     suspend fun listPlugins(): JSONObject = pluginCall("listing")
 
@@ -920,8 +929,9 @@ object PythonEngine {
     /** Where a plugin's files live, so its panel can load its own assets. */
     fun pluginDirectory(id: String): File = File(pluginsDir, id)
 
-    suspend fun pluginPanel(id: String): String = withContext(controlDispatcher) {
-        runCatching { pluginRuntime.callAttr("panel_html", id).toString() }
+    suspend fun pluginPanel(id: String, panelFile: String = ""): String =
+        withContext(controlDispatcher) {
+        runCatching { pluginRuntime.callAttr("panel_html", id, panelFile).toString() }
             .getOrElse { error ->
                 DebugLog.error(TAG_PLUGIN, "panel failed for $id", error)
                 "<h2>That panel could not be built.</h2>"

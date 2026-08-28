@@ -52,6 +52,8 @@ fun PackagesScreen(
     onInstall: (String, String?) -> Unit,
     onUninstall: (String) -> Unit,
     modifier: Modifier = Modifier,
+    /** Sections plugins have added to this screen; empty when none are on. */
+    pluginSections: @Composable () -> Unit = {},
 ) {
     var query by remember { mutableStateOf("") }
     var pendingRemoval by remember { mutableStateOf<String?>(null) }
@@ -191,7 +193,9 @@ fun PackagesScreen(
                 }
             }
 
-            item {
+            item { pluginSections() }
+
+        item {
                 Spacer(Modifier.height(8.dp))
                 PyCard {
                     Text(

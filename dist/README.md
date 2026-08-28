@@ -1,17 +1,56 @@
 # Prebuilt APK
 
-`PyCmd-1.4-debug.apk` — ready to install, nothing else needed.
+`PyCmd-2.0-debug.apk` — ready to install, nothing else needed.
 
 | | |
 |---|---|
 | Package | `com.expstudio.pycmd.debug` |
-| Version | 1.4-debug |
+| Version | 2.0-debug |
 | Size | 33 MB |
 | Signed with | the standard Android debug key |
 | Works on | Android 7.0 (API 24) and newer, **arm64-v8a** (every phone since about 2016) |
 | SHA-256 | see [SHA256SUMS.txt](SHA256SUMS.txt) |
 
-## What is new in 1.4
+## What is new in 2.0
+
+**Plugins can change the app, not just sit beside it.** A plugin already had a
+tab of its own; now it can also put a card of its own **inside** one of the
+app's existing screens - Files, Servers, Packages, Downloads, Plugins, System,
+Debug or Guides - with its own page, its own icon and its own height. Nothing
+about the app has to change to make room. That is how Server Pro reaches the
+Servers tab and how Cloud reaches Files.
+
+**Three plugins now ship with it**, installed on first run and switched off
+until you want them, listed under *Ships with PyCmd* instead of pretending you
+installed them:
+
+* **Server Pro** - a live board in the Servers tab with a health check that
+  says whether each port really answers, restart, a free-port finder, an
+  index-page writer, and the commands `servers`, `serve`, `restart`, `shut`
+  and `ports`.
+* **Cloud** - Supabase and Firebase over their REST APIs, with nothing to
+  install.
+* **Scheduler** - run a script again every so often: `every 300 backup.py`.
+
+**Supabase and Firebase, properly.** 116 operations across the two: PostgREST
+selects, filters, inserts, upserts, counts and Postgres functions; GoTrue
+sign-up, sign-in, OTP and the admin endpoints; Supabase Storage and edge
+functions; Firestore documents, typed values and structured queries; Identity
+Toolkit; the Realtime Database; Firebase Storage. Connect a project once in
+More → Cloud and a script, a server, a console command and the panel all reach
+it as the same user. The keys live in the app's own storage, never in the
+workspace, so exporting your files never carries them along. Realtime
+subscriptions are the one honest gap - both are WebSocket protocols and
+`urllib` does not speak WebSocket, so there is a gap rather than a fake.
+
+**The Servers tab does more.** It takes a folder as happily as a file, and a
+running server has a **View** button that opens it in the preview.
+
+**A new guide**, on the phone and in the repo: *The plugins that ship with it*
+covers every built-in switch and every bundled plugin, and the difference
+between the two.
+
+## What was new in 1.4
 
 **The Servers tab runs anything, not just Python.** A C, Go or Rust file goes
 to its interpreter; a `.js` file to the device's own JavaScript engine; an
@@ -117,10 +156,10 @@ on, its console command answered, and its panel called back into its own
 Python. The APK here is that source built for arm64 instead, which changes
 the CPython binaries and nothing else.
 
-553 checks run before any of this is committed: `test_runtime.py` (145),
-`test_go.py` (92), `test_plugins.py` (74), `test_rust.py` (73), `test_c.py`
-(54), `test_js.js` (43), `test_doctor.py` (37), `test_preview.py` (23) and
-`test_editor.js` (12). Each language check is a real program paired with the
+677 checks run before any of this is committed: `test_runtime.py` (145),
+`test_go.py` (92), `test_plugins.py` (89), `test_rust.py` (73), `test_cloud.py`
+(68), `test_c.py` (54), `test_js.js` (43), `test_bundled.py` (41),
+`test_doctor.py` (37), `test_preview.py` (23) and `test_editor.js` (12). Each language check is a real program paired with the
 output the real compiler produces. The rest go after the things that are
 awkward to be sure of by looking: a script wedged in `accept()` is started for
 real and killed, to prove the port comes back; the preview checks fetch pages
@@ -129,7 +168,15 @@ highlighter runs, so a change that makes typing slow again fails rather than
 being noticed on a phone weeks later. `tools/run-tests.sh` runs the lot, then
 a debug build and Android Lint.
 
-The 1.4 changes were verified by those checks and by Lint on the built APK,
+`test_cloud.py` runs a local HTTP server that plays Supabase and Firebase,
+records exactly what the client sent, and answers the way the real APIs do -
+which is what makes the URL shapes, the PostgREST filter syntax and Firestore's
+typed values checkable rather than hopeful. `test_bundled.py` installs the three
+bundled plugins the way the app does and drives them: it starts a real server
+and restarts it through Server Pro, schedules a real job, and renders every
+panel.
+
+The 2.0 changes were verified by those checks and by Lint on the built APK,
 not on an emulator: this build machine has no hardware virtualisation, so no
 emulator could be started for it.
 
@@ -157,7 +204,7 @@ every tab with things to paste in and try.
 ## Installing over USB
 
 ```bash
-adb install -r dist/PyCmd-1.4-debug.apk
+adb install -r dist/PyCmd-2.0-debug.apk
 ```
 
 ## Checking the download

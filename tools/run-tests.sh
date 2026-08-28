@@ -22,10 +22,12 @@ echo "== Language interpreters =="
 "$PYTHON" tools/test_rust.py
 
 echo
-echo "== Plugins, doctor, preview =="
+echo "== Plugins, doctor, preview, cloud, bundled =="
 "$PYTHON" tools/test_plugins.py
 "$PYTHON" tools/test_doctor.py
 "$PYTHON" tools/test_preview.py
+"$PYTHON" tools/test_cloud.py
+"$PYTHON" tools/test_bundled.py
 
 echo
 echo "== WebView JavaScript =="

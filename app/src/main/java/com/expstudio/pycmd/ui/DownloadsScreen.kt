@@ -58,6 +58,8 @@ fun DownloadsScreen(
     onExport: () -> Unit,
     onSaveToDevice: (DownloadedFile) -> Unit,
     modifier: Modifier = Modifier,
+    /** Sections plugins have added to this screen; empty when none are on. */
+    pluginSections: @Composable () -> Unit = {},
 ) {
     var url by remember { mutableStateOf("") }
     var pendingDelete by remember { mutableStateOf<DownloadedFile?>(null) }
@@ -168,6 +170,8 @@ fun DownloadsScreen(
                 )
             }
         }
+
+        item { pluginSections() }
 
         item {
             Spacer(Modifier.height(6.dp))

@@ -1,0 +1,89 @@
+<h2>Cloud storage</h2>
+
+<div class="card">
+  <p>
+    <button id="pick-supabase" class="pick on">Supabase</button>
+    <button id="pick-firebase" class="pick">Firebase</button>
+  </p>
+  <p id="bucket-row">
+    <input id="bucket" placeholder="bucket">
+  </p>
+  <p>
+    <input id="local" placeholder="workspace file, e.g. notes/a.md">
+    <input id="remote" placeholder="name in the bucket (optional)">
+  </p>
+  <p>
+    <button id="up">Upload</button>
+    <button id="down">Download into the workspace</button>
+    <button id="list">List</button>
+  </p>
+  <p id="result">—</p>
+  <pre id="listing"></pre>
+</div>
+
+<style>
+  .pick { opacity: .55; }
+  .pick.on { opacity: 1; font-weight: 600; }
+  input { width: 100%; }
+</style>
+
+<script>
+  const $ = (id) => document.getElementById(id);
+  let provider = 'supabase';
+
+  async function call(name, payload) {
+    try {
+      return await pycmd.call(name, payload || {});
+    } catch (error) {
+      return { ok: false, error: error.message };
+    }
+  }
+
+  function setProvider(next) {
+    provider = next;
+    $('pick-supabase').classList.toggle('on', next === 'supabase');
+    $('pick-firebase').classList.toggle('on', next === 'firebase');
+    // Firebase Storage has one bucket per project, named in the settings.
+    $('bucket-row').hidden = next === 'firebase';
+  }
+
+  $('pick-supabase').onclick = () => setProvider('supabase');
+  $('pick-firebase').onclick = () => setProvider('firebase');
+
+  $('up').onclick = async () => {
+    $('result').textContent = 'uploading…';
+    const result = await call('upload', {
+      provider,
+      bucket: $('bucket').value.trim(),
+      local: $('local').value.trim(),
+      remote: $('remote').value.trim(),
+    });
+    $('result').textContent = result.ok ? 'Uploaded.' : result.error;
+  };
+
+  $('down').onclick = async () => {
+    $('result').textContent = 'downloading…';
+    const result = await call('download', {
+      provider,
+      bucket: $('bucket').value.trim(),
+      remote: $('remote').value.trim() || $('local').value.trim(),
+      local: $('local').value.trim(),
+    });
+    $('result').textContent = result.ok
+      ? `Saved ${result.result.bytes} bytes into the workspace.`
+      : result.error;
+  };
+
+  $('list').onclick = async () => {
+    $('result').textContent = 'listing…';
+    const result = await call('list_files', {
+      provider, bucket: $('bucket').value.trim(),
+    });
+    if (!result.ok) {
+      $('result').textContent = result.error;
+      return;
+    }
+    $('result').textContent = '';
+    $('listing').textContent = JSON.stringify(result.files || result.buckets, null, 2);
+  };
+</script>

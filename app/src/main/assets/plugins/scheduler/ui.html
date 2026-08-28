@@ -1,0 +1,73 @@
+<h2>Scheduled jobs</h2>
+
+<div class="card">
+  <p>
+    <input id="path" placeholder="script in the workspace, e.g. backup.py">
+  </p>
+  <p>
+    <input id="seconds" value="300" inputmode="numeric" style="width:6em"> seconds between runs
+  </p>
+  <p><button id="add">Schedule it</button> <button id="refresh">Refresh</button></p>
+  <p id="result">—</p>
+</div>
+
+<div id="jobs"></div>
+
+<div class="card">
+  <p style="opacity:.75;font-size:.85em">
+    Jobs run for as long as PyCmd is open. Android does not promise an app any
+    time in the background, so nothing here claims to survive being closed.
+  </p>
+</div>
+
+<script>
+  const $ = (id) => document.getElementById(id);
+  const escape = (t) => String(t ?? '').replace(/[&<>"]/g, (c) => (
+    { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+
+  async function call(name, payload) {
+    try { return await pycmd.call(name, payload || {}); }
+    catch (error) { return { ok: false, error: error.message }; }
+  }
+
+  async function refresh() {
+    const data = await call('jobs');
+    const rows = data.jobs || [];
+    if (!rows.length) {
+      $('jobs').innerHTML = '<div class="card"><p>Nothing is scheduled.</p></div>';
+      return;
+    }
+    $('jobs').innerHTML = rows.map((job) => `
+      <div class="card">
+        <p><strong>${escape(job.label)}</strong> <span style="opacity:.7">${escape(job.id)}</span></p>
+        <p>every ${job.every}s · ${job.runs} run${job.runs === 1 ? '' : 's'}
+           · ${job.failures} failed · next in ${job.next_in}s · ${escape(job.status)}</p>
+        ${job.error ? `<p style="color:#ff8a7a">${escape(job.error)}</p>` : ''}
+        <p>
+          <button data-run="${escape(job.id)}">Run now</button>
+          <button data-stop="${escape(job.id)}">Stop</button>
+        </p>
+      </div>`).join('');
+
+    for (const button of $('jobs').querySelectorAll('[data-run]')) {
+      button.onclick = async () => { await call('run_now', { id: button.dataset.run }); refresh(); };
+    }
+    for (const button of $('jobs').querySelectorAll('[data-stop]')) {
+      button.onclick = async () => { await call('remove', { id: button.dataset.stop }); refresh(); };
+    }
+  }
+
+  $('add').onclick = async () => {
+    $('result').textContent = 'scheduling…';
+    const result = await call('add', {
+      path: $('path').value.trim(),
+      seconds: Number($('seconds').value) || 300,
+    });
+    $('result').textContent = result.ok ? `Scheduled as ${result.id}.` : result.error;
+    refresh();
+  };
+
+  $('refresh').onclick = refresh;
+  refresh();
+  setInterval(refresh, 5000);
+</script>

@@ -102,6 +102,7 @@ wrapping directory if it finds one.
 | `entry` | no | The module PyCmd imports. Defaults to `main.py`. |
 | `panel` | no | An HTML file. Having one is what gives the plugin an **Open** button and a tab. |
 | `tab` | no | Publishes a place of your own in the **More** screen. Needs `panel` — the tab is what opens it. See below. |
+| `extends` | no | Puts a section of yours inside one of the app's **own** screens. See below. |
 | `commands` | no | Console commands, for the list and the help text. You still register the handler in code. |
 | `permissions` | no | `files`, `network`, `console`, `servers`, `packages`. **Documentation, not enforcement** — they are shown to the user so they know what to expect. Declare honestly. |
 
@@ -128,6 +129,43 @@ The row appears in **More**, under *From your plugins*, and only while the
 plugin is switched **on**. Tapping it opens your panel. A plugin with a `panel`
 but no `tab` still gets its **Open** button in the plugin list — the tab is for
 something you will come back to often enough to want it one tap away.
+
+### A section inside one of the app's own screens
+
+A tab is a place beside the app. `extends` is a card **inside** it, which is
+what you want when your plugin is *about* a screen that already exists — a
+server tool belongs in Servers, not next to it.
+
+```json
+"extends": [
+  {
+    "tab": "servers",
+    "title": "Server Pro",
+    "description": "Live board, health checks and restart",
+    "panel": "board.html",
+    "height": "tall",
+    "icon": "icon.png",
+    "open": true
+  }
+]
+```
+
+| Field | What it is |
+|---|---|
+| `tab` | Which screen. One of `files`, `servers`, `packages`, `downloads`, `plugins`, `system`, `debug`, `guides`. A name that is not on the list is refused at install time rather than silently never rendering. |
+| `panel` | The HTML file for this section. Defaults to the plugin's `panel`. |
+| `title`, `description` | The card's heading and its line of explanation. |
+| `height` | `short` (220dp), `medium` (400dp) or `tall` (620dp). |
+| `icon` | A picture in your plugin, same rules as a tab's. |
+| `open` | `true` to start expanded. Off by default: a screen someone opened for another reason should not rearrange itself. |
+
+You can list up to eight, on different screens. Sections only appear while the
+plugin is switched **on**, and the panel inside one is not built until it is
+opened, so a collapsed section costs a heading and nothing else.
+
+The console and the editor are not on the list. Both are a WebView filling the
+screen with nowhere a card could go that would not be in the way; reach those
+two with console commands, `api.print`, and the file events.
 
 For a single-file plugin, put the same object in the module as a `PLUGIN`
 dict:
@@ -267,6 +305,26 @@ def load(payload=None):
 An export takes one argument — whatever the panel passed, already decoded from
 JSON — and returns anything JSON can carry. If your export takes no argument,
 the panel can call it with none.
+
+### Supabase and Firebase
+
+`pycmd_cloud` ships with the app, so a plugin can reach either service without
+asking the user to install anything:
+
+```python
+import pycmd_cloud
+
+def setup(api):
+    @api.command("todo", help="todo - read the shared list")
+    def todo(argument):
+        rows = pycmd_cloud.supabase().table("todo").select("*").limit(10).run()
+        return "\n".join(row["text"] for row in rows)
+```
+
+It uses whatever project the user connected in **More → Cloud**, signed in as
+whoever they signed in as. If nothing is connected it raises `CloudError`, which
+is the right thing to catch and explain. [BUILTINS.md](BUILTINS.md) lists what
+both clients can do.
 
 ### Running your own file type
 
@@ -645,6 +703,11 @@ plugin.json / PLUGIN keys:
   version, author, description   optional strings
   entry        optional, default "main.py"
   panel        optional HTML file; having one gives the plugin an Open button
+  extends      optional, puts a card of yours inside one of the app's own
+               screens. A list of:
+               {"tab": "files|servers|packages|downloads|plugins|system|debug|guides",
+                "title": "...", "description": "...", "panel": "section.html",
+                "height": "short|medium|tall", "icon": "icon.png", "open": false}
   tab          optional, publishes a row in the app's More screen. Needs panel.
                {"title": "<=24 chars",
                 "description": "<=120 chars, one line",
@@ -679,6 +742,14 @@ THE API
   @api.export                             -> callable from the panel; f(payload) -> JSON
   @api.export(name="other_name")
   @api.on("event")                        -> handler(event: dict)
+
+SUPABASE AND FIREBASE (optional)
+  import pycmd_cloud
+  sb = pycmd_cloud.supabase(); fb = pycmd_cloud.firebase()
+  sb.table("t").select("*").eq("done", False).limit(10).run() / .insert / .update
+  sb.auth.sign_in(email, pw) | sb.storage.upload_file(bucket, name, path)
+  fb.firestore.get/set/update/delete/list/query | fb.rtdb.get/set/push
+  Uses the project the user connected in More -> Cloud. Raises CloudError.
 
 RUNNING YOUR OWN FILE TYPE (optional)
   import pycmd_servers

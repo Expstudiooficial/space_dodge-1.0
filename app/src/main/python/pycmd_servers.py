@@ -373,6 +373,10 @@ def how_to_run(path: str) -> dict:
     The Servers tab asks first so it can say so in the form, rather than
     starting something and explaining afterwards.
     """
+    if os.path.isdir(path):
+        return {"how": "serve", "language": "Folder",
+                "note": f"Serves {os.path.basename(path) or 'this folder'} over HTTP."}
+
     extension = os.path.splitext(path)[1].lower()
 
     if extension in (".py", ".pyw"):
@@ -432,8 +436,18 @@ def start_file(
     plugin has taught the app to run.
     """
     path = os.path.abspath(path)
+    if os.path.isdir(path):
+        # Pointing the runner at a folder means "serve this", which is what
+        # anyone who typed a folder name meant. Refusing it on a technicality
+        # would only send them to the other half of the same form.
+        return start_static(
+            path,
+            port=port or suggest_port(8000, host),
+            host=host,
+            label=label or os.path.basename(path) or "workspace",
+        )
     if not os.path.isfile(path):
-        return {"ok": False, "error": f"No such file: {path}"}
+        return {"ok": False, "error": f"No such file or folder: {path}"}
 
     plan = how_to_run(path)
 

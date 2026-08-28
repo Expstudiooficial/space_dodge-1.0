@@ -406,6 +406,13 @@ fun PyCmdRoot(viewModel: MainViewModel = viewModel()) {
                     pickingFor = pickingFor,
                     onUseAsTarget = viewModel::useAsLaunchTarget,
                     onCancelPicking = viewModel::cancelPicking,
+                
+                    pluginSections = {
+                        PluginSections(
+                            sectionsFor(Tab.FILES, installedPlugins, installedEnabled),
+                            viewModel,
+                        )
+                    },
                 )
 
                 Tab.PACKAGES -> PackagesScreen(
@@ -413,6 +420,13 @@ fun PyCmdRoot(viewModel: MainViewModel = viewModel()) {
                     pythonVersion = status.pythonVersion.ifBlank { "3.13" },
                     onInstall = viewModel::installPackage,
                     onUninstall = viewModel::uninstallPackage,
+                
+                    pluginSections = {
+                        PluginSections(
+                            sectionsFor(Tab.PACKAGES, installedPlugins, installedEnabled),
+                            viewModel,
+                        )
+                    },
                 )
 
                 Tab.SERVERS -> ServersScreen(
@@ -437,11 +451,25 @@ fun PyCmdRoot(viewModel: MainViewModel = viewModel()) {
                         copyToClipboard(context, text)
                         viewModel.showToast("Copied $text")
                     },
+                    onView = viewModel::viewServer,
+                    pluginSections = {
+                        PluginSections(
+                            sectionsFor(Tab.SERVERS, installedPlugins, installedEnabled),
+                            viewModel,
+                        )
+                    },
                 )
 
                 Tab.DOCS -> DocsScreen(
                     languages = languages,
                     onOpen = { asset, title -> viewModel.openGuide(asset, title) },
+                
+                    pluginSections = {
+                        PluginSections(
+                            sectionsFor(Tab.DOCS, installedPlugins, installedEnabled),
+                            viewModel,
+                        )
+                    },
                 )
 
                 Tab.SYSTEM -> SystemScreen(
@@ -451,6 +479,13 @@ fun PyCmdRoot(viewModel: MainViewModel = viewModel()) {
                     onClearCache = viewModel::clearCache,
                     onClearPycache = viewModel::clearPycache,
                     onExportLog = viewModel::saveDebugLog,
+                
+                    pluginSections = {
+                        PluginSections(
+                            sectionsFor(Tab.SYSTEM, installedPlugins, installedEnabled),
+                            viewModel,
+                        )
+                    },
                 )
 
                 Tab.MORE -> MoreScreen(
@@ -478,6 +513,13 @@ fun PyCmdRoot(viewModel: MainViewModel = viewModel()) {
                     onDelete = viewModel::deleteDownload,
                     onExport = viewModel::exportWorkspace,
                     onSaveToDevice = { saveToDevice(File(it.path)) },
+                
+                    pluginSections = {
+                        PluginSections(
+                            sectionsFor(Tab.DOWNLOADS, installedPlugins, installedEnabled),
+                            viewModel,
+                        )
+                    },
                 )
 
                 Tab.PLUGINS -> PluginsScreen(
@@ -498,6 +540,12 @@ fun PyCmdRoot(viewModel: MainViewModel = viewModel()) {
                     onOpenPanel = viewModel::openPluginPanel,
                     onRemoveInstalled = viewModel::removeCustomPlugin,
                     onReadGuide = { viewModel.openGuide() },
+                    pluginSections = {
+                        PluginSections(
+                            sectionsFor(Tab.PLUGINS, installedPlugins, installedEnabled),
+                            viewModel,
+                        )
+                    },
                 )
 
                 Tab.PLUGIN_PANEL -> {
@@ -533,6 +581,13 @@ fun PyCmdRoot(viewModel: MainViewModel = viewModel()) {
                     },
                     onSave = viewModel::saveDebugLog,
                     exportText = viewModel::debugLogText,
+                
+                    pluginSections = {
+                        PluginSections(
+                            sectionsFor(Tab.DEBUG, installedPlugins, installedEnabled),
+                            viewModel,
+                        )
+                    },
                 )
             }
         }

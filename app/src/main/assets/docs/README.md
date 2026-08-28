@@ -11,7 +11,7 @@ compiled itself since API 29; JavaScript is handed to the engine the device
 already has. Another twenty file types are edited, highlighted, previewed and
 served.
 
-Version 1.2. Kotlin and Jetpack Compose for the app, JavaScript for the console
+Version 2.0. Kotlin and Jetpack Compose for the app, JavaScript for the console
 and editor.
 
 ---
@@ -42,24 +42,42 @@ into the debug console.
 **Packages** — install pure-Python libraries from PyPI onto the device at
 runtime. `requests`, `flask` and `rich` are already built in.
 
-**Servers** — a launch form: serve a folder or run a script, pick the port
-(with a "free one" button that finds an unused one), name it, choose whether it
-is reachable on Wi-Fi or loopback only. Every server gets its own console with
-its own scrollback and its own stdin box, and a **Kill** switch beside Stop for
-when a script hangs before it ever finishes starting. Servers stay alive in the
-background while you use other apps.
+**Servers** — a launch form that runs whatever you point it at: a Python
+script, a C, Go or Rust program, a JavaScript file, an HTML page (whose folder
+gets served, opening on that page), or a whole folder. It says which of those
+it will be *before* you press Run, and refuses what has no engine here with the
+reason. Pick the port (with a "free one" button), name it, choose whether it is
+reachable on Wi-Fi or loopback only. Every server gets its own console with its
+own scrollback and stdin box, a **View** button that opens it in the preview,
+and a **Kill** switch that works even on a server wedged inside its own
+`accept()`. Servers stay alive in the background while you use other apps.
 
 **It offers to fix what it can** — a file one typo away from the name your
 script asked for, an import of a package that is not installed, a port already
 in use, a folder served with no index page. The console says what it thinks is
-wrong and what it would change, and waits for `yes`. It never acts on its own.
+wrong and what it would change, and waits for `yes`. Then it says what it is
+doing while it does it, on its own thread, so Stop and Kill keep working
+throughout. It never acts on its own.
 
-**Plugins** — thirteen built in, each a switch over behaviour already compiled
-into the app, plus **plugins you write yourself**: Python that PyCmd imports,
-with an optional HTML panel that becomes its own tab. Install from a file, a
-folder or a zip. They are not sandboxed and the app says so before installing
-one. [PLUGINS.md](PLUGINS.md) is the authoring guide — format, API, events,
-panel bridge, four working examples, and a prompt to hand an AI.
+**Plugins** — three kinds of the same idea. Thirteen **built-in switches**,
+each over behaviour already compiled into the app. Three **bundled plugins**
+that ship inside the APK and start switched off: **Server Pro**, **Cloud** and
+**Scheduler**. And **plugins you write yourself** — Python that PyCmd imports,
+which can publish a row in More with its own name and picture, put a card of
+its own inside one of the app's existing screens, register console commands,
+claim a file type the Servers tab can then run, and reach Supabase or Firebase
+through `pycmd_cloud`. Install from a file, a folder or a zip. They are not
+sandboxed and the app says so before installing one.
+[PLUGINS.md](PLUGINS.md) is the authoring guide; [BUILTINS.md](BUILTINS.md)
+describes everything that ships.
+
+**Supabase and Firebase** — 116 operations across the two, over their REST
+APIs, with nothing to install: PostgREST queries and filters, GoTrue sign-up
+and sign-in, Supabase Storage and edge functions, Firestore documents and
+structured queries, Identity Toolkit, the Realtime Database and Firebase
+Storage. Connect a project once and a script, a server, a console command and
+the panel all reach it as the same user. Keys live in the app's own storage,
+never in the workspace.
 
 **Tools** — JSON formatting, Base64 and hashes, a regex lab that uses Python's
 own `re`, an HTTP client, and workspace-wide search.
@@ -79,7 +97,7 @@ running, and housekeeping that touches nothing you wrote.
 ## Just want to try it
 
 A ready-to-install debug APK is in [`dist/`](dist/) - download
-[`PyCmd-1.4-debug.apk`](dist/PyCmd-1.4-debug.apk), open it on the phone, and
+[`PyCmd-2.0-debug.apk`](dist/PyCmd-2.0-debug.apk), open it on the phone, and
 allow the install when Android asks. It is signed with the standard debug key,
 so no keystore or store account is involved. See [dist/README.md](dist/README.md)
 for the details.

@@ -18,6 +18,7 @@ import com.expstudio.pycmd.python.RunningServer
 import com.expstudio.pycmd.python.ServerService
 import com.expstudio.pycmd.plugins.CustomPlugins
 import com.expstudio.pycmd.plugins.InstalledPlugin
+import com.expstudio.pycmd.plugins.PluginExtension
 import com.expstudio.pycmd.plugins.PluginIds
 import com.expstudio.pycmd.plugins.PluginScreen
 import com.expstudio.pycmd.plugins.PluginSpec
@@ -63,7 +64,27 @@ enum class Tab(val label: String) {
     TOOL("Tool"),
     PLUGIN_PANEL("Plugin"),
     DOCS("Guides"),
-    SYSTEM("System"),
+    SYSTEM("System");
+
+    /**
+     * What a plugin manifest calls this screen, or null if it cannot be
+     * extended. Kept as its own name rather than the enum's so that renaming
+     * a tab in the app never breaks a plugin that was written against it.
+     */
+    val extensionName: String?
+        get() = when (this) {
+            FILES -> "files"
+            SERVERS -> "servers"
+            PACKAGES -> "packages"
+            DOWNLOADS -> "downloads"
+            PLUGINS -> "plugins"
+            SYSTEM -> "system"
+            DEBUG -> "debug"
+            DOCS -> "guides"
+            // The console and the editor are a full-screen WebView each, with
+            // nowhere to put a card that would not be in the way.
+            CONSOLE, EDITOR, MORE, TOOL, PLUGIN_PANEL -> null
+        }
 }
 
 /** The five destinations in the bottom bar; the rest live behind More. */
@@ -104,7 +125,7 @@ data class LaunchForm(
 
     /** Why the Run button is disabled, or null when it is ready to go. */
     fun problem(): String? = when {
-        target == null -> if (kind == ServerKind.STATIC) "Pick a folder to serve." else "Pick a file to run."
+        target == null -> if (kind == ServerKind.STATIC) "Pick a folder to serve." else "Pick a file or folder."
         kind == ServerKind.SCRIPT && plan.how.isNotEmpty() && !plan.runnable -> plan.note
         port.isNotBlank() && portNumber == null -> "Port must be a number."
         portNumber != null && portNumber !in 1..65535 -> "Port must be between 1 and 65535."
@@ -334,7 +355,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             val existing = CustomPlugins.installed.value.firstOrNull { it.id == id }
             if (existing != null && existing.version == version) continue
 
-            val reply = engine.installPlugin(folder.absolutePath, folder.name)
+            val reply = engine.installPlugin(folder.absolutePath, folder.name, bundled = true)
             if (reply.optBoolean("ok")) {
                 installedAny = true
                 DebugLog.info(TAG_VIEW, "bundled plugin ready: $id", version)
@@ -628,7 +649,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _tab.value = panelCameFrom
     }
 
-    suspend fun pluginPanelHtml(id: String): String = engine.pluginPanel(id)
+    suspend fun pluginPanelHtml(id: String, panelFile: String = ""): String =
+        engine.pluginPanel(id, panelFile)
+
+
 
     suspend fun callPluginExport(id: String, name: String, payload: String): JSONObject =
         engine.callPluginExport(id, name, payload)
@@ -1434,6 +1458,29 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }
             refreshServers()
         }
+    }
+
+    /**
+     * Opens a running server in the preview.
+     *
+     * The preview is already a browser view of a loopback address, so a server
+     * is exactly the kind of thing it exists for - and reading the address off
+     * the card to type it somewhere else was the only way to look at your own
+     * server from inside the app.
+     */
+    fun viewServer(server: RunningServer) {
+        val url = server.url
+        if (url.isBlank()) {
+            showToast("That server has no address to open.")
+            return
+        }
+        _preview.value = PreviewPage(
+            name = server.label.ifBlank { "Server" },
+            html = "",
+            baseDirectory = "",
+            url = url,
+            served = true,
+        )
     }
 
     fun openServerConsole(handle: String) {

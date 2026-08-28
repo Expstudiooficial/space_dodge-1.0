@@ -38,6 +38,12 @@ private val DOCS = listOf(
             "plugins, and a prompt to hand an AI.",
     ),
     Doc(
+        "docs/BUILTINS.md",
+        "The plugins that ship with it",
+        "What every built-in switch and bundled plugin does, and the difference " +
+            "between the two.",
+    ),
+    Doc(
         "docs/TUTORIAL.md",
         "Tutorial",
         "A walk through every tab with code to paste in and try.",
@@ -60,6 +66,8 @@ fun DocsScreen(
     languages: List<LanguageInfo>,
     onOpen: (String, String) -> Unit,
     modifier: Modifier = Modifier,
+    /** Sections plugins have added to this screen; empty when none are on. */
+    pluginSections: @Composable () -> Unit = {},
 ) {
     LazyColumn(
         modifier.fillMaxSize(),
@@ -101,6 +109,8 @@ fun DocsScreen(
                 }
             }
         }
+
+        item { pluginSections() }
 
         item {
             Spacer(Modifier.height(6.dp))

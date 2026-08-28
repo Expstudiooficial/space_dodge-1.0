@@ -1,0 +1,308 @@
+<h1>Cloud</h1>
+
+<div class="card">
+  <p>
+    <button id="pick-supabase" class="pick">Supabase</button>
+    <button id="pick-firebase" class="pick">Firebase</button>
+  </p>
+  <p id="state">Loading…</p>
+</div>
+
+<div class="card">
+  <h2>Connect</h2>
+  <div id="form-supabase">
+    <p><input id="sb-url" placeholder="https://yourproject.supabase.co"></p>
+    <p><input id="sb-key" placeholder="anon public key"></p>
+    <p><input id="sb-service" placeholder="service key (optional, for admin calls)"></p>
+  </div>
+  <div id="form-firebase" hidden>
+    <p><input id="fb-project" placeholder="project id"></p>
+    <p><input id="fb-key" placeholder="web API key"></p>
+    <p><input id="fb-db" placeholder="https://project-default-rtdb.firebaseio.com (optional)"></p>
+    <p><input id="fb-bucket" placeholder="project.appspot.com (optional)"></p>
+  </div>
+  <p>
+    <button id="save">Save</button>
+    <button id="ping">Test the connection</button>
+    <button id="forget">Forget the keys</button>
+  </p>
+  <p id="connect-result">—</p>
+  <p class="hint">The keys are kept in the app's own storage, not in the workspace,
+     so exporting or sharing your files never carries them along.</p>
+</div>
+
+<div class="card">
+  <h2>Users</h2>
+  <p><input id="email" placeholder="email" autocomplete="off"></p>
+  <p><input id="password" type="password" placeholder="password" autocomplete="off"></p>
+  <p>
+    <button id="signin">Sign in</button>
+    <button id="signup">Sign up</button>
+    <button id="whoami">Who am I</button>
+    <button id="signout">Sign out</button>
+  </p>
+  <pre id="user">—</pre>
+  <p class="hint">Signing in here is the same session your scripts and servers use:
+     the token is saved, so <code>pycmd_cloud.supabase()</code> in a server is already
+     that user.</p>
+</div>
+
+<div class="card">
+  <h2>Data</h2>
+  <p><input id="name" placeholder="table name / collection name"></p>
+  <p>
+    <input id="where-column" placeholder="column" style="width:38%">
+    <input id="where-value" placeholder="equals" style="width:38%">
+  </p>
+  <p>
+    <input id="order" placeholder="order by" style="width:38%">
+    <input id="limit" value="25" inputmode="numeric" style="width:20%">
+    <label class="inline"><input type="checkbox" id="descending"> newest first</label>
+  </p>
+  <p><button id="read">Read</button></p>
+  <p><textarea id="json" rows="4" placeholder='{"text": "written from my phone"}'></textarea></p>
+  <p>
+    <input id="path" placeholder="collection/document (Firebase writes)">
+  </p>
+  <p>
+    <button id="write">Write</button>
+    <button id="remove">Delete</button>
+  </p>
+  <p id="rows-summary">—</p>
+  <div id="rows"></div>
+</div>
+
+<div class="card" id="realtime-card">
+  <h2>Realtime Database</h2>
+  <p><input id="rt-path" placeholder="rooms/lobby"></p>
+  <p><textarea id="rt-json" rows="3" placeholder='{"players": 2}'></textarea></p>
+  <p>
+    <button data-rt="get">Get</button>
+    <button data-rt="set">Set</button>
+    <button data-rt="push">Push</button>
+    <button data-rt="update">Update</button>
+    <button data-rt="delete">Delete</button>
+  </p>
+  <pre id="rt-out">—</pre>
+</div>
+
+<div class="card" id="rpc-card">
+  <h2>Postgres function</h2>
+  <p><input id="rpc-name" placeholder="function name"></p>
+  <p><textarea id="rpc-json" rows="2" placeholder='{"a": 1}'></textarea></p>
+  <p><button id="rpc">Call it</button></p>
+  <pre id="rpc-out">—</pre>
+</div>
+
+<style>
+  .pick { opacity: .55; }
+  .pick.on { opacity: 1; font-weight: 600; }
+  .hint { opacity: .7; font-size: .85em; }
+  label.inline { display: inline-flex; align-items: center; gap: .35em; }
+  table { width: 100%; border-collapse: collapse; }
+  td, th { text-align: left; padding: 3px 6px; vertical-align: top; word-break: break-word; }
+  tr:nth-child(even) { background: rgba(255,255,255,.04); }
+</style>
+
+<script>
+  const $ = (id) => document.getElementById(id);
+  let provider = 'supabase';
+
+  const escape = (text) => String(text ?? '').replace(/[&<>"]/g, (c) => (
+    { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]
+  ));
+
+  async function call(name, payload) {
+    try {
+      return await pycmd.call(name, payload || {});
+    } catch (error) {
+      return { ok: false, error: error.message };
+    }
+  }
+
+  function setProvider(next) {
+    provider = next;
+    $('pick-supabase').classList.toggle('on', next === 'supabase');
+    $('pick-firebase').classList.toggle('on', next === 'firebase');
+    $('form-supabase').hidden = next !== 'supabase';
+    $('form-firebase').hidden = next === 'supabase';
+    $('realtime-card').hidden = next !== 'firebase';
+    $('rpc-card').hidden = next !== 'supabase';
+    $('path').hidden = next !== 'firebase';
+    refresh();
+  }
+
+  async function refresh() {
+    const state = await call('state');
+    const row = state[provider] || {};
+    if (!row.configured) {
+      $('state').textContent = provider + ' is not connected yet.';
+    } else {
+      const who = row.signed_in ? ` · signed in as ${row.user || 'a user'}` : ' · nobody signed in';
+      $('state').textContent = `${provider}: ${row.url || row.project_id}${who}`;
+    }
+    if (provider === 'supabase') {
+      $('sb-url').value = row.url || '';
+    } else {
+      $('fb-project').value = row.project_id || '';
+      $('fb-db').value = row.database_url || '';
+      $('fb-bucket').value = row.storage_bucket || '';
+    }
+  }
+
+  $('pick-supabase').onclick = () => setProvider('supabase');
+  $('pick-firebase').onclick = () => setProvider('firebase');
+
+  $('save').onclick = async () => {
+    $('connect-result').textContent = 'saving…';
+    const result = provider === 'supabase'
+      ? await call('save_supabase', {
+          url: $('sb-url').value.trim(),
+          key: $('sb-key').value.trim(),
+          service_key: $('sb-service').value.trim(),
+        })
+      : await call('save_firebase', {
+          project_id: $('fb-project').value.trim(),
+          api_key: $('fb-key').value.trim(),
+          database_url: $('fb-db').value.trim(),
+          storage_bucket: $('fb-bucket').value.trim(),
+        });
+    $('connect-result').textContent = result[provider] && result[provider].configured
+      ? 'Saved. Try the connection test.'
+      : 'Saved, but something is still missing.';
+    $('sb-key').value = '';
+    $('fb-key').value = '';
+    $('sb-service').value = '';
+    refresh();
+  };
+
+  $('ping').onclick = async () => {
+    $('connect-result').textContent = 'checking…';
+    const result = await call('ping', { provider });
+    $('connect-result').textContent = result.ok
+      ? `Reached it in ${result.millis} ms.`
+      : `No: ${result.error}`;
+  };
+
+  $('forget').onclick = async () => {
+    await call('forget', { provider });
+    $('connect-result').textContent = 'Forgotten.';
+    refresh();
+  };
+
+  $('signin').onclick = async () => {
+    const result = await call('sign_in', {
+      provider, email: $('email').value.trim(), password: $('password').value,
+    });
+    $('user').textContent = result.ok ? JSON.stringify(result.user, null, 2) : result.error;
+    $('password').value = '';
+    refresh();
+  };
+
+  $('signup').onclick = async () => {
+    const result = await call('sign_up', {
+      provider, email: $('email').value.trim(), password: $('password').value,
+    });
+    $('user').textContent = result.ok ? 'Account created. Now sign in.' : result.error;
+    $('password').value = '';
+  };
+
+  $('whoami').onclick = async () => {
+    const result = await call('whoami', { provider });
+    $('user').textContent = result.ok ? JSON.stringify(result.user, null, 2) : result.error;
+  };
+
+  $('signout').onclick = async () => {
+    await call('sign_out', { provider });
+    $('user').textContent = 'Signed out.';
+    refresh();
+  };
+
+  function drawRows(rows) {
+    if (!rows.length) {
+      $('rows').innerHTML = '<p>Nothing came back.</p>';
+      return;
+    }
+    const columns = [...new Set(rows.flatMap((row) => Object.keys(row)))].slice(0, 8);
+    $('rows').innerHTML =
+      '<table><tr>' + columns.map((c) => `<th>${escape(c)}</th>`).join('') + '</tr>'
+      + rows.map((row) => '<tr>' + columns.map((c) => {
+          const value = row[c];
+          const text = typeof value === 'object' && value !== null
+            ? JSON.stringify(value) : String(value ?? '');
+          return `<td>${escape(text.slice(0, 120))}</td>`;
+        }).join('') + '</tr>').join('')
+      + '</table>';
+  }
+
+  $('read').onclick = async () => {
+    $('rows-summary').textContent = 'reading…';
+    const result = await call('run_query', {
+      provider,
+      name: $('name').value.trim(),
+      where_column: $('where-column').value.trim(),
+      where_value: $('where-value').value.trim(),
+      order: $('order').value.trim(),
+      descending: $('descending').checked,
+      limit: Number($('limit').value) || 25,
+    });
+    if (!result.ok) {
+      $('rows-summary').textContent = result.error;
+      $('rows').innerHTML = '';
+      return;
+    }
+    $('rows-summary').textContent = `${result.count} row${result.count === 1 ? '' : 's'}`;
+    drawRows(result.rows);
+  };
+
+  $('write').onclick = async () => {
+    $('rows-summary').textContent = 'writing…';
+    const result = await call('write_row', {
+      provider,
+      name: $('name').value.trim(),
+      path: $('path').value.trim(),
+      json: $('json').value,
+    });
+    $('rows-summary').textContent = result.ok ? 'Written.' : result.error;
+    if (result.ok) $('read').click();
+  };
+
+  $('remove').onclick = async () => {
+    const result = await call('delete_row', {
+      provider,
+      name: $('name').value.trim(),
+      path: $('path').value.trim(),
+      where_column: $('where-column').value.trim(),
+      where_value: $('where-value').value.trim(),
+    });
+    $('rows-summary').textContent = result.ok ? 'Deleted.' : result.error;
+    if (result.ok) $('read').click();
+  };
+
+  for (const button of document.querySelectorAll('[data-rt]')) {
+    button.onclick = async () => {
+      $('rt-out').textContent = 'working…';
+      const result = await call('realtime', {
+        action: button.dataset.rt,
+        path: $('rt-path').value.trim(),
+        json: $('rt-json').value,
+      });
+      $('rt-out').textContent = result.ok
+        ? JSON.stringify(result.value, null, 2)
+        : result.error;
+    };
+  }
+
+  $('rpc').onclick = async () => {
+    $('rpc-out').textContent = 'calling…';
+    const result = await call('call_function', {
+      name: $('rpc-name').value.trim(),
+      json: $('rpc-json').value,
+    });
+    $('rpc-out').textContent = result.ok
+      ? JSON.stringify(result.result, null, 2)
+      : result.error;
+  };
+
+  setProvider('supabase');
+</script>

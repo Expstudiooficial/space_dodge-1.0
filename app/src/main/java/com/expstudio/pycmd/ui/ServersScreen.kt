@@ -62,7 +62,10 @@ fun ServersScreen(
     onStopAll: () -> Unit,
     onKillAll: () -> Unit,
     onCopy: (String) -> Unit,
+    onView: (RunningServer) -> Unit,
     modifier: Modifier = Modifier,
+    /** Sections plugins have added to this screen; empty when none are on. */
+    pluginSections: @Composable () -> Unit = {},
 ) {
     val open = state.openConsole
     if (open != null) {
@@ -145,9 +148,12 @@ fun ServersScreen(
                     onStop = { onStop(server.handle) },
                     onKill = { onKill(server.handle) },
                     onCopy = onCopy,
+                    onView = { onView(server) },
                 )
             }
         }
+
+        item { pluginSections() }
 
         item {
             PyCard {
@@ -398,6 +404,7 @@ private fun ServerRow(
     onStop: () -> Unit,
     onKill: () -> Unit,
     onCopy: (String) -> Unit,
+    onView: () -> Unit,
 ) {
     val statusColor = when (server.status) {
         "running" -> MaterialTheme.colorScheme.primary
@@ -478,6 +485,18 @@ private fun ServerRow(
         Spacer(Modifier.height(10.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             GhostButton("Console", PyIcons.Terminal, onOpen, Modifier.weight(1f))
+            // A server you can look at is a server you can check. Opening it in
+            // the preview beats reading the address and typing it elsewhere.
+            GhostButton(
+                "View",
+                PyIcons.PlayArrow,
+                onView,
+                Modifier.weight(1f),
+                enabled = server.isRunning && server.url.isNotBlank(),
+            )
+        }
+        Spacer(Modifier.height(8.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             GhostButton("Stop", PyIcons.Stop, onStop, Modifier.weight(1f), enabled = server.isRunning)
             ActionButton(
                 text = "Kill",

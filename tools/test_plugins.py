@@ -201,6 +201,30 @@ check("the tab is normalised",
       installed.get("manifest", {}).get("tab", {}).get("title") == "Notes", installed)
 
 
+print("\n== two plugins wanting the same command ==")
+for index, folder_name in enumerate(("clash-a", "clash-b")):
+    clash = os.path.join(scratch, "src", folder_name)
+    write(os.path.join(clash, "plugin.json"), json.dumps({
+        "id": f"demo.{folder_name}", "name": folder_name, "entry": "main.py",
+    }))
+    write(os.path.join(clash, "main.py"), f"""
+def setup(api):
+    @api.command("both", help="both")
+    def both(argument):
+        return "from {folder_name}"
+""")
+    result(plugins.install(clash))
+    result(plugins.load(f"demo.{folder_name}"))
+
+host.logs.clear()
+listed = result(plugins.commands())["commands"]
+both = [row for row in listed if row["name"] == "both"]
+check("both are listed", len(both) == 2, both)
+check("one is marked as shadowed",
+      sum(1 for row in both if row["shadowed"]) == 1, both)
+check("and the clash is reported",
+      any("both" in message for _level, message, _detail in host.logs), host.logs)
+
 print("\n== a command that returns its answer ==")
 returner = os.path.join(scratch, "src", "returner")
 write(os.path.join(returner, "plugin.json"), json.dumps({
@@ -258,6 +282,53 @@ check("which is inside the installed plugin, not the staging folder",
 saved = json.load(open(os.path.join(plugins.plugin_dir("demo.icon"), "plugin.json")))
 check("the absolute path is not written down",
       "image" not in saved["tab"], saved["tab"])
+
+print("\n== a section inside one of the app's own tabs ==")
+ext = os.path.join(scratch, "src", "extender")
+write(os.path.join(ext, "plugin.json"), json.dumps({
+    "id": "demo.extender",
+    "name": "Extender",
+    "entry": "main.py",
+    "panel": "ui.html",
+    "extends": [
+        {"tab": "servers", "title": "Board", "description": "live", "panel": "board.html",
+         "height": "tall", "open": True},
+        {"tab": "files"},
+    ],
+}))
+write(os.path.join(ext, "main.py"), "def setup(api):\n    pass\n")
+write(os.path.join(ext, "ui.html"), "<h1>x</h1>")
+write(os.path.join(ext, "board.html"), "<h1>board</h1>")
+
+installed = result(plugins.install(ext))
+check("a plugin that extends a tab installs", installed.get("ok"), installed)
+sections = installed.get("manifest", {}).get("extends", [])
+check("both sections are kept", len(sections) == 2, sections)
+check("the first names its own panel and height",
+      sections[0]["panel"] == "board.html" and sections[0]["height"] == "tall", sections[0])
+check("and can ask to start open", sections[0]["open"] is True, sections[0])
+check("the second falls back to the plugin's panel",
+      sections[1]["panel"] == "ui.html" and sections[1]["title"] == "Extender", sections[1])
+check("and is closed by default", sections[1]["open"] is False, sections[1])
+
+page = plugins.panel_html("demo.extender", "board.html")
+check("its section panel renders", "<h1>board</h1>" in page, page[:200])
+check("with the bridge injected", "__pycmd_panel" in page or "pycmd" in page)
+main_page = plugins.panel_html("demo.extender")
+check("and the main panel still renders", "<h1>x</h1>" in main_page, main_page[:200])
+escaped = plugins.panel_html("demo.extender", "../../../etc/passwd")
+check("a panel outside the plugin is refused", "<h1>" not in escaped or "passwd" not in escaped)
+
+bad_tab = os.path.join(scratch, "src", "badtab")
+write(os.path.join(bad_tab, "plugin.json"), json.dumps({
+    "id": "demo.badtab", "name": "Bad Tab", "entry": "main.py", "panel": "ui.html",
+    "extends": [{"tab": "wherever"}],
+}))
+write(os.path.join(bad_tab, "main.py"), "def setup(api):\n    pass\n")
+write(os.path.join(bad_tab, "ui.html"), "<h1>x</h1>")
+refused = result(plugins.install(bad_tab))
+check("a screen that does not exist is refused", not refused.get("ok"), refused)
+check("and the message lists the real ones", "servers" in refused.get("error", ""), refused)
 
 print("\n== a tab needs something to open ==")
 bad = os.path.join(scratch, "src", "tabnopanel")

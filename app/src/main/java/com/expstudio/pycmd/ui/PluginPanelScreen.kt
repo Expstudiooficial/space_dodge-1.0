@@ -40,28 +40,27 @@ import kotlinx.coroutines.withContext
 import org.json.JSONObject
 
 /**
- * A custom plugin's own screen.
+ * One plugin page, hosted in a WebView.
  *
- * The plugin supplies HTML; the app supplies a WebView, the house stylesheet
- * and a bridge with exactly four verbs - call, toast, log, close. A panel can
- * therefore do anything a web page can do and nothing an app can do, which is
- * the right side of the line to keep it on: the dangerous half of a plugin is
- * its Python, and that is what the install warning is about.
+ * Used both for a plugin's own screen and for a section it adds to one of the
+ * app's own tabs, so that the two behave identically: same stylesheet, same
+ * bridge, same refusal to navigate anywhere.
  */
 @SuppressLint("SetJavaScriptEnabled")
 @Composable
-fun PluginPanelScreen(
+fun PluginPanelView(
     plugin: InstalledPlugin,
     viewModel: MainViewModel,
-    onClose: () -> Unit,
     modifier: Modifier = Modifier,
+    panelFile: String = "",
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    val key = "${plugin.id}:$panelFile"
 
-    val bridge = remember(plugin.id) { PanelBridge(plugin, viewModel, scope) }
+    val bridge = remember(key) { PanelBridge(plugin, viewModel, scope) }
 
-    val webView = remember(plugin.id) {
+    val webView = remember(key) {
         WebView(context).apply {
             settings.javaScriptEnabled = true
             settings.domStorageEnabled = true
@@ -95,19 +94,35 @@ fun PluginPanelScreen(
         }
     }
 
-    LaunchedEffect(plugin.id) {
-        val html = viewModel.pluginPanelHtml(plugin.id)
+    LaunchedEffect(key) {
+        val html = viewModel.pluginPanelHtml(plugin.id, panelFile)
         val base = "file://${PythonEngine.pluginDirectory(plugin.id).absolutePath}/"
         webView.loadDataWithBaseURL(base, html, "text/html", "utf-8", null)
     }
 
     // A plugin can push to its panel while it is open.
-    LaunchedEffect(plugin.id) {
+    LaunchedEffect(key) {
         PythonEngine.pluginMessages.collect { (id, body) ->
             if (id == plugin.id) bridge.deliver(body)
         }
     }
 
+    AndroidView(factory = { webView }, modifier = modifier)
+}
+
+/**
+ * A custom plugin's own screen.
+ *
+ * The plugin supplies HTML; the app supplies a WebView, the house stylesheet
+ * and a bridge with exactly four verbs - call, toast, log, close.
+ */
+@Composable
+fun PluginPanelScreen(
+    plugin: InstalledPlugin,
+    viewModel: MainViewModel,
+    onClose: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
     Column(
         modifier
             .fillMaxSize()
@@ -148,7 +163,7 @@ fun PluginPanelScreen(
         Divider()
 
         Box(Modifier.weight(1f).fillMaxWidth()) {
-            AndroidView(factory = { webView }, modifier = Modifier.fillMaxSize())
+            PluginPanelView(plugin, viewModel, Modifier.fillMaxSize())
         }
     }
 }
