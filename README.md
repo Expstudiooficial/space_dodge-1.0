@@ -11,7 +11,7 @@ compiled itself since API 29; JavaScript is handed to the engine the device
 already has. Another twenty file types are edited, highlighted, previewed and
 served.
 
-Version 2.2. Kotlin and Jetpack Compose for the app, JavaScript for the console
+Version 2.3. Kotlin and Jetpack Compose for the app, JavaScript for the console
 and editor.
 
 ---
@@ -33,14 +33,20 @@ so a line has no length at which it stops being editable. Run the open file
 straight from the toolbar, whatever language it is.
 
 **Files** — a private workspace you can browse, filter, create in, rename and
-delete. Upload files or a whole folder from anywhere on the device. Examples
-ship on first launch, including two working plugins.
+delete. Upload files or a whole folder from anywhere on the device; if the name
+is already taken it asks whether to replace or keep both, rather than quietly
+leaving you with the old copy. Examples ship on first launch, including two
+working plugins, and deleting them sticks.
 
 **Preview** — HTML, CSS, Markdown, JavaScript, JSON, CSV, SVG and images. A
 page is served over a loopback HTTP server rooted at its own folder, so it
 behaves like a real site: scripts run, `fetch` works, relative paths resolve,
 and links inside the site follow. Whatever the page logs or throws is copied
 into the debug console.
+
+**Downloads** — a folder kept apart from the workspace: files fetched from a
+URL, workspace and folder exports, and anything you add from the phone. Each
+one can be opened, copied into the workspace, or saved back out to the device.
 
 **Packages** — install pure-Python libraries from PyPI onto the device at
 runtime. `requests`, `flask` and `rich` are already built in.
@@ -100,7 +106,7 @@ running, and housekeeping that touches nothing you wrote.
 ## Just want to try it
 
 A ready-to-install debug APK is in [`dist/`](dist/) - download
-[`PyCmd-2.2-debug.apk`](dist/PyCmd-2.2-debug.apk), open it on the phone, and
+[`PyCmd-2.3-debug.apk`](dist/PyCmd-2.3-debug.apk), open it on the phone, and
 allow the install when Android asks. It is signed with the standard debug key,
 so no keystore or store account is involved. See [dist/README.md](dist/README.md)
 for the details.

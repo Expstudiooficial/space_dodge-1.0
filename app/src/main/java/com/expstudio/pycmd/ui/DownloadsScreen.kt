@@ -1,5 +1,7 @@
 package com.expstudio.pycmd.ui
 
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -57,12 +59,17 @@ fun DownloadsScreen(
     onDelete: (DownloadedFile) -> Unit,
     onExport: () -> Unit,
     onSaveToDevice: (DownloadedFile) -> Unit,
+    onAddFile: (android.net.Uri) -> Unit,
     modifier: Modifier = Modifier,
     /** Sections plugins have added to this screen; empty when none are on. */
     pluginSections: @Composable () -> Unit = {},
 ) {
     var url by remember { mutableStateOf("") }
     var pendingDelete by remember { mutableStateOf<DownloadedFile?>(null) }
+
+    val addLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument(),
+    ) { uri -> if (uri != null) onAddFile(uri) }
 
     LazyColumn(
         modifier.fillMaxSize(),
@@ -130,6 +137,18 @@ fun DownloadsScreen(
             }
         }
 
+        item {
+            // Downloads was somewhere only the app could put things - a URL
+            // fetch or an export. A file from the phone belongs here too.
+            GhostButton(
+                text = "Add a file from this phone",
+                icon = PyIcons.FileUpload,
+                onClick = { addLauncher.launch(arrayOf("*/*")) },
+                modifier = Modifier.fillMaxWidth(),
+                enabled = !state.busy,
+            )
+        }
+
         if (exportOn) {
             item {
                 GhostButton(
@@ -153,9 +172,9 @@ fun DownloadsScreen(
                     icon = PyIcons.FileUpload,
                     title = "Nothing here yet",
                     hint = if (downloaderOn) {
-                        "Downloads and workspace exports land here."
+                        "Downloads, workspace exports and files you add land here."
                     } else {
-                        "Workspace exports land here."
+                        "Workspace exports and files you add land here."
                     },
                 )
             }

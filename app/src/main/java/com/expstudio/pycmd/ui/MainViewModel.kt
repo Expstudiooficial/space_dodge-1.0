@@ -33,6 +33,7 @@ import com.expstudio.pycmd.util.Imports
 import com.expstudio.pycmd.util.Workspace
 import com.expstudio.pycmd.util.WorkspaceEntry
 import java.io.File
+import java.io.IOException
 import org.json.JSONObject
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -101,6 +102,22 @@ data class DownloadsState(
 )
 
 /** What a launch form is set up to start. */
+/** What to do about an import whose name is already taken. */
+enum class ImportChoice { REPLACE, KEEP_BOTH, CANCEL }
+
+/**
+ * An import waiting on that answer.
+ *
+ * [decide] carries on with whichever the user picked; nothing has been written
+ * yet when this exists, except a folder already staged in the cache.
+ */
+data class PendingImport(
+    val name: String,
+    val isFolder: Boolean,
+    val existing: File,
+    val decide: (ImportChoice) -> Unit,
+)
+
 enum class ServerKind(val label: String) {
     STATIC("Serve a folder"),
     SCRIPT("Run a file"),
@@ -887,9 +904,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     // ------------------------------------------------------------- downloads
 
+    private var downloadsGeneration = 0L
+
     fun refreshDownloads() {
+        val generation = ++downloadsGeneration
         viewModelScope.launch {
-            _downloads.value = _downloads.value.copy(files = engine.listDownloads())
+            val listed = engine.listDownloads()
+            // Same reason as the file list: a slower listing must not overwrite
+            // a newer one just because it came back second.
+            if (generation != downloadsGeneration) return@launch
+            _downloads.value = _downloads.value.copy(files = listed)
         }
     }
 
@@ -949,6 +973,54 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             Exports.saveTo(getApplication(), source, target)
                 .onSuccess { showToast("Saved ${source.name} to the device") }
                 .onFailure { showToast(it.message ?: "Could not save it there.") }
+        }
+    }
+
+    /**
+     * Adds one file from the phone to Downloads.
+     *
+     * Downloads used to be a folder only the app could fill - a URL fetch or a
+     * workspace export - which made it the one place you could not simply put
+     * something. The same collision question is asked here as in Files.
+     */
+    fun addToDownloads(uri: Uri) {
+        viewModelScope.launch {
+            val name = Imports.displayName(getApplication(), uri) ?: "imported"
+            if (engine.downloadsHas(name)) {
+                ask(
+                    PendingImport(
+                        name = name,
+                        isFolder = false,
+                        existing = File(engine.downloadsFolder, name),
+                    ) { choice -> copyIntoDownloads(uri, name, choice) },
+                )
+                return@launch
+            }
+            copyIntoDownloads(uri, name, ImportChoice.KEEP_BOTH)
+        }
+    }
+
+    private fun copyIntoDownloads(uri: Uri, name: String, choice: ImportChoice) {
+        if (choice == ImportChoice.CANCEL) return
+        viewModelScope.launch {
+            _downloads.value = _downloads.value.copy(busy = true, progress = "Copying $name...")
+            val staged = Imports.stageFile(getApplication(), uri)
+            val result = staged.mapCatching { file ->
+                engine.adoptDownload(
+                    file.root.absolutePath, name, choice == ImportChoice.REPLACE,
+                ).also { withContext(Dispatchers.IO) { file.root.parentFile?.deleteRecursively() } }
+            }
+            _downloads.value = _downloads.value.copy(busy = false, progress = "")
+
+            result
+                .onSuccess { reply ->
+                    showToast(
+                        if (reply.ok) "Added ${reply.name}"
+                        else reply.error.ifBlank { "Could not add that file." },
+                    )
+                }
+                .onFailure { showToast(it.message ?: "Could not read that file.") }
+            refreshDownloads()
         }
     }
 
@@ -1253,10 +1325,22 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     // ------------------------------------------------------------------- files
 
+    /**
+     * Which listing request is the newest.
+     *
+     * Two refreshes can be in flight at once - an import finishing while a
+     * plugin asks for one, or a tap on a folder while the last one is still
+     * reading - and whichever finished last used to win, however old its
+     * answer was. That is one way a file list shows a folder as it used to be.
+     */
+    private var filesGeneration = 0L
+
     fun refreshFiles(directory: File) {
+        val generation = ++filesGeneration
         viewModelScope.launch {
             _files.value = _files.value.copy(directory = directory, loading = true)
             val entries = workspace.list(directory)
+            if (generation != filesGeneration) return@launch
             _files.value = FilesState(directory = directory, entries = entries, loading = false)
         }
     }
@@ -1312,6 +1396,25 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    /** Whether the bundled examples are still in the workspace. */
+    val hasExamples: Boolean get() = workspace.hasExamples()
+
+    /**
+     * Puts the examples back after they were deleted.
+     *
+     * Deliberate, because the automatic version was the bug: an app that
+     * re-creates a folder you deleted is one you cannot tidy.
+     */
+    fun restoreExamples() {
+        viewModelScope.launch {
+            val copied = workspace.restoreExamples()
+            refreshFiles(_files.value.directory ?: workspace.root)
+            showToast(
+                if (copied > 0) "Restored $copied example files" else "The examples are already there",
+            )
+        }
+    }
+
     fun deleteEntry(file: File) {
         val directory = _files.value.directory ?: workspace.root
         viewModelScope.launch {
@@ -1332,13 +1435,72 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    /**
+     * An import that would overwrite something, waiting on the user's answer.
+     *
+     * Not a question the app can answer for them: bringing in a corrected file
+     * used to become `notes-2.md` in silence, so the old one stayed where
+     * every script still pointed at it.
+     */
+    private val _pendingImport = MutableStateFlow<PendingImport?>(null)
+    val pendingImport: StateFlow<PendingImport?> = _pendingImport.asStateFlow()
+
+    /**
+     * The questions still to be asked.
+     *
+     * Picking several files at once can raise several collisions, and one
+     * slot would mean each new question quietly replaced the one before it -
+     * so all but the last file would be dropped without a word. They queue.
+     */
+    private val importQueue = ArrayDeque<PendingImport>()
+
+    private fun ask(pending: PendingImport) {
+        if (_pendingImport.value == null) {
+            _pendingImport.value = pending
+        } else {
+            importQueue.addLast(pending)
+        }
+    }
+
+    /** Answers the question on screen and brings up the next one, if any. */
+    fun answerPendingImport(choice: ImportChoice) {
+        val current = _pendingImport.value ?: return
+        _pendingImport.value = importQueue.removeFirstOrNull()
+        current.decide(choice)
+    }
+
     fun importFile(uri: Uri) {
         val directory = _files.value.directory ?: workspace.root
+        val clash = workspace.collisionFor(uri, directory)
+        if (clash != null) {
+            ask(
+                PendingImport(name = clash.name, isFolder = false, existing = clash) { choice ->
+                    copyFileIn(uri, directory, choice)
+                },
+            )
+            return
+        }
+        copyFileIn(uri, directory, ImportChoice.KEEP_BOTH)
+    }
+
+    private fun copyFileIn(uri: Uri, directory: File, choice: ImportChoice) {
+        if (choice == ImportChoice.CANCEL) return
         viewModelScope.launch {
-            workspace.importFrom(uri, directory)
+            val mode = if (choice == ImportChoice.REPLACE) {
+                Workspace.OnCollision.REPLACE
+            } else {
+                Workspace.OnCollision.KEEP_BOTH
+            }
+            workspace.importFrom(uri, directory, mode)
                 .onSuccess {
                     refreshFiles(directory)
-                    showToast("Imported ${it.name}")
+                    showToast(
+                        if (choice == ImportChoice.REPLACE) {
+                            "Replaced ${it.name}"
+                        } else {
+                            "Imported ${it.name}"
+                        },
+                    )
                 }
                 .onFailure { showToast(it.message ?: "Could not import that file.") }
         }
@@ -1358,19 +1520,75 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             Imports.stageTree(getApplication(), uri)
                 .onSuccess { staged ->
                     val target = File(directory, staged.root.name)
-                    val moved = runCatching {
-                        staged.root.copyRecursively(target, overwrite = false)
+                    if (!target.exists()) {
+                        finishFolderImport(staged, directory, target, ImportChoice.REPLACE)
+                        return@onSuccess
                     }
-                    staged.root.deleteRecursively()
-                    if (moved.isSuccess) {
-                        refreshFiles(directory)
-                        showToast("Copied ${staged.files} files into ${target.name}")
-                    } else {
-                        showToast("Could not copy that folder in - a name is already taken.")
-                    }
+                    // It is already there. Copying over it with overwrite off
+                    // threw partway through, leaving some new files beside some
+                    // old ones - which is how "it uploaded an old version"
+                    // happens. Ask instead.
+                    ask(
+                        PendingImport(name = target.name, isFolder = true, existing = target) {
+                            choice ->
+                            viewModelScope.launch {
+                                finishFolderImport(staged, directory, target, choice)
+                            }
+                        },
+                    )
                 }
                 .onFailure { showToast(it.message ?: "That folder could not be read.") }
         }
+    }
+
+    private suspend fun finishFolderImport(
+        staged: Imports.Staged,
+        directory: File,
+        target: File,
+        choice: ImportChoice,
+    ) {
+        if (choice == ImportChoice.CANCEL) {
+            withContext(Dispatchers.IO) { staged.root.deleteRecursively() }
+            return
+        }
+
+        val result = withContext(Dispatchers.IO) {
+            runCatching {
+                val destination = when (choice) {
+                    ImportChoice.KEEP_BOTH -> freeName(directory, target.name)
+                    ImportChoice.REPLACE -> {
+                        if (target.exists() && !target.deleteRecursively()) {
+                            throw IOException("Could not remove the old ${target.name}.")
+                        }
+                        target
+                    }
+                    else -> target
+                }
+                staged.root.copyRecursively(destination, overwrite = true)
+                destination
+            }.also { staged.root.deleteRecursively() }
+        }
+
+        result
+            .onSuccess {
+                refreshFiles(directory)
+                showToast("Copied ${staged.files} files into ${it.name}")
+            }
+            .onFailure {
+                DebugLog.error(TAG_VIEW, "folder import failed", it)
+                showToast(it.message ?: "That folder could not be copied in.")
+            }
+    }
+
+    /** `name`, `name-2`, `name-3`... whichever is free. */
+    private fun freeName(directory: File, name: String): File {
+        var candidate = File(directory, name)
+        var index = 2
+        while (candidate.exists() && index < 500) {
+            candidate = File(directory, "$name-$index")
+            index += 1
+        }
+        return candidate
     }
 
     /** The language of a file, from the catalogue already loaded. */
@@ -1460,12 +1678,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     // ---------------------------------------------------------------- packages
 
+    private var packagesGeneration = 0L
+
     fun refreshPackages() {
+        val generation = ++packagesGeneration
         viewModelScope.launch {
-            _packages.value = _packages.value.copy(
-                installed = engine.installedPackages(),
-                bundled = engine.bundledPackages(),
-            )
+            val installed = engine.installedPackages()
+            val bundled = engine.bundledPackages()
+            if (generation != packagesGeneration) return@launch
+            _packages.value = _packages.value.copy(installed = installed, bundled = bundled)
         }
     }
 
@@ -1505,10 +1726,18 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     // ----------------------------------------------------------------- servers
 
+    private var serversGeneration = 0L
+
     fun refreshServers() {
+        val generation = ++serversGeneration
         viewModelScope.launch {
             val list = engine.listServers()
-            _servers.value = _servers.value.copy(servers = list, localIp = engine.localIp())
+            val address = engine.localIp()
+            // The Servers tab polls every three seconds and other things ask
+            // for a refresh too; an older answer arriving late would show a
+            // server that has already stopped.
+            if (generation != serversGeneration) return@launch
+            _servers.value = _servers.value.copy(servers = list, localIp = address)
             syncForegroundService(list)
         }
     }

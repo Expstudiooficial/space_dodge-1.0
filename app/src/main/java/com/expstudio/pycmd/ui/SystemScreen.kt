@@ -53,6 +53,8 @@ fun SystemScreen(
     onClearPycache: () -> Unit,
     onExportLog: () -> Unit,
     modifier: Modifier = Modifier,
+    /** Null when the examples are still there and nothing needs restoring. */
+    onRestoreExamples: (() -> Unit)? = null,
     /** Sections plugins have added to this screen; empty when none are on. */
     pluginSections: @Composable () -> Unit = {},
 ) {
@@ -122,6 +124,17 @@ fun SystemScreen(
                         GhostButton("Save the debug log", PyIcons.Save, onExportLog,
                                     Modifier.weight(1f))
                         GhostButton("Refresh", PyIcons.RestartAlt, onRefresh, Modifier.weight(1f))
+                    }
+                    // Only offered once they are gone: the app no longer puts
+                    // them back by itself, so this is the way back.
+                    if (onRestoreExamples != null) {
+                        Spacer(Modifier.height(8.dp))
+                        GhostButton(
+                            "Put the examples back",
+                            PyIcons.NoteAdd,
+                            onRestoreExamples,
+                            Modifier.fillMaxWidth(),
+                        )
                     }
                 }
             }

@@ -8,6 +8,7 @@ downloads folder, and a zip is built from the workspace only.
 from __future__ import annotations
 
 import os
+import shutil
 import time
 import urllib.error
 import urllib.parse
@@ -121,6 +122,51 @@ def download(url: str, progress=None) -> dict:
         return {"ok": False, "error": f"Could not save it: {exc}"}
 
     return {"ok": True, "path": target, "name": os.path.basename(target), "bytes": written}
+
+
+def adopt(path: str, name: str = "", replace: str = "") -> dict:
+    """Takes a file the app has already copied out of the phone.
+
+    Downloads was a folder only the app could put things in - a URL fetch or a
+    workspace export - which made it the one place you could not simply put a
+    file. The copying itself is Kotlin's, because only Kotlin can read a
+    content URI; this gives it somewhere to land and a name that will not
+    collide.
+    """
+    if _downloads_dir is None:
+        return {"ok": False, "error": "downloads are not configured"}
+    if not os.path.isfile(path):
+        return {"ok": False, "error": "that file is not there"}
+
+    wanted = _safe_name(name or os.path.basename(path))
+    target = os.path.join(_downloads_dir, wanted)
+    if replace and os.path.isfile(target):
+        try:
+            os.remove(target)
+        except OSError as exc:
+            return {"ok": False, "error": f"could not replace it: {exc}"}
+    else:
+        target = _unique(_downloads_dir, wanted)
+
+    try:
+        shutil.copy2(path, target)
+    except OSError as exc:
+        return {"ok": False, "error": f"could not save it: {exc}"}
+
+    return {
+        "ok": True,
+        "path": target,
+        "name": os.path.basename(target),
+        "bytes": os.path.getsize(target),
+        "replaced": bool(replace),
+    }
+
+
+def has(name: str) -> bool:
+    """Whether a file of that name is already in Downloads."""
+    if _downloads_dir is None:
+        return False
+    return os.path.isfile(os.path.join(_downloads_dir, _safe_name(name)))
 
 
 def export_workspace(name: str = "") -> dict:

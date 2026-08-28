@@ -2,6 +2,7 @@ package com.expstudio.pycmd.ui
 
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -170,6 +171,79 @@ fun ListDialog(
         },
         confirmButton = {
             TextButton(onClick = onDismiss) { Text("Close") }
+        },
+    )
+}
+
+/**
+ * The name is already taken: replace it, keep both, or stop.
+ *
+ * A dialog rather than a rule, because neither answer is right in general.
+ * Silently keeping both is what the app used to do, and it meant an updated
+ * file arrived as a second copy while every script went on reading the old
+ * one - a bug you only notice much later, by which time you are debugging the
+ * wrong file.
+ */
+@Composable
+fun ImportCollisionDialog(
+    name: String,
+    isFolder: Boolean,
+    existingSummary: String,
+    onReplace: () -> Unit,
+    onKeepBoth: () -> Unit,
+    onCancel: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onCancel,
+        containerColor = MaterialTheme.colorScheme.surface,
+        shape = RoundedCornerShape(18.dp),
+        title = {
+            Text(
+                if (isFolder) "That folder is already here" else "That file is already here",
+                style = MaterialTheme.typography.titleMedium,
+            )
+        },
+        text = {
+            Column {
+                Text(
+                    name,
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontFamily = MonoFamily,
+                )
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    existingSummary,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(Modifier.height(12.dp))
+                Text(
+                    if (isFolder) {
+                        "Replacing removes what is there first, so nothing of the old " +
+                            "copy is left mixed in with the new one."
+                    } else {
+                        "Keeping both leaves the old file exactly where it is, under " +
+                            "its own name."
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onReplace) {
+                Text("Replace", color = MaterialTheme.colorScheme.error)
+            }
+        },
+        dismissButton = {
+            Row {
+                TextButton(onClick = onCancel) {
+                    Text("Cancel", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                TextButton(onClick = onKeepBoth) {
+                    Text("Keep both", color = MaterialTheme.colorScheme.primary)
+                }
+            }
         },
     )
 }

@@ -81,6 +81,42 @@ check(
 )
 preview.stop()
 
+print("\n== putting a file into Downloads ==")
+downloads_only = tempfile.mkdtemp(prefix="pycmd-dl-")
+work_only = tempfile.mkdtemp(prefix="pycmd-work-")
+download.configure(downloads_only, work_only)
+
+source = os.path.join(work_only, "notes.txt")
+with open(source, "w", encoding="utf-8") as handle:
+    handle.write("first")
+
+added = download.adopt(source)
+check("a file can be added", added.get("ok"), added)
+check("under its own name", added.get("name") == "notes.txt", added)
+check("and it is really there", download.has("notes.txt"))
+
+with open(source, "w", encoding="utf-8") as handle:
+    handle.write("second, longer")
+
+again = download.adopt(source)
+check("adding it twice keeps both", again.get("name") == "notes-2.txt", again)
+with open(os.path.join(downloads_only, "notes.txt"), encoding="utf-8") as handle:
+    check("and leaves the first alone", handle.read() == "first")
+
+replaced = download.adopt(source, replace="1")
+check("replacing puts the new one at the old name",
+      replaced.get("name") == "notes.txt" and replaced.get("replaced") is True, replaced)
+with open(os.path.join(downloads_only, "notes.txt"), encoding="utf-8") as handle:
+    check("with the new contents", handle.read() == "second, longer")
+
+check("a name with a path in it cannot escape",
+      download.adopt(source, name="../../escaped.txt").get("path", "").startswith(downloads_only))
+check("a file that is not there is refused",
+      download.adopt(os.path.join(work_only, "nope.txt")).get("ok") is False)
+check("and nothing else was invented",
+      sorted(os.listdir(downloads_only)) == ["escaped.txt", "notes-2.txt", "notes.txt"],
+      sorted(os.listdir(downloads_only)))
+
 print("\n== exporting one folder ==")
 downloads = tempfile.mkdtemp(prefix="pycmd-downloads-")
 workspace = tempfile.mkdtemp(prefix="pycmd-workspace-")

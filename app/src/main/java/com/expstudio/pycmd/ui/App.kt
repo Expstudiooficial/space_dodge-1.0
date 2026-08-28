@@ -55,6 +55,9 @@ import com.expstudio.pycmd.util.WorkspaceEntry
 import com.expstudio.pycmd.BuildConfig
 import com.expstudio.pycmd.python.OutputChunk
 import java.io.File
+import java.util.Locale
+import java.util.Date
+import java.text.SimpleDateFormat
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
@@ -93,6 +96,7 @@ fun PyCmdRoot(viewModel: MainViewModel = viewModel()) {
     val pluginCandidates by viewModel.pluginCandidates.collectAsState()
     val openPanel by viewModel.openPanel.collectAsState()
     val openPanelFile by viewModel.openPanelFile.collectAsState()
+    val pendingImport by viewModel.pendingImport.collectAsState()
     val systemInfo by viewModel.system.collectAsState()
     val systemBusy by viewModel.systemBusy.collectAsState()
 
@@ -485,6 +489,11 @@ fun PyCmdRoot(viewModel: MainViewModel = viewModel()) {
                     onClearCache = viewModel::clearCache,
                     onClearPycache = viewModel::clearPycache,
                     onExportLog = viewModel::saveDebugLog,
+                    // Keyed on the file list so deleting the folder makes the
+                    // button appear without a trip somewhere else and back.
+                    onRestoreExamples = remember(filesState.entries, systemInfo) {
+                        if (viewModel.hasExamples) null else viewModel::restoreExamples
+                    },
                 
                     pluginSections = {
                         PluginSections(
@@ -519,6 +528,7 @@ fun PyCmdRoot(viewModel: MainViewModel = viewModel()) {
                     onDelete = viewModel::deleteDownload,
                     onExport = viewModel::exportWorkspace,
                     onSaveToDevice = { saveToDevice(File(it.path)) },
+                    onAddFile = viewModel::addToDownloads,
                 
                     pluginSections = {
                         PluginSections(
@@ -620,6 +630,18 @@ fun PyCmdRoot(viewModel: MainViewModel = viewModel()) {
             )
         }
         BackHandler(enabled = true) { viewModel.closePreview() }
+    }
+
+    // An import that would overwrite something waits here for an answer.
+    pendingImport?.let { pending ->
+        ImportCollisionDialog(
+            name = pending.name,
+            isFolder = pending.isFolder,
+            existingSummary = remember(pending.existing) { describeExisting(pending.existing) },
+            onReplace = { viewModel.answerPendingImport(ImportChoice.REPLACE) },
+            onKeepBoth = { viewModel.answerPendingImport(ImportChoice.KEEP_BOTH) },
+            onCancel = { viewModel.answerPendingImport(ImportChoice.CANCEL) },
+        )
     }
 
     if (saveAsOpen) {
@@ -788,6 +810,22 @@ private fun consoleAppendScript(chunks: List<OutputChunk>): String {
 
 /** How many lines go into the WebView in one script. */
 private const val CONSOLE_BATCH = 400
+
+/** What is already at that name, so the choice is an informed one. */
+private fun describeExisting(file: File): String {
+    val when_ = SimpleDateFormat("dd MMM HH:mm", Locale.US).format(Date(file.lastModified()))
+    if (file.isDirectory) {
+        val count = file.listFiles()?.size ?: 0
+        return "Here now: a folder of $count item${if (count == 1) "" else "s"}, last changed $when_"
+    }
+    val size = file.length()
+    val readable = when {
+        size >= 1024 * 1024 -> "%.1f MB".format(size / 1024.0 / 1024.0)
+        size >= 1024 -> "${size / 1024} KB"
+        else -> "$size B"
+    }
+    return "Here now: $readable, last changed $when_"
+}
 
 private fun copyToClipboard(context: Context, text: String) {
     val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager

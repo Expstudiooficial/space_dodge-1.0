@@ -1,17 +1,49 @@
 # Prebuilt APK
 
-`PyCmd-2.2-debug.apk` — ready to install, nothing else needed.
+`PyCmd-2.3-debug.apk` — ready to install, nothing else needed.
 
 | | |
 |---|---|
 | Package | `com.expstudio.pycmd.debug` |
-| Version | 2.2-debug |
+| Version | 2.3-debug |
 | Size | 33 MB |
 | Signed with | the standard Android debug key |
 | Works on | Android 7.0 (API 24) and newer, **arm64-v8a** (every phone since about 2016) |
 | SHA-256 | see [SHA256SUMS.txt](SHA256SUMS.txt) |
 
-## What is new in 2.2
+## What is new in 2.3
+
+**The examples folder can be deleted.** It was re-created on every start, which
+made `examples/` a folder you were not allowed to be rid of - not the app's
+call to make. Deleting it sticks now, and **More → System → Put the examples
+back** is there if you change your mind.
+
+**An import that would overwrite something asks first.** Bringing in a
+corrected file used to become `notes-2.md` in silence, so the old one stayed
+exactly where every script still pointed at it - which is how you end up
+debugging a file you already fixed. Worse for folders: copying over an existing
+one failed partway through and left some new files sitting beside some old
+ones. Now it asks - **Replace**, **Keep both** or **Cancel** - and says how big
+what is already there is and when it last changed. Replacing a folder removes
+the old one first, so nothing of it is left mixed in; replacing a file writes to
+a neighbour and moves it into place, so a failure halfway cannot leave you with
+neither.
+
+**A file from the phone can go straight into Downloads.** It was a folder only
+the app could fill - a URL fetch or an export - which made it the one place you
+could not simply put something.
+
+**Listings cannot show you the past.** Every refresh - files, downloads,
+servers, packages - is tagged, and an older answer arriving late is dropped
+instead of overwriting a newer one. Two refreshes racing is ordinary (an import
+finishing while the Servers tab polls), and the slower one used to win whatever
+it was holding.
+
+**And two imports started in the same millisecond** were handed the same
+staging folder, so the second one found the first one's files already sitting
+in it.
+
+## What was new in 2.2
 
 **A long line stopped being editable past a certain point.** The editor sized
 its textarea from the highlighted layer underneath it, and that layer is an
@@ -241,11 +273,12 @@ on, its console command answered, and its panel called back into its own
 Python. The APK here is that source built for arm64 instead, which changes
 the CPython binaries and nothing else.
 
-762 checks run before any of this is committed: `test_runtime.py` (145),
+772 checks run before any of this is committed: `test_runtime.py` (145),
 `test_plugins.py` (120), `test_go.py` (92), `test_rust.py` (73),
 `test_cloud.py` (68), `test_bundled.py` (61), `test_c.py` (54), `test_js.js`
-(43), `test_editor.js` (46), `test_doctor.py` (37) and `test_preview.py` (23). Each language check is a real program paired with the
-output the real compiler produces. The rest go after the things that are
+(43), `test_editor.js` (46), `test_doctor.py` (37) and `test_preview.py` (33).
+Each language check is a real program paired with the output the real compiler
+produces. The rest go after the things that are
 awkward to be sure of by looking: a script wedged in `accept()` is started for
 real and killed, to prove the port comes back; the preview checks fetch pages
 back off the loopback server; the editor checks run the real
@@ -262,7 +295,7 @@ bundled plugins the way the app does and drives them: it starts a real server
 and restarts it through Server Pro, schedules a real job, and renders every
 panel.
 
-The 2.2 changes were verified by those checks and by Lint on the built APK,
+The 2.3 changes were verified by those checks and by Lint on the built APK,
 not on an emulator: this build machine has no hardware virtualisation, so no
 emulator could be started for it.
 
@@ -290,7 +323,7 @@ every tab with things to paste in and try.
 ## Installing over USB
 
 ```bash
-adb install -r dist/PyCmd-2.2-debug.apk
+adb install -r dist/PyCmd-2.3-debug.apk
 ```
 
 ## Checking the download

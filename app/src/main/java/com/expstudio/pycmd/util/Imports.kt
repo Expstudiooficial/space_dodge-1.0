@@ -139,10 +139,19 @@ object Imports {
         // folder wholesale would pull the first one's files out from under it.
         val stale = System.currentTimeMillis() - STALE_AFTER_MS
         root.listFiles()?.filter { it.lastModified() < stale }?.forEach { it.deleteRecursively() }
-        val folder = File(root, "${System.currentTimeMillis()}-${sanitise(label).take(24)}")
+
+        // A counter as well as the clock. Two imports started in the same
+        // millisecond used to be handed the same folder, and the second one
+        // would find the first one's files sitting in it - which is one way an
+        // import ends up carrying something that was never in it.
+        val stamp = "${System.currentTimeMillis()}-${sequence.incrementAndGet()}"
+        val folder = File(root, "$stamp-${sanitise(label).take(24)}")
+        folder.deleteRecursively()
         folder.mkdirs()
         return folder
     }
+
+    private val sequence = java.util.concurrent.atomic.AtomicLong(0)
 
     fun displayName(context: Context, uri: Uri): String? {
         val fromProvider = runCatching {

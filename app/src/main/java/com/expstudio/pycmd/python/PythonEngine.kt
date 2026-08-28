@@ -156,6 +156,9 @@ object PythonEngine {
     private lateinit var workspaceDir: File
     private lateinit var sitePackagesDir: File
     private lateinit var downloadsDir: File
+
+    /** Where downloads land, for the UI to describe what is already there. */
+    val downloadsFolder: File get() = downloadsDir
     private lateinit var pluginsDir: File
 
     private fun queueFor(channel: String): LinkedBlockingQueue<String> =
@@ -762,6 +765,41 @@ object PythonEngine {
                 DownloadResult(false, error = it.friendlyMessage())
             }
         }.also { if (!it.ok) DebugLog.warn(TAG, "download failed: ${it.error}") }
+
+    /** Whether Downloads already holds a file of that name. */
+    suspend fun downloadsHas(name: String): Boolean = withContext(controlDispatcher) {
+        if (!_status.value.ready) return@withContext false
+        runCatching { downloads.callAttr("has", name).toBoolean() }.getOrDefault(false)
+    }
+
+    /**
+     * Puts a file the app has already copied off the phone into Downloads.
+     *
+     * The copy out of the content URI is Kotlin's job - only Kotlin can read
+     * one - and this gives it a home and a name that will not collide.
+     */
+    suspend fun adoptDownload(path: String, name: String, replace: Boolean): DownloadResult =
+        withContext(controlDispatcher) {
+            if (!_status.value.ready) {
+                return@withContext DownloadResult(false, error = "Interpreter is not ready.")
+            }
+            runCatching {
+                downloads.callAttr("adopt", path, name, if (replace) "1" else "")
+                    .asMap()
+                    .let { map ->
+                        DownloadResult(
+                            ok = map.str("ok") == "True",
+                            name = map.str("name"),
+                            path = map.str("path"),
+                            bytes = map.str("bytes").toLongOrNull() ?: 0L,
+                            error = map.str("error"),
+                        )
+                    }
+            }.getOrElse {
+                DebugLog.error(TAG, "could not add $name to downloads", it)
+                DownloadResult(false, error = it.friendlyMessage())
+            }
+        }
 
     suspend fun exportWorkspace(): DownloadResult = exportZip(null)
 

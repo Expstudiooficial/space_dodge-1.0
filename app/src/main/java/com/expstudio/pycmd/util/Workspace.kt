@@ -3,6 +3,7 @@ package com.expstudio.pycmd.util
 import android.content.Context
 import android.net.Uri
 import android.provider.OpenableColumns
+import androidx.core.content.edit
 import java.io.File
 import java.io.IOException
 import java.text.SimpleDateFormat
@@ -143,15 +144,53 @@ class Workspace(context: Context) {
      * The name comes from the provider rather than the URI: a content URI's
      * last segment is usually an opaque id like "msf:42", not a filename.
      */
-    suspend fun importFrom(uri: Uri, directory: File): Result<File> =
+    /**
+     * What to do when the name is already taken.
+     *
+     * There used to be no choice: an import always became `notes-2.md`, so
+     * bringing in a corrected file left the old one exactly where every script
+     * still pointed. Which of the two you wanted is not something the app can
+     * work out, so it asks.
+     */
+    enum class OnCollision { ASK, REPLACE, KEEP_BOTH }
+
+    /** The file an import would clash with, or null if the name is free. */
+    fun collisionFor(uri: Uri, directory: File): File? {
+        val safe = sanitise(displayName(uri)) ?: return null
+        return File(directory, safe).takeIf { it.exists() }
+    }
+
+    suspend fun importFrom(
+        uri: Uri,
+        directory: File,
+        onCollision: OnCollision = OnCollision.KEEP_BOTH,
+    ): Result<File> =
         withContext(Dispatchers.IO) {
             val safe = sanitise(displayName(uri)) ?: "imported.py"
-            val target = uniqueTarget(directory, safe)
-            if (!isInsideWorkspace(target)) return@withContext Result.failure(IOException("Outside the workspace."))
+            val target = if (onCollision == OnCollision.REPLACE) {
+                File(directory, safe)
+            } else {
+                uniqueTarget(directory, safe)
+            }
+            if (!isInsideWorkspace(target)) {
+                return@withContext Result.failure(IOException("Outside the workspace."))
+            }
             runCatching {
                 appContext.contentResolver.openInputStream(uri).use { input ->
                     requireNotNull(input) { "Could not open the selected file." }
-                    target.outputStream().use { output -> input.copyTo(output) }
+                    // Written to a neighbour first and moved into place, so a
+                    // replace that fails halfway does not leave the old file
+                    // truncated and the new one incomplete.
+                    val staging = File(directory, ".${target.name}.part")
+                    staging.outputStream().use { output -> input.copyTo(output) }
+                    if (target.exists() && !target.delete()) {
+                        staging.delete()
+                        throw IOException("Could not replace ${target.name}.")
+                    }
+                    if (!staging.renameTo(target)) {
+                        staging.delete()
+                        throw IOException("Could not save ${target.name}.")
+                    }
                 }
                 target
             }
@@ -207,10 +246,48 @@ class Workspace(context: Context) {
      * user edited is never overwritten - but an example added in a newer
      * version does arrive, which a one-shot "does the folder exist" check
      * would have hidden from everyone who already had the app.
+     *
+     * And it stops entirely once the folder has been deleted. Putting the
+     * examples back on the next start made `examples/` a folder the user was
+     * not allowed to be rid of, which is not the app's call to make: their
+     * workspace, their folders. [restoreExamples] brings them back when they
+     * ask for them.
+     *
+     * Somebody upgrading has no such flag yet, so the first run after the
+     * update seeds once and records it. If they had already deleted the
+     * folder they get it back that one time - there is no way to tell that
+     * from a fresh install - and deleting it again sticks for good.
      */
     suspend fun seedExamples(): Int = withContext(Dispatchers.IO) {
+        val examplesDir = File(root, "examples")
+        if (!examplesDir.exists() && examplesWereSeeded()) {
+            return@withContext 0
+        }
+        examplesDir.mkdirs()
+        val copied = runCatching { copyAssets("examples", examplesDir) }.getOrDefault(0)
+        rememberExamplesSeeded()
+        copied
+    }
+
+    /** Whether the examples are on disk right now. */
+    fun hasExamples(): Boolean = File(root, "examples").isDirectory
+
+    /** Puts them back, after they were deleted. */
+    suspend fun restoreExamples(): Int = withContext(Dispatchers.IO) {
         val examplesDir = File(root, "examples").apply { mkdirs() }
-        runCatching { copyAssets("examples", examplesDir) }.getOrDefault(0)
+        val copied = runCatching { copyAssets("examples", examplesDir) }.getOrDefault(0)
+        rememberExamplesSeeded()
+        copied
+    }
+
+    private fun examplePreferences() =
+        appContext.getSharedPreferences("pycmd-workspace", Context.MODE_PRIVATE)
+
+    private fun examplesWereSeeded(): Boolean =
+        examplePreferences().getBoolean(KEY_EXAMPLES_SEEDED, false)
+
+    private fun rememberExamplesSeeded() {
+        examplePreferences().edit { putBoolean(KEY_EXAMPLES_SEEDED, true) }
     }
 
     private fun copyAssets(assetPath: String, target: File): Int {
@@ -298,3 +375,6 @@ class Workspace(context: Context) {
         found.take(60)
     }
 }
+
+/** Set once the examples have been written, so deleting them can stick. */
+private const val KEY_EXAMPLES_SEEDED = "examples-seeded"

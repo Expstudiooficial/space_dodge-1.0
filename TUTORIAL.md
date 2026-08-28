@@ -129,6 +129,15 @@ up in the list.
 
 ---
 
+**The examples are yours to delete.** Deleting `examples/` sticks — the app
+will not put it back on the next start. **More → System → Put the examples
+back** restores them if you change your mind.
+
+**Importing something that is already there** asks what you want rather than
+guessing: *Replace* (the old one goes first, so nothing of it is left mixed in),
+*Keep both*, or *Cancel*. It tells you how big the existing one is and when it
+last changed, so the choice is an informed one.
+
 ## 4. Packages — install something from PyPI, live
 
 Tap **Packages**. `requests`, `flask` and `rich` are already built in (you
