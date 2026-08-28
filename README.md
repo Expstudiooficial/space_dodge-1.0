@@ -11,7 +11,7 @@ compiled itself since API 29; JavaScript is handed to the engine the device
 already has. Another twenty file types are edited, highlighted, previewed and
 served.
 
-Version 2.1.1. Kotlin and Jetpack Compose for the app, JavaScript for the console
+Version 2.2. Kotlin and Jetpack Compose for the app, JavaScript for the console
 and editor.
 
 ---
@@ -25,9 +25,12 @@ and Stop interrupts a runaway loop. Terminal colours from libraries like `rich`
 render properly. Completions for names in your session appear as you type.
 
 **Editor** — syntax highlighting for every language it knows, line numbers,
-auto-indent, bracket matching, a snippet bar that changes with the file type,
-autosave, and a shortcut row for the characters phone keyboards hide. Run the
-open file straight from the toolbar, whatever language it is.
+auto-indent that follows *that* language's rules, bracket matching, a snippet
+bar and a key strip that both change with the file type, optional line
+wrapping with a gutter that stays aligned, go-to-line, and autosave. Every
+width and height is computed from the font rather than measured off the page,
+so a line has no length at which it stops being editable. Run the open file
+straight from the toolbar, whatever language it is.
 
 **Files** — a private workspace you can browse, filter, create in, rename and
 delete. Upload files or a whole folder from anywhere on the device. Examples
@@ -97,7 +100,7 @@ running, and housekeeping that touches nothing you wrote.
 ## Just want to try it
 
 A ready-to-install debug APK is in [`dist/`](dist/) - download
-[`PyCmd-2.1.1-debug.apk`](dist/PyCmd-2.1.1-debug.apk), open it on the phone, and
+[`PyCmd-2.2-debug.apk`](dist/PyCmd-2.2-debug.apk), open it on the phone, and
 allow the install when Android asks. It is signed with the standard debug key,
 so no keystore or store account is involved. See [dist/README.md](dist/README.md)
 for the details.

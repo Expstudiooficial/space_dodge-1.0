@@ -77,6 +77,18 @@ for the whole script to finish.
 
 ---
 
+
+**When a line gets long.** The editor scrolls sideways and follows the caret,
+so the end of a long line is always reachable. If you would rather see the
+whole thing at once, the ⋮ menu has **Wrap long lines** — the line numbers
+stay right, each one growing as tall as its line now needs. **Go to line...**
+is in the same menu.
+
+The key strip above the keyboard changes with the file: `:` and `self` for
+Python, `;` and `//` for Go, C, Rust and JavaScript, `<` and `>` for HTML and
+Markdown. Enter indents the way that language does — after a `:` in Python,
+after a `{` in the brace languages — and typing `}` steps back out a level.
+
 ## 3. Files — the examples that ship with the app
 
 Tap **Files**. You'll see an `examples/` folder seeded on first launch.

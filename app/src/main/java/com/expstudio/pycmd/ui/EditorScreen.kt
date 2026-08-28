@@ -11,6 +11,9 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
@@ -31,11 +34,28 @@ import com.expstudio.pycmd.plugins.Snippets
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 
-/** Snippets and characters worth a single tap while writing code. */
-private val EDITOR_KEYS = listOf(
-    ":", "(", ")", "[", "]", "{", "}", "=", "\"", "'", ".", ",", "_", "->",
-    "==", "!=", "+", "-", "*", "/", "%", "#", "self",
+/**
+ * Characters worth a single tap, per language.
+ *
+ * The strip used to be Python's for every file, so a Go file offered `self`
+ * and `#` and no `//`. The keys a phone keyboard buries are different in each
+ * language, which is the whole reason the strip exists.
+ */
+private val COMMON_KEYS = listOf(
+    "(", ")", "[", "]", "{", "}", "=", "\"", "'", ".", ",", "_",
+    "==", "!=", "+", "-", "*", "/", "%", "<", ">",
 )
+
+private val PYTHON_KEYS = listOf(":", "#", "self", "->", "|") + COMMON_KEYS
+private val BRACE_KEYS = listOf(";", "//", "->", "&&", "||", "=>") + COMMON_KEYS
+private val MARKUP_KEYS = listOf("<", ">", "/", ":", ";", "-") + COMMON_KEYS
+
+private fun keysFor(highlight: String): List<String> = when (highlight) {
+    "python", "shell", "yaml" -> PYTHON_KEYS
+    "html", "markdown", "css" -> MARKUP_KEYS
+    "text" -> COMMON_KEYS
+    else -> BRACE_KEYS
+}
 
 @Composable
 fun EditorScreen(
@@ -59,8 +79,13 @@ fun EditorScreen(
     snippetsPoweredUp: Boolean = false,
 ) {
     var menuOpen by remember { mutableStateOf(false) }
+    var goToLineOpen by remember { mutableStateOf(false) }
+    // Off by default: code is written in columns, and a wrapped line hides
+    // that. It is here for the lines that are longer than any phone.
+    var wrapping by remember { mutableStateOf(false) }
     val currentContent by rememberUpdatedState(state.content)
     val currentEpoch by rememberUpdatedState(state.epoch)
+    val currentWrapping by rememberUpdatedState(wrapping)
     val currentHighlight by rememberUpdatedState(highlightAs)
 
     // Bridge callbacks arrive on the WebView's JS thread; hopping to the main
@@ -74,10 +99,12 @@ fun EditorScreen(
         }
         host.bridge.editorReadyHandler = {
             // The page reloaded (first load, or the system reclaimed it), so
-            // whatever is in the buffer has to be put back.
+            // whatever is in the buffer has to be put back - the wrap setting
+            // included, or a reload silently unwraps the file you are reading.
             host.loadedEpoch = currentEpoch
             host.eval("PyEditor.setLanguage(${jsString(currentHighlight)});")
             host.eval("PyEditor.setContent(${jsString(currentContent)});")
+            host.eval("PyEditor.setWrap($currentWrapping);")
         }
         onDispose {
             host.bridge.editorChangedHandler = {}
@@ -99,6 +126,12 @@ fun EditorScreen(
     // a .go file has to repaint even though both are just text to the editor.
     LaunchedEffect(highlightAs, host) {
         host.eval("if (window.PyEditor) { PyEditor.setLanguage(${jsString(highlightAs)}); }")
+    }
+
+    // The page can be reloaded out from under us, so the wrap setting is
+    // pushed back rather than assumed to have survived.
+    LaunchedEffect(wrapping, state.epoch, host) {
+        host.eval("if (window.PyEditor) { PyEditor.setWrap($wrapping); }")
     }
 
     Column(modifier.fillMaxSize()) {
@@ -173,6 +206,18 @@ fun EditorScreen(
                         menuOpen = false
                         onCopyAll(state.content)
                     }
+                    EditorCommand(
+                        if (wrapping) "Stop wrapping lines" else "Wrap long lines",
+                        PyIcons.WrapText,
+                    ) {
+                        menuOpen = false
+                        wrapping = !wrapping
+                        host.eval("PyEditor.setWrap($wrapping);")
+                    }
+                    EditorCommand("Go to line...", PyIcons.FormatIndentIncrease) {
+                        menuOpen = false
+                        goToLineOpen = true
+                    }
                     EditorCommand("Undo", PyIcons.Undo) { menuOpen = false; host.eval("PyEditor.undo();") }
                     EditorCommand("Redo", PyIcons.Redo) { menuOpen = false; host.eval("PyEditor.redo();") }
                     EditorCommand("Debug console", PyIcons.BugReport) { menuOpen = false; onOpenDebug() }
@@ -216,8 +261,27 @@ fun EditorScreen(
         }
 
         KeyStrip(
-            keys = EDITOR_KEYS,
+            keys = remember(highlightAs) { keysFor(highlightAs) },
             onKey = { key -> host.eval("PyEditor.insert(${jsString(key)});") },
+        )
+    }
+
+    if (goToLineOpen) {
+        TextPromptDialog(
+            title = "Go to line",
+            label = "Line number",
+            initial = state.line.toString(),
+            confirmLabel = "Go",
+            supportingText = "Jumps the caret there and scrolls it into view.",
+            keyboardOptions = KeyboardOptions(
+                keyboardType = KeyboardType.Number,
+                imeAction = ImeAction.Done,
+            ),
+            onDismiss = { goToLineOpen = false },
+            onConfirm = { typed ->
+                goToLineOpen = false
+                typed.trim().toIntOrNull()?.let { host.eval("PyEditor.goToLine($it);") }
+            },
         )
     }
 }

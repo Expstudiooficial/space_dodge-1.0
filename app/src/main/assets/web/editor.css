@@ -98,14 +98,57 @@ body {
 
 /* The highlighted layer sits under a transparent textarea: the textarea owns
    the caret, selection and IME, the pre owns the colours. Their metrics must
-   match exactly or the two drift apart. */
+   match exactly or the two drift apart.
+
+   `width: max-content` matters more than it looks. Without it this is an
+   absolutely positioned box with `width: auto`, which shrink-to-fits *bounded
+   by its containing block* - so past a certain line length the layer stopped
+   growing, the textarea was sized from it, and the end of a long line became
+   unreachable. */
 #highlight {
   position: absolute;
   top: 0;
   left: 0;
   pointer-events: none;
+  width: max-content;
   min-width: 100%;
   min-height: 100%;
+}
+
+/* Measures one character of the real font, so the width of a line can be
+   computed rather than asked for. Kept in the flow but invisible and
+   unclickable; `visibility: hidden` still lays out, which is the point. */
+#ruler {
+  position: absolute;
+  top: 0;
+  left: 0;
+  visibility: hidden;
+  pointer-events: none;
+  white-space: pre;
+  font-family: "JetBrains Mono", "Roboto Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: var(--font-size);
+  line-height: var(--line-height);
+}
+
+/* Wrapping mode. A phone screen is narrow and some lines are not; wrapping is
+   the difference between reading the end of one and never seeing it. The
+   textarea and the layer under it must break in exactly the same places, so
+   both get the same rules - `break-all` rather than `break-word` because a
+   break at a fixed column is one the gutter can predict. */
+#frame.wrap #highlight,
+#frame.wrap #input {
+  white-space: pre-wrap;
+  word-break: break-all;
+  overflow-wrap: anywhere;
+}
+
+#frame.wrap #highlight {
+  width: 100%;
+  max-width: 100%;
+}
+
+#frame.wrap #input {
+  width: 100% !important;
 }
 
 #input {

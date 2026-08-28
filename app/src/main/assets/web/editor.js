@@ -23,21 +23,40 @@
   // never noticed.
   var BIG_DOCUMENT = 8000;
 
+  var frame = document.getElementById('frame');
   var input = document.getElementById('input');
   var highlightCode = document.getElementById('highlight-code');
   var surface = document.getElementById('surface');
   var gutterInner = document.getElementById('gutter-inner');
+  var ruler = document.getElementById('ruler');
 
   var syncTimer = null;
   var paintTimer = null;
-  var lineCount = -1;
   var suppressChangeEvent = false;
   var lastSent = null;
   var lastPainted = null;
+  var wrapping = false;
+  // Set while the keyboard is mid-word: swipe typing and autocorrect on
+  // Android hold an open composition, and rewriting the layer underneath it
+  // makes the keyboard lose track of what it was suggesting.
+  var composing = false;
+  var gutterCount = 0;
+  var gutterWrapping = false;
+  var gutterSignature = '';
   var HTML_ESCAPES = { '&': '&amp;', '<': '&lt;', '>': '&gt;' };
 
   var PAIRS = { '(': ')', '[': ']', '{': '}', '"': '"', "'": "'" };
   var CLOSERS = { ')': true, ']': true, '}': true, '"': true, "'": true };
+
+  // Which way this language indents. The editor runs six languages and used
+  // Python's rules for all of them, so a Go file got no indent after `{` and
+  // an outdent after the word `return` - which is exactly wrong there.
+  // Keyed on the grammar name the host sends, which is what the language
+  // registry calls it: Java and Kotlin both arrive as "c".
+  var BRACE_LANGUAGES = {
+    c: true, javascript: true, go: true, rust: true, json: true, css: true,
+  };
+  var braces = false;
 
   // ----------------------------------------------------------------- rendering
 
@@ -58,6 +77,13 @@
    * because tokenising it costs less than the two paints would.
    */
   function render(immediate) {
+    if (remeasureIfNeeded()) {
+      // Everything sized from the guess has to be worked out again.
+      lastWidth = -1;
+      lastHeight = -1;
+      gutterSignature = '';
+    }
+
     var text = input.value;
     var big = text.length > BIG_DOCUMENT;
 
@@ -73,8 +99,12 @@
       lastPainted = text;
     }
 
-    resize();
-    renderGutter(text);
+    // One pass over the document, shared: the sizing and the gutter both want
+    // to know how many rows there are, and walking a long file twice for every
+    // keystroke is exactly the kind of waste that shows up as lag.
+    var plan = layout();
+    resize(plan);
+    renderGutter(plan);
     highlightActiveLine();
   }
 
@@ -97,88 +127,286 @@
     }
   }
 
+  // --------------------------------------------------------------- geometry
+
+  /**
+   * How wide one character is, and how tall one line.
+   *
+   * Measured from the real font once, and then everything is arithmetic. The
+   * first version asked the DOM how wide the highlighted layer had become,
+   * which is a question with a fragile answer: an absolutely positioned box
+   * shrink-to-fits within its container, so past a certain line length the
+   * measurement stopped growing - and the textarea, sized from it, stopped
+   * growing with it. That is what made the end of a long line unreachable.
+   */
+  var metrics = { char: 8, line: 21, padLeft: 12, padRight: 16, padTop: 10, padBottom: 60 };
+  // Whether the numbers above came from a page that was actually on screen.
+  var measured = false;
+
+  function measure() {
+    var sample = 'MMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMM';
+    ruler.textContent = sample;
+    var width = ruler.getBoundingClientRect().width / sample.length;
+    ruler.textContent = '';
+    if (width > 0) {
+      metrics.char = width;
+    }
+
+    var style = global.getComputedStyle(input);
+    var lineHeight = parseFloat(style.lineHeight);
+    if (lineHeight > 0) {
+      metrics.line = lineHeight;
+    }
+    metrics.padLeft = parseFloat(style.paddingLeft) || 0;
+    metrics.padRight = parseFloat(style.paddingRight) || 0;
+    metrics.padTop = parseFloat(style.paddingTop) || 0;
+    metrics.padBottom = parseFloat(style.paddingBottom) || 0;
+
+    // A page that is not on screen yet measures nothing, and this editor is
+    // built before its tab is ever shown - so the first attempt lands on a
+    // WebView with no width and every character is guessed at eight pixels.
+    // Remembering that it was a guess is what lets the next render fix it.
+    measured = width > 0 && surface.clientWidth > 0;
+    return measured;
+  }
+
+  /** Re-measures once the page has a size, and once the font has settled. */
+  function remeasureIfNeeded() {
+    if (measured || surface.clientWidth <= 0) {
+      return false;
+    }
+    var previous = metrics.char;
+    measure();
+    return measured && Math.abs(previous - metrics.char) > 0.01;
+  }
+
+  /** How many characters fit across, when wrapping. At least one. */
+  function columnsPerRow() {
+    var usable = surface.clientWidth - metrics.padLeft - metrics.padRight;
+    return Math.max(1, Math.floor(usable / metrics.char));
+  }
+
   var lastWidth = -1;
+  var lastHeight = -1;
 
-  function resize() {
-    // Height first: the textarea must be exactly as tall as its content so the
-    // surrounding surface, not the textarea, does the scrolling.
-    //
-    // Both reads below force the browser to lay the page out, which on a long
-    // document is the single most expensive thing here - so the results are
-    // compared before being written back. Assigning the same height again
-    // would dirty the layout and make the next keystroke pay for it twice.
-    input.style.height = 'auto';
-    var height = input.scrollHeight;
-    input.style.height = height + 'px';
+  /**
+   * How many rows the document occupies, how wide its longest line is, and a
+   * number that changes whenever either of those does.
+   *
+   * The signature exists because of a bug worth naming: while wrapping, the
+   * gutter was rebuilt only when the *line count* changed, so typing into an
+   * already-long line took it from twenty-eight rows to twenty-nine and the
+   * numbers quietly slid out of step with the code. Counting rows is the only
+   * thing that catches that.
+   */
+  function layout() {
+    var lines = documentLines();
+    var columns = wrapping ? columnsPerRow() : 0;
+    var rows = 0;
+    var longest = 0;
+    var signature = 0;
 
-    // Reading scrollWidth forces a second layout, so the result is kept and
-    // the write skipped when nothing moved: on a long document that is the
-    // difference between one reflow per keystroke and two.
-    var width = Math.max(surface.clientWidth, highlightCode.scrollWidth + 24);
+    for (var i = 0; i < lines.length; i += 1) {
+      var length = lines[i].length;
+      if (length > longest) {
+        longest = length;
+      }
+      var taken = wrapping ? Math.max(1, Math.ceil(length / columns)) : 1;
+      rows += taken;
+      // Weighted by position, so two lines swapping row counts in one edit
+      // still reads as a change.
+      signature = (signature * 31 + taken * (i + 1)) % 2147483647;
+    }
+
+    return {
+      lines: lines.length,
+      columns: columns,
+      rows: rows,
+      longest: longest,
+      signature: lines.length + ':' + columns + ':' + rows + ':' + signature,
+    };
+  }
+
+  function resize(plan) {
+    plan = plan || layout();
+
+    if (wrapping) {
+      applySize(0, plan.rows);
+      return;
+    }
+    // A couple of characters of slack so the caret at the end of the longest
+    // line is inside the box rather than on its edge.
+    var needed = Math.ceil((plan.longest + 2) * metrics.char)
+      + metrics.padLeft + metrics.padRight;
+    applySize(Math.max(surface.clientWidth, needed), plan.rows);
+  }
+
+  function applySize(width, rows) {
+    var height = Math.round(rows * metrics.line) + metrics.padTop + metrics.padBottom;
+    if (height !== lastHeight) {
+      lastHeight = height;
+      input.style.height = height + 'px';
+    }
+
+    if (wrapping) {
+      if (lastWidth !== 0) {
+        lastWidth = 0;
+        input.style.width = '';
+      }
+      return;
+    }
     if (width !== lastWidth) {
       lastWidth = width;
       input.style.width = width + 'px';
     }
   }
 
-  function renderGutter(text) {
-    var lines = countLines(text);
-    if (lines === lineCount) {
+  /**
+   * The document split into lines, cached until it changes.
+   *
+   * Both the gutter and the sizing want this, and splitting a large document
+   * twice per keystroke is the kind of waste that turns into lag.
+   */
+  var cachedText = null;
+  var cachedLines = [];
+
+  function documentLines() {
+    if (cachedText !== input.value) {
+      cachedText = input.value;
+      cachedLines = cachedText.split('\n');
+    }
+    return cachedLines;
+  }
+
+  function renderGutter(plan) {
+    plan = plan || layout();
+    if (plan.signature === gutterSignature) {
       return;
     }
+    var lines = documentLines();
 
-    // Growing by a line at a time is what typing does, so append rather than
-    // rebuilding every number in the document.
-    if (lines > lineCount && lineCount > 0) {
+    // Typing at the end of a document adds lines one at a time, and appending
+    // one number beats redrawing a thousand. Only when nothing is wrapping,
+    // because a wrapped line's height can change without the count doing so.
+    var appending = !wrapping && !gutterWrapping
+      && gutterCount > 0 && plan.lines > gutterCount;
+
+    if (appending) {
       var added = '';
-      for (var next = lineCount + 1; next <= lines; next += 1) {
-        added += '<span class="num" data-line="' + next + '">' + next + '</span>';
+      for (var next = gutterCount + 1; next <= plan.lines; next += 1) {
+        added += numberHtml(next, 0);
       }
       gutterInner.insertAdjacentHTML('beforeend', added);
-      lineCount = lines;
-      return;
+    } else {
+      var html = '';
+      for (var i = 1; i <= plan.lines; i += 1) {
+        // When wrapping, a logical line can be several rows tall, and its
+        // number has to be too or the gutter drifts out of step with the code.
+        var rows = wrapping
+          ? Math.max(1, Math.ceil(lines[i - 1].length / plan.columns))
+          : 1;
+        html += numberHtml(i, rows > 1 ? Math.round(rows * metrics.line) : 0);
+      }
+      gutterInner.innerHTML = html;
     }
 
-    lineCount = lines;
-    var html = '';
-    for (var i = 1; i <= lines; i += 1) {
-      html += '<span class="num" data-line="' + i + '">' + i + '</span>';
-    }
-    gutterInner.innerHTML = html;
+    gutterCount = plan.lines;
+    gutterWrapping = wrapping;
+    gutterSignature = plan.signature;
+    activeNumber = null;
+  }
+
+  function numberHtml(number, height) {
+    return '<span class="num" data-line="' + number + '"'
+      + (height ? ' style="height:' + height + 'px"' : '')
+      + '>' + number + '</span>';
   }
 
   /**
-   * Counts the lines in a string.
+   * Where the caret is, as a line and a column, without copying anything.
    *
-   * `indexOf` is a native scan; the loop over `charCodeAt` this replaced was
-   * pure interpreted JavaScript, and it ran on every keystroke, every click
-   * and every caret move - three times over the whole document for one tap.
+   * The first version sliced the document up to the caret to count newlines -
+   * on every click, every key-up and every selection change, twice over. On a
+   * long file with the caret near the end that is a copy of the whole document
+   * several times a second, which is a good deal of why the editor felt heavy.
    */
-  function countLines(text) {
-    var count = 1;
+  function caretPosition() {
+    var caret = input.selectionStart;
+    var text = input.value;
+    var line = 1;
+    var lineStart = 0;
     var at = text.indexOf('\n');
-    while (at !== -1) {
-      count += 1;
+    while (at !== -1 && at < caret) {
+      line += 1;
+      lineStart = at + 1;
       at = text.indexOf('\n', at + 1);
     }
-    return count;
+    return { line: line, column: caret - lineStart + 1, start: lineStart };
   }
 
   function currentLine() {
-    var upto = input.value.slice(0, input.selectionStart);
-    return countLines(upto);
+    return caretPosition().line;
   }
 
   function currentColumn() {
-    var upto = input.value.slice(0, input.selectionStart);
-    var lastBreak = upto.lastIndexOf('\n');
-    return input.selectionStart - lastBreak;
+    return caretPosition().column;
   }
 
   var activeNumber = null;
 
-  function highlightActiveLine() {
-    var line = currentLine();
+  /**
+   * Scrolls so the caret is on screen.
+   *
+   * Typing off the right-hand edge of a long line used to leave the caret
+   * somewhere past the visible area, which reads as the editor having stopped
+   * accepting input. Worked out from the metrics rather than asked for,
+   * because a textarea will not say where its caret is.
+   */
+  function scrollCaretIntoView() {
+    var where = caretPosition();
+    var line = where.line - 1;
+    var column = where.column - 1;
+
+    if (wrapping) {
+      var columns = columnsPerRow();
+      var lines = documentLines();
+      var row = 0;
+      for (var i = 0; i < line && i < lines.length; i += 1) {
+        row += Math.max(1, Math.ceil(lines[i].length / columns));
+      }
+      row += Math.floor(column / columns);
+      keepVisible(row, 0);
+      return;
+    }
+    keepVisible(line, column);
+  }
+
+  function keepVisible(row, column) {
+    var top = row * metrics.line + metrics.padTop;
+    var viewTop = surface.scrollTop;
+    var viewBottom = viewTop + surface.clientHeight;
+    if (top < viewTop + metrics.line) {
+      surface.scrollTop = Math.max(0, top - metrics.line * 2);
+    } else if (top + metrics.line > viewBottom - metrics.line) {
+      surface.scrollTop = top - surface.clientHeight + metrics.line * 3;
+    }
+
+    if (wrapping) {
+      surface.scrollLeft = 0;
+      return;
+    }
+    var left = column * metrics.char + metrics.padLeft;
+    var viewLeft = surface.scrollLeft;
+    var viewRight = viewLeft + surface.clientWidth;
+    if (left < viewLeft + metrics.char * 2) {
+      surface.scrollLeft = Math.max(0, left - metrics.char * 6);
+    } else if (left > viewRight - metrics.char * 3) {
+      surface.scrollLeft = left - surface.clientWidth + metrics.char * 6;
+    }
+  }
+
+  function highlightActiveLine(known) {
+    var line = known || currentLine();
     if (activeNumber && activeNumber.dataset.line === String(line)) {
       return;
     }
@@ -238,9 +466,14 @@
     var trimmed = line.trim();
 
     // A block opener earns an extra level; a dedent keyword loses one.
-    if (/:\s*(#.*)?$/.test(trimmed)) {
+    if (braces) {
+      if (/[{[(]\s*(\/\/.*)?$/.test(trimmed)) {
+        indent += INDENT;
+      }
+    } else if (/:\s*(#.*)?$/.test(trimmed)) {
       indent += INDENT;
-    } else if (/^(return|pass|break|continue|raise)\b/.test(trimmed) && indent.length >= INDENT.length) {
+    } else if (/^(return|pass|break|continue|raise)\b/.test(trimmed)
+               && indent.length >= INDENT.length) {
       indent = indent.slice(0, indent.length - INDENT.length);
     }
 
@@ -357,6 +590,31 @@
     }
   }
 
+  /**
+   * A closing brace goes back out a level as you type it.
+   *
+   * Only in a brace language, and only when nothing but whitespace is in
+   * front of it - otherwise `a[0]}` would jump about while being typed.
+   */
+  function handleClosingBrace(event) {
+    if (!braces || event.key !== '}') {
+      return false;
+    }
+    var start = input.selectionStart;
+    if (start !== input.selectionEnd) {
+      return false;
+    }
+    var lineStart = lineStartIndex(start);
+    var before = input.value.slice(lineStart, start);
+    if (!/^[ \t]+$/.test(before) || before.length < INDENT.length) {
+      return false;
+    }
+    event.preventDefault();
+    input.setSelectionRange(start - INDENT.length, start);
+    insertText('}');
+    return true;
+  }
+
   function handleAutoPair(event) {
     var char = event.key;
     var start = input.selectionStart;
@@ -397,6 +655,12 @@
   // -------------------------------------------------------------------- events
 
   function onInput() {
+    if (composing) {
+      // The colours can wait a fraction of a second; a keyboard that has lost
+      // its composition cannot be given it back.
+      scheduleSync();
+      return;
+    }
     render();
     scheduleSync();
   }
@@ -429,7 +693,8 @@
 
   function notifyCursor() {
     if (global.PyBridge && global.PyBridge.onCursorMoved) {
-      global.PyBridge.onCursorMoved(currentLine(), currentColumn());
+      var where = caretPosition();
+      global.PyBridge.onCursorMoved(where.line, where.column);
     }
   }
 
@@ -443,7 +708,9 @@
     } else if (event.key === 'Backspace') {
       handleBackspace(event);
     } else if (event.key.length === 1) {
-      handleAutoPair(event);
+      if (!handleClosingBrace(event)) {
+        handleAutoPair(event);
+      }
     }
   });
 
@@ -458,8 +725,23 @@
     gutterInner.style.transform = 'translateY(' + -surface.scrollTop + 'px)';
   }, { passive: true });
 
+  input.addEventListener('compositionstart', function () {
+    composing = true;
+  });
+
+  input.addEventListener('compositionend', function () {
+    composing = false;
+    render();
+  });
+
   global.addEventListener('resize', function () {
-    resize();
+    // The width the surface offers has changed, so a wrapped document has a
+    // different number of rows and the gutter has to be rebuilt.
+    measure();
+    gutterSignature = '';
+    lastWidth = -1;
+    lastHeight = -1;
+    render(true);
   });
 
   // ---------------------------------------------------------------- public API
@@ -470,7 +752,9 @@
       suppressChangeEvent = true;
       input.value = text || '';
       input.setSelectionRange(0, 0);
-      lineCount = -1;
+      cachedText = null;
+      gutterSignature = '';
+      gutterCount = 0;
       lastSent = input.value;
       render(true);
       surface.scrollTop = 0;
@@ -483,7 +767,7 @@
     setLanguage: function (name) {
       if (global.PyHighlight && global.PyHighlight.setLanguage) {
         global.PyHighlight.setLanguage(name);
-        lineCount = -1;
+        braces = BRACE_LANGUAGES[name] === true;
         lastPainted = null;
         render(true);
       }
@@ -495,6 +779,7 @@
       // Rendering again here painted every insertion twice.
       insertText(text);
       notifyCursor();
+      scrollCaretIntoView();
     },
 
     /**
@@ -510,6 +795,7 @@
       input.setSelectionRange(target, target);
       notifyCursor();
       highlightActiveLine();
+      scrollCaretIntoView();
     },
 
     indent: function () {
@@ -542,10 +828,79 @@
 
     focus: function () {
       input.focus();
+    },
+
+    /**
+     * Wraps long lines instead of scrolling sideways.
+     *
+     * On a phone this is often the only way to see the end of a line at all.
+     * The layer under the textarea gets the same rules so the colours stay
+     * where the characters are, and the gutter gives each logical line as many
+     * rows as it now takes.
+     */
+    setWrap: function (on) {
+      wrapping = !!on;
+      frame.classList.toggle('wrap', wrapping);
+      input.setAttribute('wrap', wrapping ? 'soft' : 'off');
+      gutterSignature = '';
+      lastWidth = -1;
+      lastHeight = -1;
+      if (wrapping) {
+        input.style.width = '';
+        surface.scrollLeft = 0;
+      }
+      render(true);
+      scrollCaretIntoView();
+    },
+
+    /** Puts the caret at the start of a line and scrolls it into view. */
+    goToLine: function (number) {
+      var lines = documentLines();
+      var target = Math.min(Math.max(1, number | 0), lines.length);
+      var index = 0;
+      for (var i = 0; i < target - 1; i += 1) {
+        index += lines[i].length + 1;
+      }
+      input.focus();
+      input.setSelectionRange(index, index);
+      highlightActiveLine();
+      notifyCursor();
+      scrollCaretIntoView();
+    },
+
+    /** What the host asks for when it wants to know where things stand. */
+    stats: function () {
+      var lines = documentLines();
+      var longest = 0;
+      for (var i = 0; i < lines.length; i += 1) {
+        if (lines[i].length > longest) {
+          longest = lines[i].length;
+        }
+      }
+      return JSON.stringify({
+        lines: lines.length,
+        characters: input.value.length,
+        longest: longest,
+        wrapping: wrapping,
+      });
     }
   };
 
+  measure();
   render(true);
+
+  // The monospace face may not be the one the first measurement saw: a font
+  // that swaps in afterwards changes how wide a character is, and every width
+  // in the editor is computed from that.
+  if (document.fonts && document.fonts.ready && document.fonts.ready.then) {
+    document.fonts.ready.then(function () {
+      measure();
+      lastWidth = -1;
+      lastHeight = -1;
+      gutterSignature = '';
+      render(true);
+    });
+  }
 
   if (global.PyBridge && global.PyBridge.onEditorReady) {
     global.PyBridge.onEditorReady();

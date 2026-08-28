@@ -1,17 +1,51 @@
 # Prebuilt APK
 
-`PyCmd-2.1.1-debug.apk` — ready to install, nothing else needed.
+`PyCmd-2.2-debug.apk` — ready to install, nothing else needed.
 
 | | |
 |---|---|
 | Package | `com.expstudio.pycmd.debug` |
-| Version | 2.1.1-debug |
+| Version | 2.2-debug |
 | Size | 33 MB |
 | Signed with | the standard Android debug key |
 | Works on | Android 7.0 (API 24) and newer, **arm64-v8a** (every phone since about 2016) |
 | SHA-256 | see [SHA256SUMS.txt](SHA256SUMS.txt) |
 
-## What is new in 2.1.1
+## What is new in 2.2
+
+**A long line stopped being editable past a certain point.** The editor sized
+its textarea from the highlighted layer underneath it, and that layer is an
+absolutely positioned box - which shrink-to-fits *within its container*. Past
+the width of the screen it stopped growing, so the textarea did too, and the
+end of a long line became unreachable. Nothing is measured that way any more:
+the character width is taken from the real font once and every width and height
+after that is arithmetic, which cannot be capped by anything.
+
+**And why it was intermittent.** The editor's page is built before its tab is
+ever shown, so that one measurement landed on a view with no width and fell
+back to a guess. It now notices it measured nothing and takes the numbers again
+the moment the page has a size - and again if the font swaps in later.
+
+**Wrap long lines**, in the editor's ⋮ menu, with the gutter kept honest: each
+line number grows as tall as its line now takes, and it is redrawn when a line
+gains a row rather than only when the file gains a line. **Go to line...** is
+in the same menu.
+
+**Each language indents its own way.** Python's rules were applied to all six,
+so a Go file got no indent after `{` and an unwanted outdent after `return`.
+Enter now follows the language, typing `}` steps back out a level, and the key
+strip above the keyboard offers that language's characters - `;` and `//` for
+the brace languages, `<` and `>` for markup - instead of `self` and `#` for
+everything.
+
+**The caret is kept on screen** while you type off the edge of a line, and the
+editor no longer copies the whole document to work out which line it is on -
+which it did on every tap, twice, and which is a good deal of why a long file
+felt heavy. Android's swipe typing and autocorrect are also left alone
+mid-word, rather than having the layer under them rewritten while a word is
+still being composed.
+
+## What was new in 2.1.1
 
 **Plugin settings actually work.** Every control was drawn from the values
 Python had returned, and nothing ever wrote back into that - so a switch sprang
@@ -207,16 +241,17 @@ on, its console command answered, and its panel called back into its own
 Python. The APK here is that source built for arm64 instead, which changes
 the CPython binaries and nothing else.
 
-728 checks run before any of this is committed: `test_runtime.py` (145),
+762 checks run before any of this is committed: `test_runtime.py` (145),
 `test_plugins.py` (120), `test_go.py` (92), `test_rust.py` (73),
 `test_cloud.py` (68), `test_bundled.py` (61), `test_c.py` (54), `test_js.js`
-(43), `test_doctor.py` (37), `test_preview.py` (23) and `test_editor.js` (12). Each language check is a real program paired with the
+(43), `test_editor.js` (46), `test_doctor.py` (37) and `test_preview.py` (23). Each language check is a real program paired with the
 output the real compiler produces. The rest go after the things that are
 awkward to be sure of by looking: a script wedged in `accept()` is started for
 real and killed, to prove the port comes back; the preview checks fetch pages
-back off the loopback server; the editor checks count how often the
-highlighter runs, so a change that makes typing slow again fails rather than
-being noticed on a phone weeks later. `tools/run-tests.sh` runs the lot, then
+back off the loopback server; the editor checks run the real
+editor against a stand-in DOM and read back the widths and heights it writes,
+so the sizing is arithmetic that can be checked - including the case that
+caused this release: a page measured before it was ever on screen. `tools/run-tests.sh` runs the lot, then
 a debug build and Android Lint.
 
 `test_cloud.py` runs a local HTTP server that plays Supabase and Firebase,
@@ -227,7 +262,7 @@ bundled plugins the way the app does and drives them: it starts a real server
 and restarts it through Server Pro, schedules a real job, and renders every
 panel.
 
-The 2.1.1 changes were verified by those checks and by Lint on the built APK,
+The 2.2 changes were verified by those checks and by Lint on the built APK,
 not on an emulator: this build machine has no hardware virtualisation, so no
 emulator could be started for it.
 
@@ -255,7 +290,7 @@ every tab with things to paste in and try.
 ## Installing over USB
 
 ```bash
-adb install -r dist/PyCmd-2.1.1-debug.apk
+adb install -r dist/PyCmd-2.2-debug.apk
 ```
 
 ## Checking the download
