@@ -1,7 +1,7 @@
 {
   "id": "pycmd.server-pro",
   "name": "Server Pro",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "author": "PyCmd",
   "description": "Makes the Servers tab a place you can work in: a live board with a health check that says whether the port really answers, restart and force-stop, a free-port finder, an index page it will write for a folder that has none, and console commands for all of it.",
   "entry": "main.py",
@@ -41,6 +41,13 @@
       "height": "tall",
       "open": true,
       "icon": "icon.png"
+    }
+  ],
+  "guides": [
+    {
+      "file": "GUIDE.md",
+      "title": "Using Server Pro",
+      "summary": "The board, health checks, restart, free ports and the commands."
     }
   ]
 }

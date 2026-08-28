@@ -266,6 +266,53 @@ refused = result(plugins.install(bad))
 check("an unknown setting type is refused at install", not refused.get("ok"), refused)
 check("and says which types exist", "switch" in refused.get("error", ""), refused)
 
+print("\n== guides a plugin publishes ==")
+guided = os.path.join(scratch, "src", "guided")
+write(os.path.join(guided, "plugin.json"), json.dumps({
+    "id": "demo.guided", "name": "Guided", "entry": "main.py",
+    "guides": [
+        {"file": "HOWTO.md", "title": "How to use it", "summary": "The short version"},
+        "extra_notes.md",
+    ],
+}))
+write(os.path.join(guided, "main.py"), "def setup(api):\n    pass\n")
+write(os.path.join(guided, "HOWTO.md"), "# How\n\nType `guided` in the console.\n")
+write(os.path.join(guided, "extra_notes.md"), "# Notes\n")
+
+installed = result(plugins.install(guided))
+check("a plugin with guides installs", installed.get("ok"), installed)
+guides = installed["manifest"]["guides"]
+check("both are kept", len(guides) == 2, guides)
+check("a titled one keeps its title", guides[0]["title"] == "How to use it", guides[0])
+check("a bare file name gets a readable title",
+      guides[1]["title"] == "Extra Notes", guides[1])
+
+fetched = result(plugins.guide_text("demo.guided", "HOWTO.md"))
+check("the text comes back", "Type `guided`" in fetched.get("text", ""), fetched)
+
+outside = result(plugins.guide_text("demo.guided", "../../../etc/passwd"))
+check("a file outside the plugin is refused", not outside.get("ok"), outside)
+undeclared = result(plugins.guide_text("demo.guided", "main.py"))
+check("and so is a file it never declared", not undeclared.get("ok"), undeclared)
+
+missing = os.path.join(scratch, "src", "guidemissing")
+write(os.path.join(missing, "plugin.json"), json.dumps({
+    "id": "demo.guidemissing", "name": "Missing", "entry": "main.py",
+    "guides": ["absent.md"],
+}))
+write(os.path.join(missing, "main.py"), "def setup(api):\n    pass\n")
+refused = result(plugins.install(missing))
+check("a guide that is not there is refused at install", not refused.get("ok"), refused)
+
+wrong = os.path.join(scratch, "src", "guidewrong")
+write(os.path.join(wrong, "plugin.json"), json.dumps({
+    "id": "demo.guidewrong", "name": "Wrong", "entry": "main.py",
+    "guides": ["main.py"],
+}))
+write(os.path.join(wrong, "main.py"), "def setup(api):\n    pass\n")
+refused = result(plugins.install(wrong))
+check("and so is one that is not a document", not refused.get("ok"), refused)
+
 print("\n== lines a plugin adds to a file's menu ==")
 actions_folder = os.path.join(scratch, "src", "actions")
 write(os.path.join(actions_folder, "plugin.json"), json.dumps({

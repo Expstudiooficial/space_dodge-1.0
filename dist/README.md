@@ -1,17 +1,35 @@
 # Prebuilt APK
 
-`PyCmd-2.1-debug.apk` — ready to install, nothing else needed.
+`PyCmd-2.1.1-debug.apk` — ready to install, nothing else needed.
 
 | | |
 |---|---|
 | Package | `com.expstudio.pycmd.debug` |
-| Version | 2.1-debug |
+| Version | 2.1.1-debug |
 | Size | 33 MB |
 | Signed with | the standard Android debug key |
 | Works on | Android 7.0 (API 24) and newer, **arm64-v8a** (every phone since about 2016) |
 | SHA-256 | see [SHA256SUMS.txt](SHA256SUMS.txt) |
 
-## What is new in 2.1
+## What is new in 2.1.1
+
+**Plugin settings actually work.** Every control was drawn from the values
+Python had returned, and nothing ever wrote back into that - so a switch sprang
+back the instant it was tapped and a choice never moved. The form owns its
+state now; saving is what happens afterwards, and typing is coalesced so a word
+is one write rather than one per letter.
+
+**A long description no longer makes a card taller than the screen.** It
+collapses to three lines with *Show more*, and a plugin's file list caps at
+twelve.
+
+**Plugins can add their own guides.** A `guides` block lists documents of
+yours - `.md`, `.txt` or `.html` - in the app's **Guides** screen under *From
+your plugins*, opened in the same reader the app's own guides use. All three
+bundled plugins now ship one, so switching Cloud on and wondering what to type
+has an answer one tap away.
+
+## What was new in 2.1
 
 **A plugin's section scrolls.** Opening one inside an existing screen put a
 scrolling page inside a scrolling list, and the list won every gesture - so the
@@ -189,10 +207,10 @@ on, its console command answered, and its panel called back into its own
 Python. The APK here is that source built for arm64 instead, which changes
 the CPython binaries and nothing else.
 
-699 checks run before any of this is committed: `test_runtime.py` (145),
-`test_plugins.py` (111), `test_go.py` (92), `test_rust.py` (73),
-`test_cloud.py` (68), `test_c.py` (54), `test_js.js` (43), `test_bundled.py`
-(41), `test_doctor.py` (37), `test_preview.py` (23) and `test_editor.js` (12). Each language check is a real program paired with the
+728 checks run before any of this is committed: `test_runtime.py` (145),
+`test_plugins.py` (120), `test_go.py` (92), `test_rust.py` (73),
+`test_cloud.py` (68), `test_bundled.py` (61), `test_c.py` (54), `test_js.js`
+(43), `test_doctor.py` (37), `test_preview.py` (23) and `test_editor.js` (12). Each language check is a real program paired with the
 output the real compiler produces. The rest go after the things that are
 awkward to be sure of by looking: a script wedged in `accept()` is started for
 real and killed, to prove the port comes back; the preview checks fetch pages
@@ -209,7 +227,7 @@ bundled plugins the way the app does and drives them: it starts a real server
 and restarts it through Server Pro, schedules a real job, and renders every
 panel.
 
-The 2.1 changes were verified by those checks and by Lint on the built APK,
+The 2.1.1 changes were verified by those checks and by Lint on the built APK,
 not on an emulator: this build machine has no hardware virtualisation, so no
 emulator could be started for it.
 
@@ -237,7 +255,7 @@ every tab with things to paste in and try.
 ## Installing over USB
 
 ```bash
-adb install -r dist/PyCmd-2.1-debug.apk
+adb install -r dist/PyCmd-2.1.1-debug.apk
 ```
 
 ## Checking the download

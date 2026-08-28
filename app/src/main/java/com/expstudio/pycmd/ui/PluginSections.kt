@@ -36,6 +36,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.expstudio.pycmd.plugins.InstalledPlugin
 import com.expstudio.pycmd.plugins.PluginExtension
+import com.expstudio.pycmd.plugins.PluginGuide
 import java.io.File
 
 /**
@@ -68,6 +69,22 @@ fun sectionsFor(
         .filter { it.id in enabled }
         .flatMap { plugin -> plugin.extensions.filter { it.tab == name }.map { plugin to it } }
 }
+
+/**
+ * Every guide a switched-on plugin has published.
+ *
+ * Takes the collected lists for the same reason [sectionsFor] does: switching
+ * a plugin on should make its guide appear, not wait for something else to
+ * redraw the screen. Only plugins that are on - a guide for something the user
+ * cannot currently do would be a puzzle rather than a help.
+ */
+fun guidesFor(
+    installed: List<InstalledPlugin>,
+    enabled: Set<String>,
+): List<Pair<InstalledPlugin, PluginGuide>> =
+    installed
+        .filter { it.id in enabled }
+        .flatMap { plugin -> plugin.guides.map { plugin to it } }
 
 @Composable
 fun PluginSections(

@@ -467,6 +467,8 @@ fun PyCmdRoot(viewModel: MainViewModel = viewModel()) {
                 Tab.DOCS -> DocsScreen(
                     languages = languages,
                     onOpen = { asset, title -> viewModel.openGuide(asset, title) },
+                    pluginGuides = guidesFor(installedPlugins, installedEnabled),
+                    onOpenPluginGuide = viewModel::openPluginGuide,
                 
                     pluginSections = {
                         PluginSections(

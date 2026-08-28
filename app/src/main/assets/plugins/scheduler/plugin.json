@@ -1,7 +1,7 @@
 {
   "id": "pycmd.scheduler",
   "name": "Scheduler",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "author": "PyCmd",
   "description": "Runs a script again every so often - a backup every ten minutes, a scrape every hour - without writing a sleep loop into the script itself. Jobs live as long as the app does, and it says so rather than promising more than Android allows.",
   "entry": "main.py",
@@ -16,8 +16,24 @@
     }
   ],
   "commands": [
-    { "name": "every", "help": "every <seconds> <script> - run it again and again" },
-    { "name": "jobs", "help": "jobs [stop <id>|stop all] - what is scheduled" }
+    {
+      "name": "every",
+      "help": "every <seconds> <script> - run it again and again"
+    },
+    {
+      "name": "jobs",
+      "help": "jobs [stop <id>|stop all] - what is scheduled"
+    }
   ],
-  "permissions": ["files", "console"]
+  "permissions": [
+    "files",
+    "console"
+  ],
+  "guides": [
+    {
+      "file": "GUIDE.md",
+      "title": "Using Scheduler",
+      "summary": "Run a script again on a timer, and what that does not promise."
+    }
+  ]
 }

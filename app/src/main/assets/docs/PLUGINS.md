@@ -105,6 +105,7 @@ wrapping directory if it finds one.
 | `extends` | no | Puts a section of yours inside one of the app's **own** screens. See below. |
 | `settings` | no | Controls the app renders for you in the plugin's row. See below. |
 | `actions` | no | Lines you add to a file's or folder's menu in the Files tab. See below. |
+| `guides` | no | Documents of yours, listed in the app's Guides screen. See below. |
 | `commands` | no | Console commands, for the list and the help text. You still register the handler in code. |
 | `permissions` | no | `files`, `network`, `console`, `servers`, `packages`. **Documentation, not enforcement** — they are shown to the user so they know what to expect. Declare honestly. |
 
@@ -203,6 +204,27 @@ Each one appears in the ⋮ menu of a matching file (or folder) in the Files tab
 with your plugin's name beside it. Tapping it calls your export with
 `{"path": ..., "name": ..., "is_folder": ...}`. `types` is optional; leave it
 out and the line appears on everything.
+
+### Your own guide, in the Guides screen
+
+A plugin can be installed, switched on, and still leave nobody any the wiser
+about what to type. Ship a document with it:
+
+```json
+"guides": [
+  { "file": "GUIDE.md", "title": "Using Widgets", "summary": "The short version" },
+  "reference.md"
+]
+```
+
+`.md`, `.txt` and `.html` are accepted, up to six of them. A bare file name
+works too and gets its title from the name. They appear in **Guides** under
+*From your plugins* while the plugin is switched on, and open in the same
+reader the app's own guides use — so Markdown renders, headings get a contents
+panel, and the text wraps.
+
+Naming a file that is not there is refused at install time, as is anything the
+reader cannot show.
 
 ### Asking the app to do something
 
@@ -770,6 +792,9 @@ plugin.json / PLUGIN keys:
   actions      optional, lines in a file's or folder's menu in the Files tab:
                {"target": "file|folder", "label": "...", "export": "fn",
                 "types": ".png,.jpg"}  -> fn({"path","name","is_folder"})
+  guides       optional, documents listed in the app's Guides screen:
+               [{"file": "GUIDE.md", "title": "...", "summary": "..."}]
+               or just ["GUIDE.md"]. .md, .txt or .html, up to six.
   tab          optional, publishes a row in the app's More screen. Needs panel.
                {"title": "<=24 chars",
                 "description": "<=120 chars, one line",

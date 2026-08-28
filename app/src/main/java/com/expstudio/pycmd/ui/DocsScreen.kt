@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -21,6 +22,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.expstudio.pycmd.plugins.InstalledPlugin
+import com.expstudio.pycmd.plugins.PluginGuide
 import com.expstudio.pycmd.python.LanguageInfo
 
 /** One document that ships inside the APK. */
@@ -66,6 +69,9 @@ fun DocsScreen(
     languages: List<LanguageInfo>,
     onOpen: (String, String) -> Unit,
     modifier: Modifier = Modifier,
+    /** Guides published by plugins that are switched on. */
+    pluginGuides: List<Pair<InstalledPlugin, PluginGuide>> = emptyList(),
+    onOpenPluginGuide: (InstalledPlugin, PluginGuide) -> Unit = { _, _ -> },
     /** Sections plugins have added to this screen; empty when none are on. */
     pluginSections: @Composable () -> Unit = {},
 ) {
@@ -105,6 +111,47 @@ fun DocsScreen(
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                         }
+                    }
+                }
+            }
+        }
+
+        if (pluginGuides.isNotEmpty()) {
+            item {
+                Spacer(Modifier.height(6.dp))
+                SectionTitle("From your plugins")
+            }
+            items(pluginGuides, key = { (plugin, guide) -> "${plugin.id}:${guide.file}" }) {
+                (plugin, guide) ->
+                PyCard(contentPadding = PaddingValues(0.dp)) {
+                    Row(
+                        Modifier
+                            .fillMaxWidth()
+                            .clickable { onOpenPluginGuide(plugin, guide) }
+                            .padding(14.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Icon(
+                            PyIcons.Description,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.tertiary,
+                            modifier = Modifier.size(20.dp),
+                        )
+                        Spacer(Modifier.width(14.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text(
+                                guide.title,
+                                style = MaterialTheme.typography.bodyLarge,
+                                fontWeight = FontWeight.Medium,
+                            )
+                            Text(
+                                guide.summary.ifBlank { "From ${plugin.name}" },
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 2,
+                            )
+                        }
+                        StatusChip("plugin", MaterialTheme.colorScheme.tertiary)
                     }
                 }
             }

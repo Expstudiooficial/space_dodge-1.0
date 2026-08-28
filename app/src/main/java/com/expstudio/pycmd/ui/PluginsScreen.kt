@@ -1,6 +1,7 @@
 package com.expstudio.pycmd.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -32,12 +33,14 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.expstudio.pycmd.plugins.InstalledPlugin
 import com.expstudio.pycmd.plugins.PluginGroup
@@ -151,7 +154,7 @@ fun PluginsScreen(
                     // Removing one would only bring it back on the next start,
                     // which is a worse answer than not offering it.
                     onRemove = null,
-                    settingsValues = rememberSettings(plugin, settingsFor),
+                    settingsFor = settingsFor,
                     onSetting = { name, value -> onSetting(plugin.id, name, value) },
                 )
             }
@@ -169,7 +172,7 @@ fun PluginsScreen(
                     onToggle = { on -> onToggleInstalled(plugin.id, on) },
                     onOpen = { onOpenPanel(plugin) },
                     onRemove = { pendingRemoval = plugin },
-                    settingsValues = rememberSettings(plugin, settingsFor),
+                    settingsFor = settingsFor,
                     onSetting = { name, value -> onSetting(plugin.id, name, value) },
                 )
             }
@@ -366,23 +369,6 @@ private fun InstallCard(
     }
 }
 
-/**
- * Reads a plugin's saved settings once, when its row appears.
- *
- * Empty for a plugin that declared none, which is most of them - so the common
- * case costs nothing and never reaches Python at all.
- */
-@Composable
-private fun rememberSettings(
-    plugin: InstalledPlugin,
-    settingsFor: suspend (String) -> Map<String, Any?>,
-): Map<String, Any?> {
-    if (plugin.settings.isEmpty()) return emptyMap()
-    var values by remember(plugin.id) { mutableStateOf<Map<String, Any?>>(emptyMap()) }
-    LaunchedEffect(plugin.id) { values = settingsFor(plugin.id) }
-    return values
-}
-
 @Composable
 private fun InstalledRow(
     plugin: InstalledPlugin,
@@ -391,7 +377,7 @@ private fun InstalledRow(
     onOpen: () -> Unit,
     /** Null for a plugin that ships in the APK: it would only come back. */
     onRemove: (() -> Unit)?,
-    settingsValues: Map<String, Any?>,
+    settingsFor: suspend (String) -> Map<String, Any?>,
     onSetting: (String, String) -> Unit,
 ) {
     var expanded by remember { mutableStateOf(false) }
@@ -438,11 +424,28 @@ private fun InstalledRow(
 
         if (plugin.description.isNotEmpty()) {
             Spacer(Modifier.height(8.dp))
+            // A long description used to make one card taller than the screen,
+            // which is a poor way to read it and an even poorer thing to have
+            // to scroll past to reach the next plugin.
+            var showAll by remember(plugin.id) { mutableStateOf(false) }
             Text(
                 plugin.description,
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = if (showAll) Int.MAX_VALUE else 3,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.animateContentSize(),
             )
+            if (plugin.description.length > 150) {
+                Text(
+                    if (showAll) "Show less" else "Show more",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier
+                        .padding(top = 2.dp)
+                        .clickable { showAll = !showAll },
+                )
+            }
         }
 
         if (plugin.commands.isNotEmpty()) {
@@ -491,18 +494,16 @@ private fun InstalledRow(
                 style = MaterialTheme.typography.labelSmall,
                 fontFamily = MonoFamily,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
+                // A plugin with a hundred files would otherwise be a hundred
+                // lines of card between you and the next one.
+                maxLines = 12,
+                overflow = TextOverflow.Ellipsis,
             )
         }
 
         if (settingsOpen && plugin.settings.isNotEmpty()) {
             Spacer(Modifier.height(10.dp))
-            plugin.settings.forEach { field ->
-                PluginSettingField(
-                    field = field,
-                    value = settingsValues[field.name] ?: field.default,
-                    onChange = { onSetting(field.name, it) },
-                )
-            }
+            PluginSettingsForm(plugin, settingsFor, onSetting)
         }
 
         Spacer(Modifier.height(10.dp))
@@ -769,6 +770,53 @@ fun SearchField(
 }
 
 /**
+ * The form for one plugin's declared settings.
+ *
+ * It holds the values itself. The first version drew each control straight
+ * from what Python had returned, and nothing ever wrote back into that - so a
+ * switch sprang back the instant it was tapped and a choice never moved. The
+ * control has to own its state; saving is what happens afterwards.
+ */
+@Composable
+private fun PluginSettingsForm(
+    plugin: InstalledPlugin,
+    settingsFor: suspend (String) -> Map<String, Any?>,
+    onSetting: (String, String) -> Unit,
+) {
+    val values = remember(plugin.id) { mutableStateMapOf<String, Any?>() }
+    var loaded by remember(plugin.id) { mutableStateOf(false) }
+
+    LaunchedEffect(plugin.id) {
+        val saved = settingsFor(plugin.id)
+        values.clear()
+        plugin.settings.forEach { field ->
+            values[field.name] = saved[field.name] ?: field.default
+        }
+        loaded = true
+    }
+
+    if (!loaded) {
+        Text(
+            "Reading settings…",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        return
+    }
+
+    plugin.settings.forEach { field ->
+        PluginSettingField(
+            field = field,
+            value = values[field.name],
+            onChange = { typed, raw ->
+                values[field.name] = typed
+                onSetting(field.name, raw)
+            },
+        )
+    }
+}
+
+/**
  * One setting a plugin declared, as a real control.
  *
  * The value is sent back as text and typed on the Python side, where the
@@ -779,25 +827,29 @@ fun SearchField(
 private fun PluginSettingField(
     field: PluginSetting,
     value: Any?,
-    onChange: (String) -> Unit,
+    /** The typed value for the control, and the text Python should store. */
+    onChange: (Any?, String) -> Unit,
 ) {
     Column(Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
         when (field.type) {
-            "switch" -> Row(verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f)) {
-                    Text(field.label, style = MaterialTheme.typography.bodyMedium)
-                    if (field.help.isNotBlank()) {
-                        Text(
-                            field.help,
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
+            "switch" -> {
+                val on = value == true || value?.toString() == "true"
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text(field.label, style = MaterialTheme.typography.bodyMedium)
+                        if (field.help.isNotBlank()) {
+                            Text(
+                                field.help,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
                     }
+                    Switch(
+                        checked = on,
+                        onCheckedChange = { next -> onChange(next, next.toString()) },
+                    )
                 }
-                Switch(
-                    checked = value == true || value == "true",
-                    onCheckedChange = { onChange(it.toString()) },
-                )
             }
 
             "choice" -> {
@@ -809,7 +861,7 @@ private fun PluginSettingField(
                 Spacer(Modifier.height(4.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     field.options.forEach { option ->
-                        val chosen = option == value.toString()
+                        val chosen = option == value?.toString()
                         StatusChip(
                             option,
                             if (chosen) {
@@ -817,11 +869,12 @@ private fun PluginSettingField(
                             } else {
                                 MaterialTheme.colorScheme.outline
                             },
-                            Modifier.clickable { onChange(option) },
+                            Modifier.clickable { onChange(option, option) },
                         )
                     }
                 }
                 if (field.help.isNotBlank()) {
+                    Spacer(Modifier.height(2.dp))
                     Text(
                         field.help,
                         style = MaterialTheme.typography.labelSmall,
@@ -831,12 +884,15 @@ private fun PluginSettingField(
             }
 
             else -> {
-                var text by remember(field.name, value) { mutableStateOf(value?.toString().orEmpty()) }
+                // Keyed on the field alone, never on the value: re-keying on
+                // the value would wipe what is being typed the moment the
+                // first character was saved.
+                var text by remember(field.name) { mutableStateOf(value?.toString().orEmpty()) }
                 OutlinedTextField(
                     value = text,
                     onValueChange = {
                         text = it
-                        onChange(it)
+                        onChange(it, it)
                     },
                     modifier = Modifier.fillMaxWidth(),
                     label = { Text(field.label, style = MaterialTheme.typography.labelSmall) },
@@ -853,6 +909,10 @@ private fun PluginSettingField(
                         KeyboardOptions.Default
                     },
                     shape = RoundedCornerShape(10.dp),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = MaterialTheme.colorScheme.primary,
+                        unfocusedBorderColor = MaterialTheme.colorScheme.outline,
+                    ),
                 )
             }
         }

@@ -42,6 +42,8 @@ data class InstalledPlugin(
     val settings: List<PluginSetting>,
     /** Lines this plugin adds to a file's or folder's menu in Files. */
     val actions: List<PluginFileAction>,
+    /** Documents this plugin wants listed in the Guides screen. */
+    val guides: List<PluginGuide>,
 ) {
     val hasPanel: Boolean get() = !panel.isNullOrEmpty()
 
@@ -110,7 +112,7 @@ data class InstalledPlugin(
                         type = row.optString("type").ifEmpty { "text" },
                         label = row.optString("label").ifEmpty { name },
                         help = row.optString("help"),
-                        default = row.opt("default"),
+                        default = row.opt("default").takeIf { it != JSONObject.NULL },
                         options = options,
                     )
                 }
@@ -131,6 +133,20 @@ data class InstalledPlugin(
                         label = label,
                         export = export,
                         types = types,
+                    )
+                }
+            }
+
+            val guides = mutableListOf<PluginGuide>()
+            json.optJSONArray("guides")?.let { array ->
+                for (index in 0 until array.length()) {
+                    val row = array.optJSONObject(index) ?: continue
+                    val file = row.optString("file")
+                    if (file.isEmpty()) continue
+                    guides += PluginGuide(
+                        file = file,
+                        title = row.optString("title").ifEmpty { file },
+                        summary = row.optString("summary"),
                     )
                 }
             }
@@ -156,6 +172,7 @@ data class InstalledPlugin(
                 extensions = extensions,
                 settings = settings,
                 actions = actions,
+                guides = guides,
             )
         }
     }
@@ -178,6 +195,14 @@ data class PluginSetting(
     val default: Any?,
     val options: List<String>,
 )
+
+/**
+ * A document a plugin wants listed alongside the app's own guides.
+ *
+ * A plugin can be installed, switched on, and still leave nobody any the wiser
+ * about what to type. Its guide belongs where the guides are.
+ */
+data class PluginGuide(val file: String, val title: String, val summary: String)
 
 /**
  * A line a plugin adds to a file's or a folder's menu in the Files tab.

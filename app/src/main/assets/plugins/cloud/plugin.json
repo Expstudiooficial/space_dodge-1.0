@@ -82,5 +82,12 @@
       "label": "Upload every file in it",
       "export": "upload_folder"
     }
+  ],
+  "guides": [
+    {
+      "file": "GUIDE.md",
+      "title": "Using Cloud",
+      "summary": "Connect Supabase or Firebase, then read and write from anywhere in the app."
+    }
   ]
 }

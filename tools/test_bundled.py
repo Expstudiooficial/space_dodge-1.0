@@ -133,6 +133,36 @@ for plugin_id, manifest in installed.items():
         check(f"{plugin_id}'s tab icon is where it says",
               os.path.isfile(tab["image"]), tab["image"])
 
+say("\n== each of them explains itself ==")
+for plugin_id, manifest in installed.items():
+    guides = manifest.get("guides", [])
+    check(f"{plugin_id} ships a guide", len(guides) >= 1, guides)
+    for guide in guides:
+        fetched = result(plugins.guide_text(plugin_id, guide["file"]))
+        check(f"{plugin_id}/{guide['file']} can be read", fetched.get("ok"), fetched.get("error"))
+        check(f"{plugin_id}/{guide['file']} is not a stub",
+              len(fetched.get("text", "")) > 400, len(fetched.get("text", "")))
+        check(f"{plugin_id}/{guide['file']} has a summary",
+              guide["summary"].strip() != "", guide)
+
+say("\n== settings survive being read back ==")
+for plugin_id, manifest in installed.items():
+    for field in manifest.get("settings", []):
+        stored = result(plugins.set_plugin_setting(
+            plugin_id, field["name"],
+            {"switch": "true", "number": "7", "choice": str(field.get("options", [""])[0])}
+            .get(field["type"], "written"),
+        ))
+        check(f"{plugin_id}.{field['name']} saves", stored.get("ok"), stored)
+    if manifest.get("settings"):
+        back = {f["name"]: f["value"] for f in
+                result(plugins.plugin_settings(plugin_id))["settings"]}
+        kinds = {f["name"]: f["type"] for f in manifest["settings"]}
+        for name, value in back.items():
+            expected = {"switch": bool, "number": (int, float), "choice": str, "text": str}
+            check(f"{plugin_id}.{name} comes back as a {kinds[name]}",
+                  isinstance(value, expected[kinds[name]]), (name, value))
+
 say("\n== Server Pro drives real servers ==")
 folder = os.path.join(workspace, "site")
 os.makedirs(folder, exist_ok=True)

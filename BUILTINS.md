@@ -14,6 +14,9 @@ runs with everything the app can do — exactly like a plugin you installed
 yourself. They appear under *Ships with PyCmd*, and they cannot be deleted,
 because the next start would only put them back.
 
+Each of the three bundled plugins ships its own guide, which appears in
+**Guides → From your plugins** once you switch it on.
+
 If you want to write one of your own, [PLUGINS.md](PLUGINS.md) is the guide.
 
 ---

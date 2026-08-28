@@ -11,7 +11,7 @@ compiled itself since API 29; JavaScript is handed to the engine the device
 already has. Another twenty file types are edited, highlighted, previewed and
 served.
 
-Version 2.1. Kotlin and Jetpack Compose for the app, JavaScript for the console
+Version 2.1.1. Kotlin and Jetpack Compose for the app, JavaScript for the console
 and editor.
 
 ---
@@ -97,7 +97,7 @@ running, and housekeeping that touches nothing you wrote.
 ## Just want to try it
 
 A ready-to-install debug APK is in [`dist/`](dist/) - download
-[`PyCmd-2.1-debug.apk`](dist/PyCmd-2.1-debug.apk), open it on the phone, and
+[`PyCmd-2.1.1-debug.apk`](dist/PyCmd-2.1.1-debug.apk), open it on the phone, and
 allow the install when Android asks. It is signed with the standard debug key,
 so no keystore or store account is involved. See [dist/README.md](dist/README.md)
 for the details.

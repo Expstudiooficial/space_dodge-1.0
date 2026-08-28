@@ -21,6 +21,7 @@ import com.expstudio.pycmd.plugins.CustomPlugins
 import com.expstudio.pycmd.plugins.InstalledPlugin
 import com.expstudio.pycmd.plugins.PluginExtension
 import com.expstudio.pycmd.plugins.PluginFileAction
+import com.expstudio.pycmd.plugins.PluginGuide
 import com.expstudio.pycmd.plugins.PluginIds
 import com.expstudio.pycmd.plugins.PluginScreen
 import com.expstudio.pycmd.plugins.PluginSpec
@@ -39,6 +40,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.BufferOverflow
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
@@ -630,6 +632,18 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch { _pluginCandidates.value = workspace.pluginCandidates() }
     }
 
+    /** Opens one of them, rendered the same way the app's own guides are. */
+    fun openPluginGuide(plugin: InstalledPlugin, guide: PluginGuide) {
+        viewModelScope.launch {
+            val reply = engine.pluginGuide(plugin.id, guide.file)
+            if (!reply.optBoolean("ok")) {
+                showToast(reply.optString("error").ifBlank { "That guide could not be read." })
+                return@launch
+            }
+            _preview.value = engine.previewText(reply.optString("text"), guide.file)
+        }
+    }
+
     /** Shows the plugin authoring guide that ships in the APK. */
     fun openGuide(asset: String = "docs/PLUGINS.md", title: String = "PLUGINS.md") {
         viewModelScope.launch {
@@ -745,17 +759,30 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val values = mutableMapOf<String, Any?>()
         for (index in 0 until rows.length()) {
             val row = rows.optJSONObject(index) ?: continue
-            values[row.optString("name")] = row.opt("value")
+            // JSONObject.NULL is an object, not null, and it would reach a
+            // switch as something that is neither true nor false.
+            val value = row.opt("value").takeIf { it != JSONObject.NULL }
+            values[row.optString("name")] = value
         }
         return values
     }
 
+    /** One pending save per setting, so typing does not write once per letter. */
+    private val settingSaves = mutableMapOf<String, Job>()
+
     fun setPluginSetting(id: String, name: String, value: String) {
-        viewModelScope.launch {
+        val key = "$id:$name"
+        settingSaves.remove(key)?.cancel()
+        settingSaves[key] = viewModelScope.launch {
+            // A text field calls this on every keystroke. Waiting for a pause
+            // turns a word into one write rather than one per character, and
+            // a switch or a choice still lands almost immediately.
+            delay(250)
             val reply = engine.setPluginSetting(id, name, value)
             if (!reply.optBoolean("ok")) {
                 showToast(reply.optString("error").ifBlank { "Could not save that." })
             }
+            settingSaves.remove(key)
         }
     }
 

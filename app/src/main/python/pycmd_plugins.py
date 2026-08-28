@@ -326,6 +326,7 @@ def _validate(manifest: dict, folder: str) -> dict:
 
     manifest["extends"] = _validate_extends(manifest.get("extends"), manifest, folder)
     manifest["settings"] = _validate_settings(manifest.get("settings"))
+    manifest["guides"] = _validate_guides(manifest.get("guides"), folder)
     manifest["actions"] = _validate_actions(manifest.get("actions"))
 
     commands = []
@@ -537,6 +538,67 @@ def _validate_actions(raw) -> list:
             "types": types,
         })
     return actions
+
+
+GUIDE_TYPES = (".md", ".markdown", ".txt", ".html", ".htm")
+
+
+def _validate_guides(raw, folder: str) -> list:
+    """Documents a plugin wants listed in the app's Guides screen.
+
+    A plugin can be installed and switched on and still leave the user with no
+    idea what to type. Its own guide belongs where the app's guides are, not
+    buried in a panel nobody opens first.
+    """
+    if not raw:
+        return []
+    if isinstance(raw, dict):
+        raw = [raw]
+    if not isinstance(raw, (list, tuple)):
+        raise PluginError("'guides' must be a list")
+
+    guides = []
+    for entry in raw[:6]:
+        if isinstance(entry, str):
+            entry = {"file": entry}
+        if not isinstance(entry, dict):
+            raise PluginError("every guide must be a file name or an object")
+        name = str(entry.get("file") or "").strip()
+        if not name:
+            raise PluginError("every guide needs a file")
+        if not name.lower().endswith(GUIDE_TYPES):
+            raise PluginError(
+                f"a guide has to be {', '.join(GUIDE_TYPES)} - {name!r} is not"
+            )
+        if not os.path.isfile(_safe_join(folder, name)):
+            raise PluginError(f"the guide {name!r} is not in the plugin")
+
+        stem = os.path.splitext(os.path.basename(name))[0].replace("_", " ").replace("-", " ")
+        guides.append({
+            "file": name,
+            "title": str(entry.get("title") or stem.title())[:60],
+            "summary": str(entry.get("summary") or "")[:160],
+        })
+    return guides
+
+
+def guide_text(plugin_id: str, name: str) -> str:
+    """The text of one of a plugin's guides, for the app to render."""
+    plugin_id = _safe_id(plugin_id)
+    folder = plugin_dir(plugin_id)
+    try:
+        manifest = read_manifest(folder)
+    except PluginError as error:
+        return _json({"ok": False, "error": str(error)})
+
+    if not any(guide["file"] == name for guide in manifest.get("guides", [])):
+        return _json({"ok": False, "error": f"{manifest['name']} has no guide called {name!r}"})
+
+    try:
+        with open(_safe_join(folder, name), "r", encoding="utf-8") as handle:
+            return _json({"ok": True, "name": name, "text": handle.read(400_000)})
+    except (OSError, PluginError) as error:
+        return _json({"ok": False, "error": str(error)})
 
 
 def _safe_id(value: str) -> str:

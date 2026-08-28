@@ -934,6 +934,10 @@ object PythonEngine {
 
     suspend fun pluginCommands(): JSONObject = pluginCall("commands")
 
+    /** The text of one of a plugin's own guides. */
+    suspend fun pluginGuide(id: String, file: String): JSONObject =
+        pluginCall("guide_text", id, file)
+
     /** What a plugin declared as settings, with whatever the user has chosen. */
     suspend fun pluginSettings(id: String): JSONObject = pluginCall("plugin_settings", id)
 
