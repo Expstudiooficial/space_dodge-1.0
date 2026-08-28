@@ -103,6 +103,8 @@ wrapping directory if it finds one.
 | `panel` | no | An HTML file. Having one is what gives the plugin an **Open** button and a tab. |
 | `tab` | no | Publishes a place of your own in the **More** screen. Needs `panel` — the tab is what opens it. See below. |
 | `extends` | no | Puts a section of yours inside one of the app's **own** screens. See below. |
+| `settings` | no | Controls the app renders for you in the plugin's row. See below. |
+| `actions` | no | Lines you add to a file's or folder's menu in the Files tab. See below. |
 | `commands` | no | Console commands, for the list and the help text. You still register the handler in code. |
 | `permissions` | no | `files`, `network`, `console`, `servers`, `packages`. **Documentation, not enforcement** — they are shown to the user so they know what to expect. Declare honestly. |
 
@@ -166,6 +168,59 @@ opened, so a collapsed section costs a heading and nothing else.
 The console and the editor are not on the list. Both are a WebView filling the
 screen with nowhere a card could go that would not be in the way; reach those
 two with console commands, `api.print`, and the file events.
+
+### Settings, without building a panel for them
+
+A plugin with one switch used to need a whole HTML page to offer it. Declare
+them instead and the app draws real controls in your row of the plugin list:
+
+```json
+"settings": [
+  { "name": "bucket", "type": "text",   "label": "Default bucket", "default": "" },
+  { "name": "rows",   "type": "number", "label": "Rows to read",   "default": 25 },
+  { "name": "loud",   "type": "switch", "label": "Say so",         "default": false },
+  { "name": "mode",   "type": "choice", "label": "Start on",
+    "options": ["fast", "slow"], "default": "slow" }
+]
+```
+
+Read them with `api.setting("bucket")`, which gives you the user's choice or
+your default. `api.set_setting(name, value)` writes one from code. The value is
+typed on the way in — a switch is a real `bool`, a number a real number — and a
+type that is not one of the four is refused at install time.
+
+### Lines in a file's menu
+
+```json
+"actions": [
+  { "target": "file", "label": "Upload to cloud", "export": "upload_picked",
+    "types": ".png, .jpg" },
+  { "target": "folder", "label": "Upload all of it", "export": "upload_folder" }
+]
+```
+
+Each one appears in the ⋮ menu of a matching file (or folder) in the Files tab,
+with your plugin's name beside it. Tapping it calls your export with
+`{"path": ..., "name": ..., "is_folder": ...}`. `types` is optional; leave it
+out and the line appears on everything.
+
+### Asking the app to do something
+
+```python
+api.open_file("notes/a.md")     # opens it in the editor
+api.run_file("build.py")        # runs it, in whatever language it is
+api.preview("report.html")      # opens it in the preview
+api.serve("site", 8000)         # starts it as a server
+api.new_file("out.txt", text)   # creates it and opens it
+api.go_to("servers")            # switches screen
+api.open_panel()                # opens your own panel, full screen
+api.refresh("files")            # something changed underneath the app
+```
+
+Every one is a *request*, not a call: your code runs on whatever thread it
+happens to be on and the app has to do these on its own, so they return
+whether the request was delivered and never wait for it to finish. They are
+also ignored if your plugin has been switched off in the meantime.
 
 For a single-file plugin, put the same object in the module as a `PLUGIN`
 dict:
@@ -708,6 +763,13 @@ plugin.json / PLUGIN keys:
                {"tab": "files|servers|packages|downloads|plugins|system|debug|guides",
                 "title": "...", "description": "...", "panel": "section.html",
                 "height": "short|medium|tall", "icon": "icon.png", "open": false}
+  settings     optional, controls the app draws in the plugin list. A list of
+               {"name": "...", "type": "text|number|switch|choice",
+                "label": "...", "help": "...", "default": ..., "options": [...]}
+               Read with api.setting("name").
+  actions      optional, lines in a file's or folder's menu in the Files tab:
+               {"target": "file|folder", "label": "...", "export": "fn",
+                "types": ".png,.jpg"}  -> fn({"path","name","is_folder"})
   tab          optional, publishes a row in the app's More screen. Needs panel.
                {"title": "<=24 chars",
                 "description": "<=120 chars, one line",
@@ -734,6 +796,14 @@ THE API
   api.store()          -> dict            -> this plugin's saved JSON
   api.store(dict)                         -> saves it
   api.send(obj)                           -> pushes a message to the panel
+  api.setting(name, default=None)         -> what the user chose
+  api.set_setting(name, value)
+
+  ASKING THE APP (requests; they do not wait, and return whether delivered)
+  api.open_file(path) | api.run_file(path) | api.preview(path)
+  api.serve(path, port=0) | api.new_file(name, text) | api.open_panel(panel="")
+  api.go_to("console|editor|files|servers|packages|downloads|plugins|system|debug|guides|more")
+  api.refresh("files|servers|downloads|packages|plugins")
 
   @api.command("name", help="...")        -> console command; handler(argument: str)
                                              argument is everything after the

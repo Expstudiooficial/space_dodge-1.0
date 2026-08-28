@@ -325,6 +325,8 @@ def _validate(manifest: dict, folder: str) -> dict:
         manifest.pop("tab", None)
 
     manifest["extends"] = _validate_extends(manifest.get("extends"), manifest, folder)
+    manifest["settings"] = _validate_settings(manifest.get("settings"))
+    manifest["actions"] = _validate_actions(manifest.get("actions"))
 
     commands = []
     for command in manifest.get("commands") or []:
@@ -425,6 +427,116 @@ def _validate_extends(raw, manifest: dict, folder: str) -> list:
             "open": bool(entry.get("open")),
         })
     return sections
+
+
+SETTING_KINDS = ("text", "number", "switch", "choice")
+
+# Where a plugin may put an action of its own. `file` is a line in a file's
+# menu in the Files tab; `folder` is the same for a folder.
+ACTION_TARGETS = ("file", "folder")
+
+
+def _validate_settings(raw) -> list:
+    """Settings a plugin wants the app to render as a form for it.
+
+    A plugin with one switch had to build a whole panel to offer it, which is
+    a lot of HTML for a checkbox. Declaring it here gets a real control in the
+    plugin's row, and `api.setting("name")` reads whatever the user chose.
+    """
+    if not raw:
+        return []
+    if not isinstance(raw, (list, tuple)):
+        raise PluginError("'settings' must be a list")
+
+    fields = []
+    seen = set()
+    for entry in raw[:12]:
+        if not isinstance(entry, dict):
+            raise PluginError("every setting must be an object")
+        name = str(entry.get("name") or "").strip()
+        if not name:
+            raise PluginError("every setting needs a name")
+        if name in seen:
+            raise PluginError(f"two settings are both called {name!r}")
+        seen.add(name)
+
+        kind = str(entry.get("type") or "text").strip().lower()
+        if kind not in SETTING_KINDS:
+            raise PluginError(
+                f"{kind!r} is not a setting type; pick one of {', '.join(SETTING_KINDS)}"
+            )
+
+        field = {
+            "name": name[:40],
+            "type": kind,
+            "label": str(entry.get("label") or name)[:60],
+            "help": str(entry.get("help") or "")[:160],
+            "default": entry.get("default"),
+        }
+        if kind == "choice":
+            options = [str(o)[:40] for o in (entry.get("options") or [])][:12]
+            if len(options) < 2:
+                raise PluginError(f"the choice {name!r} needs at least two options")
+            field["options"] = options
+            if field["default"] not in options:
+                field["default"] = options[0]
+        elif kind == "switch":
+            field["default"] = bool(field["default"])
+        elif kind == "number":
+            try:
+                field["default"] = float(field["default"] or 0)
+            except (TypeError, ValueError):
+                field["default"] = 0
+        else:
+            field["default"] = str(field["default"] or "")
+        fields.append(field)
+    return fields
+
+
+def _validate_actions(raw) -> list:
+    """Lines a plugin adds to a file's or folder's menu in the Files tab."""
+    if not raw:
+        return []
+    if isinstance(raw, dict):
+        raw = [raw]
+    if not isinstance(raw, (list, tuple)):
+        raise PluginError("'actions' must be a list")
+
+    actions = []
+    for entry in raw[:8]:
+        if not isinstance(entry, dict):
+            raise PluginError("every action must be an object")
+        target = str(entry.get("target") or "file").strip().lower()
+        if target not in ACTION_TARGETS:
+            raise PluginError(
+                f"{target!r} is not something an action can be on; "
+                f"pick {' or '.join(ACTION_TARGETS)}"
+            )
+        export = str(entry.get("export") or "").strip()
+        label = str(entry.get("label") or "").strip()
+        if not export or not label:
+            raise PluginError("an action needs a label and the export to call")
+
+        # Matched against the file's extension. Empty means every file, which
+        # is what most actions want. Written as a comma-separated string, but
+        # normalising has to survive being run again on a manifest that has
+        # already been normalised - which is what happens every time an
+        # installed plugin is read back.
+        raw_types = entry.get("types") or ""
+        if isinstance(raw_types, (list, tuple)):
+            parts = [str(t) for t in raw_types]
+        else:
+            parts = str(raw_types).split(",")
+        types = [
+            "." + part.strip().lower().lstrip(".") for part in parts if part.strip()
+        ]
+        actions.append({
+            "target": target,
+            "label": label[:40],
+            "export": export[:60],
+            "types": types,
+        })
+    return actions
 
 
 def _safe_id(value: str) -> str:
@@ -685,6 +797,91 @@ class Api:
             except Exception:  # noqa: BLE001
                 pass
 
+    # -- asking the app to do something -------------------------------------
+
+    def _ask(self, action: str, **detail) -> bool:
+        """Sends the app a request. Returns whether it was delivered.
+
+        Everything here is a request rather than a call: a plugin runs on
+        whichever thread it happens to be on, and the app has to do these on
+        its own. Delivered is not the same as done, and nothing here waits.
+        """
+        if _host is None:
+            return False
+        try:
+            _host.onPluginAction(self.id, action, _json(detail))
+            return True
+        except Exception as error:  # noqa: BLE001
+            _report("warn", f"[{self.name}] the app refused {action}", str(error))
+            return False
+
+    def open_file(self, path) -> bool:
+        """Opens a file in the editor."""
+        return self._ask("open_file", path=self._resolve(path))
+
+    def run_file(self, path) -> bool:
+        """Runs a file, in whatever language it is, on the console."""
+        return self._ask("run_file", path=self._resolve(path))
+
+    def preview(self, path) -> bool:
+        """Opens a file in the preview."""
+        return self._ask("preview", path=self._resolve(path))
+
+    def serve(self, path, port: int = 0) -> bool:
+        """Starts a folder or a file as a server, as the Servers tab would."""
+        return self._ask("serve", path=self._resolve(path), port=int(port or 0))
+
+    def go_to(self, tab: str) -> bool:
+        """Switches the app to one of its screens.
+
+        `console`, `editor`, `files`, `servers`, `packages`, `downloads`,
+        `plugins`, `system`, `debug`, `guides` or `more`.
+        """
+        return self._ask("go_to", tab=str(tab).strip().lower())
+
+    def open_panel(self, panel: str = "") -> bool:
+        """Opens this plugin's own panel, full screen."""
+        return self._ask("open_panel", panel=str(panel))
+
+    def new_file(self, name: str, text: str = "") -> bool:
+        """Creates a file in the workspace and opens it in the editor."""
+        path = self._resolve(name)
+        try:
+            os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+            with open(path, "w", encoding="utf-8") as handle:
+                handle.write(text)
+        except OSError as error:
+            _report("warn", f"[{self.name}] could not create {name}", str(error))
+            return False
+        return self._ask("open_file", path=path)
+
+    def refresh(self, what: str = "files") -> bool:
+        """Tells the app something it is showing has changed underneath it."""
+        return self._ask("refresh", what=str(what).strip().lower())
+
+    # -- settings the user can change ---------------------------------------
+
+    def setting(self, name: str, default=None):
+        """One of the settings this plugin declared in its manifest.
+
+        The app renders them as a form in the plugin's row, so a plugin does
+        not have to build a panel just to have a switch.
+        """
+        saved = self.store().get("__settings__", {})
+        if name in saved:
+            return saved[name]
+        for field in self.manifest.get("settings", []):
+            if field.get("name") == name:
+                return field.get("default", default)
+        return default
+
+    def set_setting(self, name: str, value) -> None:
+        data = self.store()
+        settings = dict(data.get("__settings__", {}))
+        settings[name] = value
+        data["__settings__"] = settings
+        self.store(data)
+
     # -- files --------------------------------------------------------------
 
     def workspace_path(self, *parts) -> str:
@@ -807,6 +1004,84 @@ def call_export(plugin_id: str, name: str, payload: str = "") -> str:
         return _json({"ok": True, "result": result})
     except TypeError:
         return _json({"ok": True, "result": str(result)})
+
+
+def plugin_settings(plugin_id: str) -> str:
+    """What a plugin declared, and what the user has chosen so far."""
+    plugin_id = _safe_id(plugin_id)
+    try:
+        manifest = read_manifest(plugin_dir(plugin_id))
+    except PluginError as error:
+        return _json({"ok": False, "error": str(error)})
+
+    state_path = os.path.join(plugin_dir(plugin_id), ".state.json")
+    try:
+        with open(state_path, "r", encoding="utf-8") as handle:
+            saved = json.load(handle).get("__settings__", {})
+    except (OSError, ValueError):
+        saved = {}
+
+    fields = []
+    for field in manifest.get("settings", []):
+        row = dict(field)
+        row["value"] = saved.get(field["name"], field.get("default"))
+        fields.append(row)
+    return _json({"ok": True, "settings": fields})
+
+
+def set_plugin_setting(plugin_id: str, name: str, value: str) -> str:
+    """Saves one setting. `value` arrives as text and is coerced to its type.
+
+    Coerced here rather than in the app because the manifest that says what
+    type it is lives on this side, and two places deciding what "true" means
+    would eventually disagree.
+    """
+    plugin_id = _safe_id(plugin_id)
+    folder = plugin_dir(plugin_id)
+    try:
+        manifest = read_manifest(folder)
+    except PluginError as error:
+        return _json({"ok": False, "error": str(error)})
+
+    field = next((f for f in manifest.get("settings", []) if f["name"] == name), None)
+    if field is None:
+        return _json({"ok": False, "error": f"{plugin_id} has no setting called {name!r}"})
+
+    kind = field["type"]
+    if kind == "switch":
+        typed = str(value).strip().lower() in ("1", "true", "yes", "on")
+    elif kind == "number":
+        try:
+            typed = float(value)
+        except (TypeError, ValueError):
+            typed = field.get("default") or 0
+        if typed == int(typed):
+            typed = int(typed)
+    elif kind == "choice":
+        typed = value if value in field.get("options", []) else field.get("default")
+    else:
+        typed = str(value)[:2000]
+
+    state_path = os.path.join(folder, ".state.json")
+    try:
+        with open(state_path, "r", encoding="utf-8") as handle:
+            data = json.load(handle)
+    except (OSError, ValueError):
+        data = {}
+    if not isinstance(data, dict):
+        data = {}
+    settings = dict(data.get("__settings__", {}))
+    settings[name] = typed
+    data["__settings__"] = settings
+    try:
+        with open(state_path, "w", encoding="utf-8") as handle:
+            json.dump(data, handle)
+    except OSError as error:
+        return _json({"ok": False, "error": str(error)})
+
+    # A loaded plugin holds its own Api, and api.setting reads the file, so
+    # nothing needs reloading - but say what was stored, so the app can show it.
+    return _json({"ok": True, "name": name, "value": typed})
 
 
 def commands() -> str:

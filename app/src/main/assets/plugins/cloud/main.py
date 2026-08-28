@@ -88,7 +88,7 @@ def setup(api):
         payload = payload or {}
         provider = payload.get("provider", "supabase")
         name = (payload.get("name") or "").strip()
-        limit = int(payload.get("limit") or 25)
+        limit = int(payload.get("limit") or api.setting("rows", 25) or 25)
         if not name:
             return {"ok": False, "error": "name a table or a collection"}
 
@@ -293,6 +293,49 @@ def setup(api):
             return error.as_dict()
         except ValueError as error:
             return {"ok": False, "error": str(error)}
+
+    # -------------------------------- the lines Cloud adds to a file's menu
+
+    @api.export
+    def upload_picked(payload):
+        """Called from a file's menu in the Files tab."""
+        payload = payload or {}
+        provider = api.setting("provider", "supabase")
+        bucket = api.setting("default_bucket", "")
+        if provider == "supabase" and not bucket:
+            api.toast("Set a default bucket in the Cloud plugin's settings first")
+            return {"ok": False, "error": "no default bucket"}
+        return upload({
+            "provider": provider,
+            "bucket": bucket,
+            "local": payload.get("path", ""),
+            "remote": payload.get("name", ""),
+        })
+
+    @api.export
+    def upload_folder(payload):
+        """The same, for every file directly inside a folder."""
+        payload = payload or {}
+        folder = payload.get("path", "")
+        if not os.path.isdir(folder):
+            return {"ok": False, "error": "that is not a folder"}
+        provider = api.setting("provider", "supabase")
+        bucket = api.setting("default_bucket", "")
+        sent, failed = 0, []
+        for name in sorted(os.listdir(folder)):
+            full = os.path.join(folder, name)
+            if not os.path.isfile(full):
+                continue
+            result = upload({
+                "provider": provider, "bucket": bucket,
+                "local": full, "remote": f"{os.path.basename(folder)}/{name}",
+            })
+            if result.get("ok"):
+                sent += 1
+            else:
+                failed.append(name)
+        api.toast(f"Uploaded {sent} file(s)" + (f", {len(failed)} failed" if failed else ""))
+        return {"ok": not failed, "uploaded": sent, "failed": failed}
 
     # ----------------------------------------------------- console commands
 

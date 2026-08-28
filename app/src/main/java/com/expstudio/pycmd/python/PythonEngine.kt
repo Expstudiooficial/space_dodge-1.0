@@ -866,7 +866,27 @@ object PythonEngine {
         fun onPluginMessage(pluginId: String, body: String) {
             _pluginMessages.tryEmit(pluginId to body)
         }
+
+        /**
+         * A plugin asking the app to do something - open a file, run one,
+         * switch screens.
+         *
+         * A request rather than a call: the plugin is on whatever thread it
+         * happens to be on, and every one of these has to happen on the app's
+         * own. Handing it to a flow and returning is the whole contract, which
+         * is also why a plugin cannot wait on the result.
+         */
+        fun onPluginAction(pluginId: String, action: String, detail: String) {
+            _pluginActions.tryEmit(PluginAction(pluginId, action, detail))
+        }
     }
+
+    private val _pluginActions = MutableSharedFlow<PluginAction>(
+        extraBufferCapacity = 32, onBufferOverflow = BufferOverflow.DROP_OLDEST,
+    )
+
+    /** Things plugins have asked the app to do. */
+    val pluginActions: SharedFlow<PluginAction> = _pluginActions.asSharedFlow()
 
     private val _pluginToasts = MutableSharedFlow<String>(extraBufferCapacity = 16,
         onBufferOverflow = BufferOverflow.DROP_OLDEST)
@@ -913,6 +933,14 @@ object PythonEngine {
         pluginCall("call_export", id, name, payload)
 
     suspend fun pluginCommands(): JSONObject = pluginCall("commands")
+
+    /** What a plugin declared as settings, with whatever the user has chosen. */
+    suspend fun pluginSettings(id: String): JSONObject = pluginCall("plugin_settings", id)
+
+    /** Saves one setting. The value is typed on the Python side, where the
+     * manifest that says what type it is lives. */
+    suspend fun setPluginSetting(id: String, name: String, value: String): JSONObject =
+        pluginCall("set_plugin_setting", id, name, value)
 
     suspend fun runPluginCommand(name: String, argument: String): JSONObject =
         withContext(pythonDispatcher) {
@@ -1342,6 +1370,9 @@ data class ServerActionResult(
  * `unsupported` or `unknown`. The launcher shows [note] before anything runs,
  * so a page that is about to be served rather than executed says so first.
  */
+/** Something a plugin asked the app to do, with its JSON detail. */
+data class PluginAction(val pluginId: String, val action: String, val detail: String)
+
 data class RunPlan(
     val how: String = "",
     val language: String = "",

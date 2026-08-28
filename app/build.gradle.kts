@@ -29,8 +29,8 @@ android {
         applicationId = "com.expstudio.pycmd"
         minSdk = 24
         targetSdk = 35
-        versionCode = 6
-        versionName = "2.0"
+        versionCode = 7
+        versionName = "2.1"
 
         ndk {
             abiFilters += targetAbis
@@ -59,6 +59,10 @@ android {
 
     buildFeatures {
         compose = true
+        // So the About dialog reads the version rather than repeating it. It
+        // said 1.0 for four releases because a string in a composable has no
+        // way of knowing it is out of date.
+        buildConfig = true
     }
 
     // One APK per ABI, plus a universal one, so a phone downloads only the

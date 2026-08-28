@@ -52,6 +52,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.expstudio.pycmd.plugins.PluginIds
 import com.expstudio.pycmd.python.forFileName
 import com.expstudio.pycmd.util.WorkspaceEntry
+import com.expstudio.pycmd.BuildConfig
 import com.expstudio.pycmd.python.OutputChunk
 import java.io.File
 import kotlinx.coroutines.channels.BufferOverflow
@@ -91,6 +92,7 @@ fun PyCmdRoot(viewModel: MainViewModel = viewModel()) {
     val pluginBusy by viewModel.pluginBusy.collectAsState()
     val pluginCandidates by viewModel.pluginCandidates.collectAsState()
     val openPanel by viewModel.openPanel.collectAsState()
+    val openPanelFile by viewModel.openPanelFile.collectAsState()
     val systemInfo by viewModel.system.collectAsState()
     val systemBusy by viewModel.systemBusy.collectAsState()
 
@@ -403,6 +405,8 @@ fun PyCmdRoot(viewModel: MainViewModel = viewModel()) {
                     onImportFolder = viewModel::importFolder,
                     onExportFolder = viewModel::exportFolder,
                     onSaveToDevice = saveToDevice,
+                    pluginActionsFor = viewModel::actionsFor,
+                    onPluginAction = viewModel::runFileAction,
                     pickingFor = pickingFor,
                     onUseAsTarget = viewModel::useAsLaunchTarget,
                     onCancelPicking = viewModel::cancelPicking,
@@ -540,6 +544,8 @@ fun PyCmdRoot(viewModel: MainViewModel = viewModel()) {
                     onOpenPanel = viewModel::openPluginPanel,
                     onRemoveInstalled = viewModel::removeCustomPlugin,
                     onReadGuide = { viewModel.openGuide() },
+                    settingsFor = viewModel::pluginSettings,
+                    onSetting = viewModel::setPluginSetting,
                     pluginSections = {
                         PluginSections(
                             sectionsFor(Tab.PLUGINS, installedPlugins, installedEnabled),
@@ -557,6 +563,7 @@ fun PyCmdRoot(viewModel: MainViewModel = viewModel()) {
                             plugin = panel,
                             viewModel = viewModel,
                             onClose = viewModel::closePluginPanel,
+                            panelFile = openPanelFile,
                         )
                     }
                 }
@@ -682,7 +689,11 @@ private fun AboutDialog(
     androidx.compose.material3.AlertDialog(
         onDismissRequest = onDismiss,
         containerColor = MaterialTheme.colorScheme.surface,
-        title = { Text("PyCmd 1.0", style = MaterialTheme.typography.titleMedium) },
+        title = {
+            // The build type appends "-debug"; the title wants the version.
+            val version = BuildConfig.VERSION_NAME.substringBefore('-')
+            Text("PyCmd $version", style = MaterialTheme.typography.titleMedium)
+        },
         text = {
             Column {
                 Text(
@@ -691,6 +702,10 @@ private fun AboutDialog(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 Spacer(Modifier.height(12.dp))
+                InfoRow(
+                    "App",
+                    "${BuildConfig.VERSION_NAME} (build ${BuildConfig.VERSION_CODE})",
+                )
                 InfoRow("Python", info["full_version"] ?: status.pythonVersion)
                 InfoRow("Platform", info["platform"] ?: "android")
                 InfoRow("Working dir", info["cwd"] ?: "")

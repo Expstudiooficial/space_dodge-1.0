@@ -1,17 +1,50 @@
 # Prebuilt APK
 
-`PyCmd-2.0-debug.apk` — ready to install, nothing else needed.
+`PyCmd-2.1-debug.apk` — ready to install, nothing else needed.
 
 | | |
 |---|---|
 | Package | `com.expstudio.pycmd.debug` |
-| Version | 2.0-debug |
+| Version | 2.1-debug |
 | Size | 33 MB |
 | Signed with | the standard Android debug key |
 | Works on | Android 7.0 (API 24) and newer, **arm64-v8a** (every phone since about 2016) |
 | SHA-256 | see [SHA256SUMS.txt](SHA256SUMS.txt) |
 
-## What is new in 2.0
+## What is new in 2.1
+
+**A plugin's section scrolls.** Opening one inside an existing screen put a
+scrolling page inside a scrolling list, and the list won every gesture - so the
+section could not be scrolled at all. The page now claims a drag that starts
+inside it, and hands it back at the top and the bottom so flicking past the
+section still works. There is also a button on every section header that opens
+the same page with the whole screen to itself.
+
+**Plugins can do considerably more.**
+
+* **Settings** - declare `text`, `number`, `switch` or `choice` fields and the
+  app draws real controls in the plugin's row. `api.setting("name")` reads
+  whatever the user chose. A plugin with one switch no longer needs a whole
+  HTML page to offer it.
+* **Lines in a file's menu** - `actions` puts your own entry in the ⋮ menu of a
+  file or folder in the Files tab, filtered by extension, calling your export
+  with the path.
+* **Asking the app to do something** - `api.open_file`, `api.run_file`,
+  `api.preview`, `api.serve`, `api.new_file`, `api.go_to`, `api.open_panel`
+  and `api.refresh`. Requests rather than calls: they never wait, and they are
+  ignored if the plugin has been switched off in the meantime.
+
+The Cloud plugin uses all three: four settings, and *Upload to cloud storage*
+on any file.
+
+**`api.toast()` works.** It emitted into a flow nothing was reading, so it has
+never shown anything. Found while wiring the rest of this.
+
+**The About dialog says the right version.** It said 1.0 for four releases,
+because a string in a composable has no way of knowing it is out of date. It
+now reads the version out of the build, so it cannot drift again.
+
+## What was new in 2.0
 
 **Plugins can change the app, not just sit beside it.** A plugin already had a
 tab of its own; now it can also put a card of its own **inside** one of the
@@ -156,10 +189,10 @@ on, its console command answered, and its panel called back into its own
 Python. The APK here is that source built for arm64 instead, which changes
 the CPython binaries and nothing else.
 
-677 checks run before any of this is committed: `test_runtime.py` (145),
-`test_go.py` (92), `test_plugins.py` (89), `test_rust.py` (73), `test_cloud.py`
-(68), `test_c.py` (54), `test_js.js` (43), `test_bundled.py` (41),
-`test_doctor.py` (37), `test_preview.py` (23) and `test_editor.js` (12). Each language check is a real program paired with the
+699 checks run before any of this is committed: `test_runtime.py` (145),
+`test_plugins.py` (111), `test_go.py` (92), `test_rust.py` (73),
+`test_cloud.py` (68), `test_c.py` (54), `test_js.js` (43), `test_bundled.py`
+(41), `test_doctor.py` (37), `test_preview.py` (23) and `test_editor.js` (12). Each language check is a real program paired with the
 output the real compiler produces. The rest go after the things that are
 awkward to be sure of by looking: a script wedged in `accept()` is started for
 real and killed, to prove the port comes back; the preview checks fetch pages
@@ -176,7 +209,7 @@ bundled plugins the way the app does and drives them: it starts a real server
 and restarts it through Server Pro, schedules a real job, and renders every
 panel.
 
-The 2.0 changes were verified by those checks and by Lint on the built APK,
+The 2.1 changes were verified by those checks and by Lint on the built APK,
 not on an emulator: this build machine has no hardware virtualisation, so no
 emulator could be started for it.
 
@@ -204,7 +237,7 @@ every tab with things to paste in and try.
 ## Installing over USB
 
 ```bash
-adb install -r dist/PyCmd-2.0-debug.apk
+adb install -r dist/PyCmd-2.1-debug.apk
 ```
 
 ## Checking the download

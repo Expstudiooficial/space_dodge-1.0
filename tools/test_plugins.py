@@ -37,6 +37,7 @@ class FakeHost:
         self.logs = []
         self.toasts = []
         self.messages = []
+        self.actions = []
 
     def onPluginLog(self, level, message, detail):  # noqa: N802
         self.logs.append((level, message, detail))
@@ -46,6 +47,9 @@ class FakeHost:
 
     def onPluginMessage(self, plugin_id, body):  # noqa: N802
         self.messages.append((plugin_id, body))
+
+    def onPluginAction(self, plugin_id, action, detail):  # noqa: N802
+        self.actions.append((plugin_id, action, detail))
 
     def text(self):
         return "\n".join(f"{l}:{m}:{d}" for l, m, d in self.logs)
@@ -200,6 +204,142 @@ check("the panel is recorded",
 check("the tab is normalised",
       installed.get("manifest", {}).get("tab", {}).get("title") == "Notes", installed)
 
+
+print("\n== settings the app renders for a plugin ==")
+settings_folder = os.path.join(scratch, "src", "settings")
+write(os.path.join(settings_folder, "plugin.json"), json.dumps({
+    "id": "demo.settings", "name": "Settings", "entry": "main.py",
+    "settings": [
+        {"name": "who", "type": "text", "label": "Name", "default": "world"},
+        {"name": "loud", "type": "switch", "default": False},
+        {"name": "times", "type": "number", "default": 3},
+        {"name": "mode", "type": "choice", "options": ["fast", "slow"], "default": "slow"},
+    ],
+}))
+write(os.path.join(settings_folder, "main.py"), """
+def setup(api):
+    @api.command("say", help="say")
+    def say(argument):
+        text = api.setting("who") * int(api.setting("times"))
+        return text.upper() if api.setting("loud") else text
+""")
+installed = result(plugins.install(settings_folder))
+check("a plugin with settings installs", installed.get("ok"), installed)
+result(plugins.load("demo.settings"))
+
+fields = result(plugins.plugin_settings("demo.settings"))["settings"]
+check("all four are described", len(fields) == 4, fields)
+check("each starts at its default",
+      [f["value"] for f in fields] == ["world", False, 3, "slow"], fields)
+
+SAID.clear()
+capture(lambda: plugins.run_command("say", ""))
+check("and the plugin reads them", "worldworldworld" in "".join(SAID), SAID)
+
+result(plugins.set_plugin_setting("demo.settings", "who", "ada"))
+result(plugins.set_plugin_setting("demo.settings", "loud", "true"))
+result(plugins.set_plugin_setting("demo.settings", "times", "2"))
+SAID.clear()
+capture(lambda: plugins.run_command("say", ""))
+check("changing one changes what the plugin does", "ADAADA" in "".join(SAID), SAID)
+
+typed = result(plugins.plugin_settings("demo.settings"))["settings"]
+values = {f["name"]: f["value"] for f in typed}
+check("a switch is stored as a boolean", values["loud"] is True, values)
+check("a number as a number", values["times"] == 2, values)
+
+result(plugins.set_plugin_setting("demo.settings", "mode", "sideways"))
+check("a choice outside the options falls back to the default",
+      {f["name"]: f["value"] for f in
+       result(plugins.plugin_settings("demo.settings"))["settings"]}["mode"] == "slow")
+
+missing = result(plugins.set_plugin_setting("demo.settings", "nope", "x"))
+check("a setting that was never declared is refused", not missing.get("ok"), missing)
+
+bad = os.path.join(scratch, "src", "badsetting")
+write(os.path.join(bad, "plugin.json"), json.dumps({
+    "id": "demo.badsetting", "name": "Bad", "entry": "main.py",
+    "settings": [{"name": "x", "type": "colour"}],
+}))
+write(os.path.join(bad, "main.py"), "def setup(api):\n    pass\n")
+refused = result(plugins.install(bad))
+check("an unknown setting type is refused at install", not refused.get("ok"), refused)
+check("and says which types exist", "switch" in refused.get("error", ""), refused)
+
+print("\n== lines a plugin adds to a file's menu ==")
+actions_folder = os.path.join(scratch, "src", "actions")
+write(os.path.join(actions_folder, "plugin.json"), json.dumps({
+    "id": "demo.actions", "name": "Actions", "entry": "main.py",
+    "actions": [
+        {"target": "file", "label": "Count the lines", "export": "count", "types": ".py, txt"},
+        {"target": "folder", "label": "Tidy", "export": "tidy"},
+    ],
+}))
+write(os.path.join(actions_folder, "main.py"), """
+def setup(api):
+    @api.export
+    def count(payload):
+        return {"ok": True, "lines": len(api.read(payload["path"], "").splitlines())}
+
+    @api.export
+    def tidy(payload):
+        return {"ok": True, "folder": payload["path"]}
+""")
+installed = result(plugins.install(actions_folder))
+check("a plugin with actions installs", installed.get("ok"), installed)
+actions = installed["manifest"]["actions"]
+check("both are kept", len(actions) == 2, actions)
+check("the types are normalised to extensions",
+      actions[0]["types"] == [".py", ".txt"], actions[0])
+reread = [p for p in result(plugins.listing())["plugins"] if p["id"] == "demo.actions"][0]
+check("and reading the plugin back does not mangle them",
+      reread["actions"][0]["types"] == [".py", ".txt"], reread["actions"][0])
+check("a folder action keeps no types", actions[1]["types"] == [], actions[1])
+
+result(plugins.load("demo.actions"))
+target = write(os.path.join(workspace, "counted.py"), "a\nb\nc\n")
+reply = result(plugins.call_export("demo.actions", "count", json.dumps({"path": target})))
+check("running one reaches the export", reply["result"]["lines"] == 3, reply)
+
+for missing_field in ({"target": "file", "label": "x"}, {"target": "file", "export": "y"}):
+    broken = os.path.join(scratch, "src", "badaction" + str(len(missing_field)))
+    write(os.path.join(broken, "plugin.json"), json.dumps({
+        "id": "demo.badaction", "name": "Bad", "entry": "main.py",
+        "actions": [missing_field],
+    }))
+    write(os.path.join(broken, "main.py"), "def setup(api):\n    pass\n")
+    check("an action missing half of itself is refused",
+          not result(plugins.install(broken)).get("ok"))
+
+print("\n== what a plugin can ask the app to do ==")
+asking = os.path.join(scratch, "src", "asking")
+write(os.path.join(asking, "plugin.json"), json.dumps({
+    "id": "demo.asking", "name": "Asking", "entry": "main.py",
+}))
+write(os.path.join(asking, "main.py"), """
+def setup(api):
+    @api.command("drive", help="drive")
+    def drive(argument):
+        api.open_file("a.py")
+        api.run_file("a.py")
+        api.preview("a.html")
+        api.go_to("servers")
+        api.serve("site", 8123)
+        api.refresh("files")
+        return "asked"
+""")
+result(plugins.install(asking))
+result(plugins.load("demo.asking"))
+host.actions.clear()
+capture(lambda: plugins.run_command("drive", ""))
+kinds = [action for _plugin, action, _detail in host.actions]
+check("every verb reaches the app",
+      kinds == ["open_file", "run_file", "preview", "go_to", "serve", "refresh"], kinds)
+paths = json.loads(host.actions[0][2])
+check("paths are resolved against the workspace",
+      paths["path"].startswith(workspace), paths)
+served = json.loads(host.actions[4][2])
+check("and the port comes along", served["port"] == 8123, served)
 
 print("\n== two plugins wanting the same command ==")
 for index, folder_name in enumerate(("clash-a", "clash-b")):

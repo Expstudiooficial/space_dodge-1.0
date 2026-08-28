@@ -1,6 +1,7 @@
 package com.expstudio.pycmd.ui
 
 import android.annotation.SuppressLint
+import android.view.MotionEvent
 import android.webkit.JavascriptInterface
 import android.webkit.WebResourceRequest
 import android.webkit.WebView
@@ -46,7 +47,7 @@ import org.json.JSONObject
  * app's own tabs, so that the two behave identically: same stylesheet, same
  * bridge, same refusal to navigate anywhere.
  */
-@SuppressLint("SetJavaScriptEnabled")
+@SuppressLint("SetJavaScriptEnabled", "ClickableViewAccessibility")
 @Composable
 fun PluginPanelView(
     plugin: InstalledPlugin,
@@ -61,6 +62,12 @@ fun PluginPanelView(
     val bridge = remember(key) { PanelBridge(plugin, viewModel, scope) }
 
     val webView = remember(key) {
+        // Where the finger was on the previous move, so the direction of a
+        // drag is known before deciding who should own it. A one-element array
+        // rather than a captured var: it belongs to this WebView, and there is
+        // one of these per panel.
+        val lastTouchY = floatArrayOf(0f)
+
         WebView(context).apply {
             settings.javaScriptEnabled = true
             settings.domStorageEnabled = true
@@ -69,6 +76,39 @@ fun PluginPanelView(
             settings.allowFileAccess = true
             settings.allowContentAccess = false
             setBackgroundColor("#0B0F14".toColorInt())
+            isVerticalScrollBarEnabled = true
+            overScrollMode = WebView.OVER_SCROLL_IF_CONTENT_SCROLLS
+            // A panel sitting inside one of the app's own screens is a
+            // scrolling view inside a scrolling list, and the list wins every
+            // gesture by default - so a section you opened could not be
+            // scrolled at all. Claiming the gesture on touch-down hands the
+            // drag to the page; letting go of the claim when the page has
+            // nothing left to scroll gives it back to the list, so flicking
+            // past a section still works.
+            setOnTouchListener { view, event ->
+                when (event.actionMasked) {
+                    MotionEvent.ACTION_DOWN -> {
+                        view.parent?.requestDisallowInterceptTouchEvent(true)
+                        lastTouchY[0] = event.y
+                    }
+
+                    MotionEvent.ACTION_MOVE -> {
+                        val page = view as WebView
+                        val goingUp = event.y > lastTouchY[0]
+                        val atTop = page.scrollY <= 0
+                        val atBottom = !page.canScrollVertically(1)
+                        // At either end, the page has nothing more to give.
+                        if ((goingUp && atTop) || (!goingUp && atBottom)) {
+                            view.parent?.requestDisallowInterceptTouchEvent(false)
+                        }
+                        lastTouchY[0] = event.y
+                    }
+
+                    MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL ->
+                        view.parent?.requestDisallowInterceptTouchEvent(false)
+                }
+                false
+            }
             addJavascriptInterface(bridge, "__pycmd_panel")
             webViewClient = object : WebViewClient() {
                 override fun shouldOverrideUrlLoading(
@@ -122,6 +162,8 @@ fun PluginPanelScreen(
     viewModel: MainViewModel,
     onClose: () -> Unit,
     modifier: Modifier = Modifier,
+    /** Which page of the plugin to show; empty means its main panel. */
+    panelFile: String = "",
 ) {
     Column(
         modifier
@@ -163,7 +205,7 @@ fun PluginPanelScreen(
         Divider()
 
         Box(Modifier.weight(1f).fillMaxWidth()) {
-            PluginPanelView(plugin, viewModel, Modifier.fillMaxSize())
+            PluginPanelView(plugin, viewModel, Modifier.fillMaxSize(), panelFile)
         }
     }
 }

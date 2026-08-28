@@ -65,6 +65,11 @@ read and write rows or documents, browse storage, poke the Realtime Database,
 call a Postgres function. It also adds a **Cloud storage** section to the Files
 tab for sending a workspace file up or pulling one down.
 
+It also adds two lines to the Files tab's file menu — *Upload to cloud storage*
+on a file, *Upload every file in it* on a folder — and has settings of its own
+in the plugin list: a default bucket, how many rows the panel reads, which
+provider to start on, and whether to confirm deletes.
+
 Console commands:
 
 | Command | What it does |

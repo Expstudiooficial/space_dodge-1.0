@@ -232,6 +232,13 @@ object PyIcons {
 
     // ---- Direction-sensitive: these flip in a right-to-left layout. ----
 
+    val OpenInFull: ImageVector by lazy {
+        icon(
+            "OpenInFull",
+            "M21,11V3h-8l3.29,3.29 -10,10L3,13v8h8l-3.29,-3.29 10,-10z",
+        )
+    }
+
     val ExpandMore: ImageVector by lazy {
         icon("ExpandMore", "M16.59,8.59L12,13.17 7.41,8.59 6,10l6,6 6,-6z")
     }

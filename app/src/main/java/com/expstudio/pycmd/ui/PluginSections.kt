@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -137,6 +138,19 @@ private fun PluginSectionCard(
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 2,
+                )
+            }
+            // A tall panel inside a scrolling screen is workable but never
+            // roomy; this opens the same page with the whole screen to itself.
+            IconButton(
+                onClick = { viewModel.openPluginPanel(plugin, extension.panel) },
+                modifier = Modifier.size(34.dp),
+            ) {
+                Icon(
+                    PyIcons.OpenInFull,
+                    contentDescription = "Open ${extension.title} full screen",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(17.dp),
                 )
             }
             Icon(

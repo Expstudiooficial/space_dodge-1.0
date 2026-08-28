@@ -39,6 +39,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.expstudio.pycmd.plugins.InstalledPlugin
+import com.expstudio.pycmd.plugins.PluginFileAction
 import com.expstudio.pycmd.python.LanguageInfo
 import com.expstudio.pycmd.util.WorkspaceEntry
 import java.io.File
@@ -68,6 +70,9 @@ fun FilesScreen(
     onExportFolder: (File) -> Unit,
     onSaveToDevice: (File) -> Unit,
     modifier: Modifier = Modifier,
+    /** Menu lines plugins want on this file or folder, and how to run one. */
+    pluginActionsFor: (File) -> List<Pair<InstalledPlugin, PluginFileAction>> = { emptyList() },
+    onPluginAction: (InstalledPlugin, PluginFileAction, File) -> Unit = { _, _, _ -> },
     pickingFor: ServerKind? = null,
     onUseAsTarget: (File) -> Unit = {},
     onCancelPicking: () -> Unit = {},
@@ -240,6 +245,10 @@ fun FilesScreen(
                         onDelete = { dialog = FileDialog.ConfirmDelete(entry.file) },
                         onExportFolder = { onExportFolder(entry.file) },
                         onSaveToDevice = { onSaveToDevice(entry.file) },
+                        pluginActions = pluginActionsFor(entry.file),
+                        onPluginAction = { plugin, pluginAction ->
+                            onPluginAction(plugin, pluginAction, entry.file)
+                        },
                     )
                 }
 
@@ -323,6 +332,8 @@ private fun FileRow(
     onDelete: () -> Unit,
     onExportFolder: () -> Unit,
     onSaveToDevice: () -> Unit,
+    pluginActions: List<Pair<InstalledPlugin, PluginFileAction>>,
+    onPluginAction: (InstalledPlugin, PluginFileAction) -> Unit,
 ) {
     var menuOpen by remember { mutableStateOf(false) }
 
@@ -426,6 +437,31 @@ private fun FileRow(
                         onRename()
                     },
                 )
+                // A plugin's own lines, below the app's and above Delete, so
+                // the destructive one stays last wherever it is.
+                pluginActions.forEach { (plugin, action) ->
+                    DropdownMenuItem(
+                        text = { Text(action.label) },
+                        leadingIcon = {
+                            Icon(
+                                PyIcons.Add,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.tertiary,
+                            )
+                        },
+                        trailingIcon = {
+                            Text(
+                                plugin.name,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        },
+                        onClick = {
+                            menuOpen = false
+                            onPluginAction(plugin, action)
+                        },
+                    )
+                }
                 DropdownMenuItem(
                     text = { Text("Delete", color = MaterialTheme.colorScheme.error) },
                     leadingIcon = {

@@ -12,6 +12,7 @@ import com.expstudio.pycmd.python.LanguageInfo
 import com.expstudio.pycmd.python.OutputChunk
 import com.expstudio.pycmd.python.PreviewPage
 import com.expstudio.pycmd.python.forFileName
+import com.expstudio.pycmd.python.PluginAction
 import com.expstudio.pycmd.python.PythonEngine
 import com.expstudio.pycmd.python.RunPlan
 import com.expstudio.pycmd.python.RunningServer
@@ -19,6 +20,7 @@ import com.expstudio.pycmd.python.ServerService
 import com.expstudio.pycmd.plugins.CustomPlugins
 import com.expstudio.pycmd.plugins.InstalledPlugin
 import com.expstudio.pycmd.plugins.PluginExtension
+import com.expstudio.pycmd.plugins.PluginFileAction
 import com.expstudio.pycmd.plugins.PluginIds
 import com.expstudio.pycmd.plugins.PluginScreen
 import com.expstudio.pycmd.plugins.PluginSpec
@@ -312,6 +314,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 _serverConsoles.value = consoles
                 delay(16)
             }
+        }
+
+        // A plugin's toast went into a flow nobody read, so api.toast() has
+        // never shown anything. It does now.
+        viewModelScope.launch {
+            engine.pluginToasts.collect { showToast(it) }
+        }
+
+        // And the things a plugin asks the app to do.
+        viewModelScope.launch {
+            engine.pluginActions.collect(::handlePluginAction)
         }
 
         viewModelScope.launch {
@@ -632,18 +645,91 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     /** Where the open panel was opened from, so closing it goes back there. */
     private var panelCameFrom = Tab.PLUGINS
 
-    fun openPluginPanel(plugin: InstalledPlugin) {
+    /**
+     * Does what a plugin asked for, if the plugin is still switched on.
+     *
+     * Checked again here rather than trusted: the request may have been queued
+     * before the user turned the plugin off, and a plugin that has been
+     * switched off should not still be moving the app around.
+     */
+    private fun handlePluginAction(request: PluginAction) {
+        if (!CustomPlugins.isOn(request.pluginId)) return
+        val detail = runCatching { JSONObject(request.detail) }.getOrDefault(JSONObject())
+        val path = detail.optString("path")
+
+        when (request.action) {
+            "open_file" -> if (path.isNotEmpty()) openInEditor(File(path))
+            "run_file" -> if (path.isNotEmpty()) runFile(File(path))
+            "preview" -> if (path.isNotEmpty()) previewFile(File(path))
+            "serve" -> if (path.isNotEmpty()) {
+                updateLaunchForm {
+                    val target = File(path)
+                    if (target.isDirectory) {
+                        it.copy(kind = ServerKind.STATIC, folder = target)
+                    } else {
+                        it.copy(kind = ServerKind.SCRIPT, script = target, plan = RunPlan())
+                    }
+                }
+                detail.optInt("port").takeIf { it > 0 }?.let { port ->
+                    updateLaunchForm { it.copy(port = port.toString()) }
+                }
+                launchServer()
+            }
+
+            "go_to" -> tabNamed(detail.optString("tab"))?.let { selectTab(it) }
+
+            "open_panel" -> CustomPlugins.installed.value
+                .firstOrNull { it.id == request.pluginId }
+                ?.let { openPluginPanel(it, detail.optString("panel")) }
+
+            "refresh" -> when (detail.optString("what")) {
+                "servers" -> refreshServers()
+                "downloads" -> refreshDownloads()
+                "packages" -> refreshPackages()
+                "plugins" -> refreshCustomPlugins()
+                else -> refreshFiles(_files.value.directory ?: workspace.root)
+            }
+
+            else -> DebugLog.warn(
+                TAG_VIEW, "a plugin asked for something unknown", request.action,
+            )
+        }
+    }
+
+    /** The screen a plugin named, or null if there is no such screen. */
+    private fun tabNamed(name: String): Tab? = when (name) {
+        "console" -> Tab.CONSOLE
+        "editor" -> Tab.EDITOR
+        "files" -> Tab.FILES
+        "servers" -> Tab.SERVERS
+        "packages" -> Tab.PACKAGES
+        "downloads" -> Tab.DOWNLOADS
+        "plugins" -> Tab.PLUGINS
+        "system" -> Tab.SYSTEM
+        "debug" -> Tab.DEBUG
+        "guides", "docs" -> Tab.DOCS
+        "more" -> Tab.MORE
+        else -> null
+    }
+
+    /** Which of the plugin's pages the full-screen panel is showing. */
+    private val _openPanelFile = MutableStateFlow("")
+    val openPanelFile: StateFlow<String> = _openPanelFile.asStateFlow()
+
+    fun openPluginPanel(plugin: InstalledPlugin, panelFile: String = "") {
         if (!CustomPlugins.isOn(plugin.id)) {
             showToast("${plugin.name} is switched off.")
             return
         }
         panelCameFrom = _tab.value.takeIf { it != Tab.PLUGIN_PANEL } ?: Tab.PLUGINS
         _openPanel.value = plugin
+        _openPanelFile.value = panelFile
         _tab.value = Tab.PLUGIN_PANEL
     }
 
     fun closePluginPanel() {
         _openPanel.value = null
+        _openPanelFile.value = ""
         // A panel opened from its tab in More belongs to More; closing it into
         // the plugin list would be a different screen than the one you left.
         _tab.value = panelCameFrom
@@ -651,6 +737,62 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     suspend fun pluginPanelHtml(id: String, panelFile: String = ""): String =
         engine.pluginPanel(id, panelFile)
+
+    /** The current value of every setting a plugin declared. */
+    suspend fun pluginSettings(id: String): Map<String, Any?> {
+        val reply = engine.pluginSettings(id)
+        val rows = reply.optJSONArray("settings") ?: return emptyMap()
+        val values = mutableMapOf<String, Any?>()
+        for (index in 0 until rows.length()) {
+            val row = rows.optJSONObject(index) ?: continue
+            values[row.optString("name")] = row.opt("value")
+        }
+        return values
+    }
+
+    fun setPluginSetting(id: String, name: String, value: String) {
+        viewModelScope.launch {
+            val reply = engine.setPluginSetting(id, name, value)
+            if (!reply.optBoolean("ok")) {
+                showToast(reply.optString("error").ifBlank { "Could not save that." })
+            }
+        }
+    }
+
+    /**
+     * The menu lines switched-on plugins want on this file or folder.
+     *
+     * Returned with the plugin, because acting on one means calling that
+     * plugin's export - and two plugins can both want a line on the same file.
+     */
+    fun actionsFor(file: File): List<Pair<InstalledPlugin, PluginFileAction>> {
+        val on = CustomPlugins.enabled.value
+        return CustomPlugins.installed.value
+            .filter { it.id in on }
+            .flatMap { plugin ->
+                plugin.actions
+                    .filter { it.appliesTo(file.name, file.isDirectory) }
+                    .map { plugin to it }
+            }
+    }
+
+    /** Runs a plugin's file action on the file the user picked. */
+    fun runFileAction(plugin: InstalledPlugin, action: PluginFileAction, file: File) {
+        viewModelScope.launch {
+            val payload = JSONObject()
+                .put("path", file.absolutePath)
+                .put("name", file.name)
+                .put("is_folder", file.isDirectory)
+                .toString()
+            val reply = engine.callPluginExport(plugin.id, action.export, payload)
+            if (!reply.optBoolean("ok")) {
+                showToast(
+                    reply.optString("error").ifBlank { "${action.label} did not work." },
+                )
+            }
+            refreshFiles(_files.value.directory ?: workspace.root)
+        }
+    }
 
 
 

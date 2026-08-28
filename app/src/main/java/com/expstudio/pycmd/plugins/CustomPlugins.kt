@@ -38,6 +38,10 @@ data class InstalledPlugin(
     val bundled: Boolean,
     /** Sections this plugin adds to the app's own screens. */
     val extensions: List<PluginExtension>,
+    /** Settings the app renders as a form in this plugin's row. */
+    val settings: List<PluginSetting>,
+    /** Lines this plugin adds to a file's or folder's menu in Files. */
+    val actions: List<PluginFileAction>,
 ) {
     val hasPanel: Boolean get() = !panel.isNullOrEmpty()
 
@@ -91,6 +95,46 @@ data class InstalledPlugin(
                 }
             }
 
+            val settings = mutableListOf<PluginSetting>()
+            json.optJSONArray("settings")?.let { array ->
+                for (index in 0 until array.length()) {
+                    val row = array.optJSONObject(index) ?: continue
+                    val name = row.optString("name")
+                    if (name.isEmpty()) continue
+                    val options = mutableListOf<String>()
+                    row.optJSONArray("options")?.let { list ->
+                        for (i in 0 until list.length()) options += list.optString(i)
+                    }
+                    settings += PluginSetting(
+                        name = name,
+                        type = row.optString("type").ifEmpty { "text" },
+                        label = row.optString("label").ifEmpty { name },
+                        help = row.optString("help"),
+                        default = row.opt("default"),
+                        options = options,
+                    )
+                }
+            }
+            val actions = mutableListOf<PluginFileAction>()
+            json.optJSONArray("actions")?.let { array ->
+                for (index in 0 until array.length()) {
+                    val row = array.optJSONObject(index) ?: continue
+                    val label = row.optString("label")
+                    val export = row.optString("export")
+                    if (label.isEmpty() || export.isEmpty()) continue
+                    val types = mutableListOf<String>()
+                    row.optJSONArray("types")?.let { list ->
+                        for (i in 0 until list.length()) types += list.optString(i).lowercase()
+                    }
+                    actions += PluginFileAction(
+                        target = row.optString("target").ifEmpty { "file" },
+                        label = label,
+                        export = export,
+                        types = types,
+                    )
+                }
+            }
+
             return InstalledPlugin(
                 id = json.optString("id"),
                 name = json.optString("name").ifEmpty { json.optString("id") },
@@ -110,12 +154,53 @@ data class InstalledPlugin(
                 broken = json.optBoolean("broken"),
                 bundled = json.optBoolean("bundled"),
                 extensions = extensions,
+                settings = settings,
+                actions = actions,
             )
         }
     }
 }
 
 data class PluginCommand(val name: String, val help: String)
+
+/**
+ * A setting a plugin declared, rendered by the app as a real control.
+ *
+ * A plugin with one switch used to need a whole HTML panel to offer it. The
+ * plugin reads whatever the user chose with `api.setting("name")`.
+ */
+data class PluginSetting(
+    val name: String,
+    /** "text", "number", "switch" or "choice". */
+    val type: String,
+    val label: String,
+    val help: String,
+    val default: Any?,
+    val options: List<String>,
+)
+
+/**
+ * A line a plugin adds to a file's or a folder's menu in the Files tab.
+ *
+ * Tapping it calls the named export with the path, which is how a plugin gets
+ * to act on something the user picked rather than something it went looking
+ * for.
+ */
+data class PluginFileAction(
+    /** "file" or "folder". */
+    val target: String,
+    val label: String,
+    val export: String,
+    /** Extensions it applies to, lower case with the dot. Empty means all. */
+    val types: List<String>,
+) {
+    fun appliesTo(name: String, isDirectory: Boolean): Boolean {
+        if (isDirectory != (target == "folder")) return false
+        if (types.isEmpty()) return true
+        val extension = "." + name.substringAfterLast('.', "").lowercase()
+        return extension in types
+    }
+}
 
 /**
  * A section a plugin adds to one of the app's own screens.

@@ -1,7 +1,7 @@
 {
   "id": "pycmd.cloud",
   "name": "Cloud",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "author": "PyCmd",
   "description": "Supabase and Firebase, over their REST APIs, with nothing to install. Connect a project once and reach it from a script, a server, the console or the panel: rows and documents, sign-up and sign-in, storage up and down, the Realtime Database and Postgres functions. The client is pycmd_cloud, importable from anything you write.",
   "entry": "main.py",
@@ -22,9 +22,65 @@
     }
   ],
   "commands": [
-    { "name": "cloud", "help": "What is connected, and how to connect it" },
-    { "name": "sb", "help": "sb select|insert|delete|rpc|count|signin|buckets|up|down" },
-    { "name": "fb", "help": "fb get|set|list|query|del|rt|signin|up|down" }
+    {
+      "name": "cloud",
+      "help": "What is connected, and how to connect it"
+    },
+    {
+      "name": "sb",
+      "help": "sb select|insert|delete|rpc|count|signin|buckets|up|down"
+    },
+    {
+      "name": "fb",
+      "help": "fb get|set|list|query|del|rt|signin|up|down"
+    }
   ],
-  "permissions": ["network", "files"]
+  "permissions": [
+    "network",
+    "files"
+  ],
+  "settings": [
+    {
+      "name": "default_bucket",
+      "type": "text",
+      "label": "Default bucket",
+      "help": "Used when a storage action does not name one.",
+      "default": ""
+    },
+    {
+      "name": "rows",
+      "type": "number",
+      "label": "Rows to read",
+      "default": 25,
+      "help": "How many rows or documents the panel asks for."
+    },
+    {
+      "name": "provider",
+      "type": "choice",
+      "label": "Start on",
+      "options": [
+        "supabase",
+        "firebase"
+      ],
+      "default": "supabase"
+    },
+    {
+      "name": "confirm_deletes",
+      "type": "switch",
+      "label": "Ask before deleting",
+      "default": true
+    }
+  ],
+  "actions": [
+    {
+      "target": "file",
+      "label": "Upload to cloud storage",
+      "export": "upload_picked"
+    },
+    {
+      "target": "folder",
+      "label": "Upload every file in it",
+      "export": "upload_folder"
+    }
+  ]
 }

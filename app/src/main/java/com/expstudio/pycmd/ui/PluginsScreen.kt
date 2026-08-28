@@ -18,6 +18,9 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.text.input.KeyboardType
+import com.expstudio.pycmd.plugins.PluginSetting
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -27,6 +30,7 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -67,6 +71,9 @@ fun PluginsScreen(
     onToggleInstalled: (String, Boolean) -> Unit,
     onOpenPanel: (InstalledPlugin) -> Unit,
     onRemoveInstalled: (InstalledPlugin) -> Unit,
+    /** What each plugin's declared settings are currently set to. */
+    settingsFor: suspend (String) -> Map<String, Any?>,
+    onSetting: (String, String, String) -> Unit,
     /** Sections plugins have added to this screen; empty when none are on. */
     pluginSections: @Composable () -> Unit = {},
     onReadGuide: () -> Unit,
@@ -144,6 +151,8 @@ fun PluginsScreen(
                     // Removing one would only bring it back on the next start,
                     // which is a worse answer than not offering it.
                     onRemove = null,
+                    settingsValues = rememberSettings(plugin, settingsFor),
+                    onSetting = { name, value -> onSetting(plugin.id, name, value) },
                 )
             }
         }
@@ -160,6 +169,8 @@ fun PluginsScreen(
                     onToggle = { on -> onToggleInstalled(plugin.id, on) },
                     onOpen = { onOpenPanel(plugin) },
                     onRemove = { pendingRemoval = plugin },
+                    settingsValues = rememberSettings(plugin, settingsFor),
+                    onSetting = { name, value -> onSetting(plugin.id, name, value) },
                 )
             }
         }
@@ -355,6 +366,23 @@ private fun InstallCard(
     }
 }
 
+/**
+ * Reads a plugin's saved settings once, when its row appears.
+ *
+ * Empty for a plugin that declared none, which is most of them - so the common
+ * case costs nothing and never reaches Python at all.
+ */
+@Composable
+private fun rememberSettings(
+    plugin: InstalledPlugin,
+    settingsFor: suspend (String) -> Map<String, Any?>,
+): Map<String, Any?> {
+    if (plugin.settings.isEmpty()) return emptyMap()
+    var values by remember(plugin.id) { mutableStateOf<Map<String, Any?>>(emptyMap()) }
+    LaunchedEffect(plugin.id) { values = settingsFor(plugin.id) }
+    return values
+}
+
 @Composable
 private fun InstalledRow(
     plugin: InstalledPlugin,
@@ -363,8 +391,11 @@ private fun InstalledRow(
     onOpen: () -> Unit,
     /** Null for a plugin that ships in the APK: it would only come back. */
     onRemove: (() -> Unit)?,
+    settingsValues: Map<String, Any?>,
+    onSetting: (String, String) -> Unit,
 ) {
     var expanded by remember { mutableStateOf(false) }
+    var settingsOpen by remember { mutableStateOf(false) }
 
     PyCard {
         Row(verticalAlignment = Alignment.Top) {
@@ -463,10 +494,29 @@ private fun InstalledRow(
             )
         }
 
+        if (settingsOpen && plugin.settings.isNotEmpty()) {
+            Spacer(Modifier.height(10.dp))
+            plugin.settings.forEach { field ->
+                PluginSettingField(
+                    field = field,
+                    value = settingsValues[field.name] ?: field.default,
+                    onChange = { onSetting(field.name, it) },
+                )
+            }
+        }
+
         Spacer(Modifier.height(10.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             if (plugin.hasPanel) {
                 GhostButton("Open", PyIcons.PlayArrow, onOpen, Modifier.weight(1f))
+            }
+            if (plugin.settings.isNotEmpty()) {
+                GhostButton(
+                    if (settingsOpen) "Hide settings" else "Settings",
+                    PyIcons.Tune,
+                    { settingsOpen = !settingsOpen },
+                    Modifier.weight(1f),
+                )
             }
             GhostButton(
                 if (expanded) "Hide files" else "Files",
@@ -716,4 +766,95 @@ fun SearchField(
             unfocusedBorderColor = MaterialTheme.colorScheme.outline,
         ),
     )
+}
+
+/**
+ * One setting a plugin declared, as a real control.
+ *
+ * The value is sent back as text and typed on the Python side, where the
+ * manifest that says what type it is lives - two places deciding what "true"
+ * means would eventually disagree.
+ */
+@Composable
+private fun PluginSettingField(
+    field: PluginSetting,
+    value: Any?,
+    onChange: (String) -> Unit,
+) {
+    Column(Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
+        when (field.type) {
+            "switch" -> Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text(field.label, style = MaterialTheme.typography.bodyMedium)
+                    if (field.help.isNotBlank()) {
+                        Text(
+                            field.help,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+                Switch(
+                    checked = value == true || value == "true",
+                    onCheckedChange = { onChange(it.toString()) },
+                )
+            }
+
+            "choice" -> {
+                Text(
+                    field.label,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(Modifier.height(4.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    field.options.forEach { option ->
+                        val chosen = option == value.toString()
+                        StatusChip(
+                            option,
+                            if (chosen) {
+                                MaterialTheme.colorScheme.primary
+                            } else {
+                                MaterialTheme.colorScheme.outline
+                            },
+                            Modifier.clickable { onChange(option) },
+                        )
+                    }
+                }
+                if (field.help.isNotBlank()) {
+                    Text(
+                        field.help,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+
+            else -> {
+                var text by remember(field.name, value) { mutableStateOf(value?.toString().orEmpty()) }
+                OutlinedTextField(
+                    value = text,
+                    onValueChange = {
+                        text = it
+                        onChange(it)
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text(field.label, style = MaterialTheme.typography.labelSmall) },
+                    supportingText = if (field.help.isNotBlank()) {
+                        { Text(field.help, style = MaterialTheme.typography.labelSmall) }
+                    } else {
+                        null
+                    },
+                    singleLine = true,
+                    textStyle = MaterialTheme.typography.bodySmall.copy(fontFamily = MonoFamily),
+                    keyboardOptions = if (field.type == "number") {
+                        KeyboardOptions(keyboardType = KeyboardType.Number)
+                    } else {
+                        KeyboardOptions.Default
+                    },
+                    shape = RoundedCornerShape(10.dp),
+                )
+            }
+        }
+    }
 }
