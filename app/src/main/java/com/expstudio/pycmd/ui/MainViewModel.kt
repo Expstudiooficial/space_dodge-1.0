@@ -1952,7 +1952,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun updateLaunchForm(transform: (LaunchForm) -> LaunchForm) {
-        _servers.value = _servers.value.copy(form = transform(_servers.value.form))
+        val before = _servers.value.form
+        val after = transform(before)
+        _servers.value = _servers.value.copy(form = after)
+        // The plan describes whatever the form points at now, in either mode.
+        // A folder in "serve" mode has one too: it is how the form can say
+        // there is an app.py in there before serving a list of files instead.
+        val target = after.target
+        if (target != null && (target != before.target || after.kind != before.kind)) {
+            refreshRunPlan(target)
+        }
     }
 
     /** Fills the form's port with the first one actually free. */
@@ -2002,18 +2011,22 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     /**
-     * Asks what starting this file would do, and puts the answer in the form.
+     * Asks what starting this target would do, and puts the answer in the form.
      *
      * The Servers tab used to run Python and nothing else, so there was
-     * nothing to say. Now a page is served, a Go file is interpreted and a
-     * plugin may claim a type of its own - so the form says which it will be
+     * nothing to say. Now a page is served, a Go file is interpreted, a plugin
+     * may claim a type of its own, and a folder is looked into for the file
+     * that is actually its front door - so the form says which it will be
      * before anything starts, and refuses up front what cannot run at all.
      */
     private fun refreshRunPlan(file: File) {
         viewModelScope.launch {
             val plan = engine.howToRun(file.absolutePath)
             updateLaunchForm { form ->
-                if (form.script?.absolutePath == file.absolutePath) form.copy(plan = plan) else form
+                // Only if the form is still pointing where it was: choosing
+                // twice quickly must not label the second choice with the
+                // first one's answer.
+                if (form.target?.absolutePath == file.absolutePath) form.copy(plan = plan) else form
             }
         }
     }

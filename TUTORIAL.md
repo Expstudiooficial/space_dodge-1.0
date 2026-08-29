@@ -190,11 +190,44 @@ does it:
 | `.c`, `.go`, `.rs` | Runs on the interpreter built into the app |
 | `.js` | Runs in the device's own JavaScript engine |
 | `.html`, `.css`, `.md` | Serves the folder it sits in, opening on that page |
-| a folder | Serves it |
+| a folder | Looks inside and runs its front door — see below |
 | `.java`, `.cpp`, `.ts` | Refused up front, with the reason — no toolchain can run these here |
 
 A running server has a **View** button that opens it in the preview, so you can
 look at your own site without leaving the app.
+
+### Pointing it at a whole project
+
+A folder is a project, not a pile of files, so **Run a file** pointed at one
+looks inside and takes the first of these it finds:
+
+| In the folder | What Run does |
+|---|---|
+| `app.py`, `server.py`, `wsgi.py`, `manage.py`… that imports Flask, Django, FastAPI, `http.server`… | Runs it — that is the app |
+| `index.html` | Serves the folder and opens that page |
+| any of those entry names, even if it serves nothing | Runs it |
+| exactly one runnable file | Runs that one |
+| none of the above | Serves it as a file listing, and the page says what is missing |
+
+The form says which of those it picked before you press Run, so a project that
+is about to be served as a list of files tells you so first.
+
+**Flask apps get the port you chose.** `app.run()` written on a laptop binds
+`127.0.0.1:5000` and turns on the auto-reloader — on a phone that is a server
+nothing can reach, restarting itself with a process launcher Android does not
+have. PyCmd fills in the host and port from the form where the code left them
+out, and turns the reloader off. If your code *does* name a port, that wins,
+and the server card corrects itself to the port it really took.
+
+**If you get a directory listing you did not want:** the page itself now says
+why. The usual cause is pointing Run at the folder *inside* a Flask project —
+the one holding `templates/` and `static/` — when the `app.py` that renders
+those templates is the folder above. Point Run one level up.
+
+**Type `http://`, not `https://`.** These servers are plain HTTP. Browsers
+increasingly try HTTPS first for a bare address like `10.1.6.64:8000`, which
+fails against a plain server; when that happens, PyCmd says so in the server's
+console with the exact address to open.
 
 You land straight in that server's own **console**. It shows what the server
 printed, and with "Log each request" on you will see every hit as it happens:

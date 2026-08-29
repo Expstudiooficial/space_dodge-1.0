@@ -1,17 +1,61 @@
 # Prebuilt APK
 
-`PyCmd-2.4-debug.apk` — ready to install, nothing else needed.
+`PyCmd-2.4.1-debug.apk` — ready to install, nothing else needed.
 
 | | |
 |---|---|
 | Package | `com.expstudio.pycmd.debug` |
-| Version | 2.4-debug |
+| Version | 2.4.1-debug |
 | Size | 33 MB |
 | Signed with | the key in [`keystore/`](../keystore/), committed so updates can install over it |
 | Works on | Android 7.0 (API 24) and newer, **arm64-v8a** (every phone since about 2016) |
 | SHA-256 | see [SHA256SUMS.txt](SHA256SUMS.txt) |
 
-## What is new in 2.4
+## What is new in 2.4.1
+
+**Pointing Run at a folder runs the project in it.** It used to mean one thing -
+hand the folder to a file server - so a Flask project answered with a directory
+listing of `static/` and `templates/`: the files, correct and useless. A folder
+is now looked into first, and the first of these wins:
+
+| In the folder | What Run does |
+|---|---|
+| `app.py`, `server.py`, `wsgi.py`, `manage.py`, `main.py`... that imports Flask, Django, FastAPI, `http.server`... | Runs it. That is the app. |
+| `index.html` | Serves the folder and opens that page |
+| one of those entry names that serves nothing | Runs it anyway - it is still the front door |
+| exactly one runnable file | Runs that one |
+| none of the above | Serves it as a listing, and says why on the page |
+
+Whether a script serves is read out of the file rather than guessed from its
+name: `main.py` that imports Flask is a server, `main.py` that crunches numbers
+is not, and starting the second one because it had the right filename would be
+its own kind of wrong. The launch form says which it picked **before** you press
+Run, and "Serve a folder" now offers a one-tap **Run app.py instead** when there
+is something in there to run.
+
+**Flask apps get the port you chose.** `app.run()` binds `127.0.0.1:5000` with
+the auto-reloader on - on a phone that is a server nothing can reach,
+restarting itself with a process launcher Android does not have. PyCmd now
+fills in the host and port the form asked for wherever the code left them out,
+and turns the reloader off. Code that names its own port still wins, and the
+server card corrects itself to the port the app really took, read from what the
+framework printed - a View button pointing at the wrong port is how a working
+server looks broken.
+
+**The listing itself is worth reading now.** A folder with no `index.html` used
+to answer with Python's bare `<ul>` of names. It is now a real page: folders
+first, sizes, which files this device can run, a way back up - and, at the top
+of the tree, a sentence saying why you are looking at a list at all. The most
+useful one names the exact mistake behind the screenshot that prompted this
+release: `templates/` and `static/` with no `app.py` is the *inside* of a Flask
+project, and the app that renders those templates is the folder above.
+
+**https on an http port says so.** Browsers increasingly try HTTPS first for a
+bare address like `10.1.6.64:8000`. The handshake arrived as unparseable bytes
+and produced a wall of "Bad request version" in the console. It is now one
+line, once: something tried https, here is the http address to open.
+
+## What was new in 2.4
 
 **PyCmd can update itself now.** **More → System → Check for updates** reads a
 small published manifest, and if there is a newer build it downloads it, checks
@@ -327,7 +371,7 @@ on, its console command answered, and its panel called back into its own
 Python. The APK here is that source built for arm64 instead, which changes
 the CPython binaries and nothing else.
 
-802 checks run before any of this is committed: `test_runtime.py` (157),
+835 checks run before any of this is committed: `test_runtime.py` (190),
 `test_plugins.py` (120), `test_go.py` (92), `test_rust.py` (73),
 `test_cloud.py` (68), `test_bundled.py` (61), `test_c.py` (54), `test_preview.py`
 (51), `test_editor.js` (46), `test_js.js` (43) and `test_doctor.py` (37).
@@ -396,7 +440,7 @@ every tab with things to paste in and try.
 ## Installing over USB
 
 ```bash
-adb install -r dist/PyCmd-2.4-debug.apk
+adb install -r dist/PyCmd-2.4.1-debug.apk
 ```
 
 ## Checking the download
@@ -410,14 +454,14 @@ sha256sum -c dist/SHA256SUMS.txt
 The file the app checks. It is generated from the APK next to it, never typed:
 
 ```bash
-python3 tools/make_latest.py dist/PyCmd-2.4-debug.apk --notes "one line"
+python3 tools/make_latest.py dist/PyCmd-2.4.1-debug.apk --notes "one line"
 python3 tools/make_latest.py            # checks the one that is there
 ```
 
 | Field | What it is |
 |---|---|
 | `versionCode` | The build number. The app offers an update only when this is higher than its own. |
-| `versionName` | What the card shows: `2.4-debug`. |
+| `versionName` | What the card shows: `2.4.1-debug`. |
 | `package` | Which app this is for. A mismatch is refused before the download starts. |
 | `url` | An `https://` address of the APK. Plain `http` is refused. |
 | `sha256` | The APK's fingerprint. The download is checked against it and thrown away if it differs. |

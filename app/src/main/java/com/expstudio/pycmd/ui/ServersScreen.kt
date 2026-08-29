@@ -246,17 +246,39 @@ private fun LaunchCard(
         // What pressing Run will actually do with it. Worth saying before it
         // happens: a page is served rather than executed, a .go file goes to
         // an interpreter, and a .java file cannot run here at all.
-        if (form.kind == ServerKind.SCRIPT && form.plan.note.isNotBlank()) {
+        //
+        // A folder gets the same treatment in either mode. In "serve" mode the
+        // note is what stops the surprise this exists to prevent: a Flask
+        // project handed to a file server shows a list of static/ and
+        // templates/, and the reason is worth reading before pressing Run,
+        // not after.
+        val servingSomethingRunnable = form.kind == ServerKind.STATIC &&
+            form.plan.how == "script" && form.plan.entry.isNotBlank()
+        if (form.plan.note.isNotBlank()) {
             Spacer(Modifier.height(6.dp))
             Text(
-                text = form.plan.note,
+                text = if (servingSomethingRunnable) {
+                    "There is ${form.plan.entry} in here. Serving this folder hands " +
+                        "over the files as they are; running it starts the app."
+                } else {
+                    form.plan.note
+                },
                 style = MaterialTheme.typography.labelSmall,
-                color = if (form.plan.runnable) {
+                color = if (form.plan.runnable || form.kind == ServerKind.STATIC) {
                     MaterialTheme.colorScheme.onSurfaceVariant
                 } else {
                     MaterialTheme.colorScheme.error
                 },
             )
+            if (servingSomethingRunnable) {
+                Spacer(Modifier.height(8.dp))
+                GhostButton(
+                    "Run ${form.plan.entry} instead",
+                    PyIcons.PlayArrow,
+                    { onFormChange { it.copy(kind = ServerKind.SCRIPT, script = it.folder) } },
+                    Modifier.fillMaxWidth(),
+                )
+            }
         }
 
         Spacer(Modifier.height(12.dp))

@@ -12,7 +12,7 @@ already has. Another twenty file types are edited, highlighted, previewed and
 served, and music, video, images, PDFs, archives and fonts are brought in from
 the phone, kept, served and played.
 
-Version 2.4. Kotlin and Jetpack Compose for the app, JavaScript for the console
+Version 2.4.1. Kotlin and Jetpack Compose for the app, JavaScript for the console
 and editor.
 
 ---
@@ -61,9 +61,13 @@ runtime. `requests`, `flask` and `rich` are already built in.
 
 **Servers** — a launch form that runs whatever you point it at: a Python
 script, a C, Go or Rust program, a JavaScript file, an HTML page (whose folder
-gets served, opening on that page), or a whole folder. It says which of those
-it will be *before* you press Run, and refuses what has no engine here with the
-reason. Pick the port (with a "free one" button), name it, choose whether it is
+gets served, opening on that page), or a whole project folder. A folder is
+looked into rather than handed straight to a file server: an `app.py` that
+imports Flask is the front door and gets run, an `index.html` is the page to
+open, a single runnable file is the one you meant. A directory listing is what
+is left when there is genuinely nothing to run - and then the page says why.
+It says which of those it will be *before* you press Run, and refuses what has
+no engine here with the reason. Pick the port (with a "free one" button), name it, choose whether it is
 reachable on Wi-Fi or loopback only. Every server gets its own console with its
 own scrollback and stdin box, a **View** button that opens it in the preview,
 and a **Kill** switch that works even on a server wedged inside its own
@@ -128,7 +132,7 @@ signal, no answer - says nothing at all.
 ## Just want to try it
 
 A ready-to-install debug APK is in [`dist/`](dist/) - download
-[`PyCmd-2.4-debug.apk`](dist/PyCmd-2.4-debug.apk), open it on the phone, and
+[`PyCmd-2.4.1-debug.apk`](dist/PyCmd-2.4.1-debug.apk), open it on the phone, and
 allow the install when Android asks. It is signed with the key in
 [`keystore/`](keystore/) - the standard Android debug certificate, committed so
 that every build of this repo can replace the last one on a phone instead of

@@ -1,9 +1,9 @@
 {
-  "versionCode": 11,
-  "versionName": "2.4-debug",
+  "versionCode": 12,
+  "versionName": "2.4.1-debug",
   "package": "com.expstudio.pycmd.debug",
-  "url": "https://raw.githubusercontent.com/expstudiooficial/space_dodge-1.0/claude/python-mobile-cmd-android-dj1ixb/dist/PyCmd-2.4-debug.apk",
-  "sha256": "89d843436e880a9eaba68bce10d46f85a648af52c81bd9b736844a684da2c219",
-  "bytes": 35059515,
-  "notes": "Music and video files, and updates that install over this one instead of replacing it."
+  "url": "https://raw.githubusercontent.com/expstudiooficial/space_dodge-1.0/claude/python-mobile-cmd-android-dj1ixb/dist/PyCmd-2.4.1-debug.apk",
+  "sha256": "f9866b6c678496d044ea65711723a258a2368961a6101df3d77141cd2bbcbf8b",
+  "bytes": 35475527,
+  "notes": "Run a folder and it runs the project in it - app.py, index.html - instead of listing the files."
 }

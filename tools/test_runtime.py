@@ -549,6 +549,206 @@ refused = pycmd_servers.start_file(java_file)
 check("something with no engine is refused up front", refused.get("ok") is False, refused)
 check("with the reason, not a stack trace", "compiler" in refused.get("error", ""), refused)
 
+report("\n== servers: a folder is a project, not a pile of files ==")
+
+# The bug this covers: pointing Run at a Flask project served static/ and
+# templates/ as a directory listing, because "folder" meant "file server" and
+# nothing looked inside.
+project = os.path.join(workspace, "site")
+os.makedirs(os.path.join(project, "templates"), exist_ok=True)
+os.makedirs(os.path.join(project, "static"), exist_ok=True)
+with open(os.path.join(project, "templates", "index.html"), "w", encoding="utf-8") as handle_file:
+    handle_file.write("<h1>{{ title }}</h1>")
+with open(os.path.join(project, "static", "app.css"), "w", encoding="utf-8") as handle_file:
+    handle_file.write("body { margin: 0 }\n")
+
+inside = pycmd_servers.folder_plan(project)
+check("a templates-only folder is still served", inside["how"] == "serve", inside)
+check("but it says why there is nothing to run", "Flask" in inside["hint"], inside)
+
+with open(os.path.join(project, "app.py"), "w", encoding="utf-8") as handle_file:
+    handle_file.write(
+        "from flask import Flask\n"
+        "app = Flask(__name__)\n"
+        "\n"
+        "@app.route('/')\n"
+        "def home():\n"
+        "    return 'hello'\n"
+    )
+planned = pycmd_servers.folder_plan(project)
+check("app.py is the front door", planned["how"] == "script", planned)
+check("and it is named", planned["entry"] == "app.py", planned)
+check("and the framework is named too", "flask" in planned["note"], planned)
+check(
+    "how_to_run says the same about the folder",
+    pycmd_servers.how_to_run(project)["entry"] == "app.py",
+    pycmd_servers.how_to_run(project),
+)
+
+# A page wins when there is no server script beside it.
+plain = os.path.join(workspace, "plainsite")
+os.makedirs(plain, exist_ok=True)
+with open(os.path.join(plain, "index.html"), "w", encoding="utf-8") as handle_file:
+    handle_file.write("<h1>a real page</h1>")
+with open(os.path.join(plain, "build.py"), "w", encoding="utf-8") as handle_file:
+    handle_file.write("print('built')\n")
+page_plan = pycmd_servers.folder_plan(plain)
+check("index.html beats a helper script", page_plan["entry"] == "index.html", page_plan)
+check("and it is served, not executed", page_plan["how"] == "serve", page_plan)
+
+# One runnable file and no ceremony: that is the one you meant.
+single = os.path.join(workspace, "onefile")
+os.makedirs(single, exist_ok=True)
+with open(os.path.join(single, "worker.py"), "w", encoding="utf-8") as handle_file:
+    handle_file.write("print('worked')\n")
+only = pycmd_servers.folder_plan(single)
+check("the only runnable file is the plan", only["entry"] == "worker.py", only)
+
+many = os.path.join(workspace, "manyfiles")
+os.makedirs(many, exist_ok=True)
+for name in ("one.py", "two.py", "three.py"):
+    with open(os.path.join(many, name), "w", encoding="utf-8") as handle_file:
+        handle_file.write("print('x')\n")
+crowd = pycmd_servers.folder_plan(many)
+check("several candidates and no front door means serve", crowd["how"] == "serve", crowd)
+check("and the hint names them", "one.py" in crowd["hint"], crowd)
+
+# Running the folder runs the entry point, rather than listing it.
+ran = pycmd_servers.start_file(single, port=8151, label="folder run")
+check("running a folder starts its entry point", ran.get("ok") is True, ran)
+time.sleep(0.8)
+check(
+    "and the entry point really ran",
+    any("worked" in row["text"] for row in pycmd_servers.log_lines(ran.get("handle", ""))),
+    pycmd_servers.log_lines(ran.get("handle", "")),
+)
+pycmd_servers.kill_all()
+time.sleep(0.3)
+
+# Serving the folder that has nothing to run gives a listing worth reading.
+listed = pycmd_servers.start_file(project, port=8152)
+check("a project with an app.py runs instead of serving", listed.get("kind") == "script", listed)
+pycmd_servers.kill_all()
+time.sleep(0.3)
+
+os.remove(os.path.join(project, "app.py"))
+listed = pycmd_servers.start_file(project, port=8153)
+check("with the app.py gone it serves again", listed.get("ok") is True, listed)
+time.sleep(0.4)
+page = urllib.request.urlopen("http://127.0.0.1:8153/", timeout=3).read().decode()
+check("the listing is a real page", "<!doctype html>" in page.lower(), page[:80])
+check("it lists the folders", "templates/" in page, page[:200])
+check("it says why it is a listing", "Why you are looking at a list" in page, page[:400])
+check("and links are usable", "href='templates/'" in page, page[:400])
+# templates/ holds an index.html, so that one is served rather than listed -
+# which is the ordinary rule and worth not breaking.
+served_index = urllib.request.urlopen("http://127.0.0.1:8153/templates/", timeout=3).read()
+check("a folder with an index.html still serves it", b"{{ title }}" in served_index, served_index)
+
+sub = urllib.request.urlopen("http://127.0.0.1:8153/static/", timeout=3).read().decode()
+check("a subfolder with no index is listed", "app.css" in sub, sub[:300])
+check("with a way back up", "href='..'" in sub, sub[:300])
+pycmd_servers.kill_all()
+time.sleep(0.3)
+
+report("\n== servers: http, https and the port a framework really took ==")
+check(
+    "a TLS handshake on an http port is recognised",
+    pycmd_servers._looks_like_tls("code 400, message Bad request version ('\\x16\\x03\\x01')"),
+    "not recognised",
+)
+check(
+    "an ordinary 404 is not mistaken for one",
+    not pycmd_servers._looks_like_tls("code 404, message File not found"),
+    "mistaken",
+)
+
+
+class _FakeEntry:
+    kind = "script"
+    port = 8000
+    handle = "srvport"
+
+    def __init__(self):
+        self.lines = []
+
+    def add_log(self, stream, text):
+        self.lines.append(text)
+
+
+# The other half of "the address does not work": a Flask app written on a
+# laptop says app.run(), which binds 127.0.0.1:5000 with the auto-reloader on -
+# a server the phone's browser cannot reach, restarting itself with a process
+# launcher Android does not have. Checked against a stand-in Flask, so the
+# suite does not need the real one installed to prove the patch.
+import types  # noqa: E402
+
+fake_flask = types.ModuleType("flask")
+ran_with = []
+
+
+class _FakeFlaskApp:
+    def run(self, host=None, port=None, debug=None, **options):
+        ran_with.append(dict(options, host=host, port=port, debug=debug))
+
+
+fake_flask.Flask = _FakeFlaskApp
+sys.modules["flask"] = fake_flask
+
+
+class _BindEntry:
+    kind = "script"
+    port = 8000
+    handle = "srvbind"
+
+    def __init__(self):
+        self.lines = []
+
+    def add_log(self, stream, text):
+        self.lines.append(text)
+
+
+bind_entry = _BindEntry()
+pycmd_servers._patch_flask()
+pycmd_servers._binding.value = ("0.0.0.0", 8161, bind_entry)
+
+_FakeFlaskApp().run()
+check("app.run() gets the host the form asked for", ran_with[-1]["host"] == "0.0.0.0", ran_with[-1])
+check("and the port", ran_with[-1]["port"] == 8161, ran_with[-1])
+check(
+    "and the reloader Android cannot run is off",
+    ran_with[-1]["use_reloader"] is False,
+    ran_with[-1],
+)
+
+_FakeFlaskApp().run(port=5000)
+check("a port the code names is left alone", ran_with[-1]["port"] == 5000, ran_with[-1])
+check("and the card is corrected to it", bind_entry.port == 5000, bind_entry.port)
+
+_FakeFlaskApp().run(host="127.0.0.1")
+check(
+    "a loopback host is honoured, and said out loud",
+    ran_with[-1]["host"] == "127.0.0.1"
+    and any("only this phone" in line for line in bind_entry.lines),
+    bind_entry.lines,
+)
+
+pycmd_servers._binding.value = None
+_FakeFlaskApp().run()
+check(
+    "off a PyCmd server thread it changes nothing",
+    ran_with[-1]["host"] is None and ran_with[-1]["port"] is None,
+    ran_with[-1],
+)
+del sys.modules["flask"]
+
+fake = _FakeEntry()
+pycmd_servers._learn_port(fake, " * Running on http://127.0.0.1:5000\n")
+check("the real port is taken from what the framework printed", fake.port == 5000, fake.port)
+pycmd_servers._learn_port(fake, "GET / HTTP/1.1 200 -\n")
+check("and ordinary output does not move it", fake.port == 5000, fake.port)
+
+
 report("\n== servers: a plugin can claim a file type ==")
 
 

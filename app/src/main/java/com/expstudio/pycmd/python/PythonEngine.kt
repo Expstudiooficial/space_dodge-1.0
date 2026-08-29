@@ -1149,7 +1149,7 @@ object PythonEngine {
         if (!_status.value.ready) return@withContext RunPlan()
         runCatching {
             val map = servers.callAttr("how_to_run", path).asMap()
-            RunPlan(map.str("how"), map.str("language"), map.str("note"))
+            RunPlan(map.str("how"), map.str("language"), map.str("note"), map.str("entry"))
         }.getOrDefault(RunPlan())
     }
 
@@ -1430,6 +1430,8 @@ data class RunPlan(
     val how: String = "",
     val language: String = "",
     val note: String = "",
+    /** For a folder: the file inside it that Run would start. Empty otherwise. */
+    val entry: String = "",
 ) {
     val runnable: Boolean get() = how.isNotEmpty() && how != "unsupported" && how != "unknown"
 }
