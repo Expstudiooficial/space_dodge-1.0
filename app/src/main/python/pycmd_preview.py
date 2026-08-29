@@ -76,6 +76,15 @@ img { max-width: 100%; height: auto; border-radius: 8px; }
 ul, ol { padding-left: 1.4em; }
 li { margin: 0.25em 0; }
 input[type=checkbox] { margin-right: 6px; }
+.pycmd-player {
+  margin: 14px 0;
+  padding: 12px;
+  border-radius: 12px;
+  background: #121A24;
+  border: 1px solid #1E2A38;
+}
+.pycmd-player audio, .pycmd-player video { display: block; border-radius: 8px; }
+
 .pycmd-art {
   display: flex; justify-content: center; padding: 12px;
   background:
@@ -136,9 +145,16 @@ EXTENSIONS = (
     ".json", ".csv", ".tsv", ".xml", ".yaml", ".yml", ".toml", ".ini",
     ".cfg", ".conf", ".txt", ".log", ".png", ".jpg", ".jpeg", ".gif",
     ".webp", ".bmp", ".ico",
+    # Media. The player is a real <audio>/<video> element served over the
+    # loopback server, which is what makes seeking work: a file:// URL cannot
+    # answer a range request, and without ranges a browser will not scrub.
+    ".mp3", ".wav", ".ogg", ".m4a", ".aac", ".flac", ".opus",
+    ".mp4", ".webm", ".mkv", ".mov", ".m4v",
 )
 
 IMAGES = (".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".ico")
+AUDIO = (".mp3", ".wav", ".ogg", ".m4a", ".aac", ".flac", ".opus")
+VIDEO = (".mp4", ".webm", ".mkv", ".mov", ".m4v")
 
 
 def can_preview(name: str) -> bool:
@@ -155,6 +171,18 @@ def render(path: str) -> dict:
     extension = os.path.splitext(path)[1].lower()
     name = os.path.basename(path)
     folder = os.path.dirname(os.path.abspath(path))
+
+    if extension in AUDIO or extension in VIDEO:
+        try:
+            size = os.path.getsize(path)
+        except OSError as error:
+            return {"ok": False, "error": f"cannot open {path}: {error}"}
+        return {
+            "ok": True,
+            "html": _page(name, _player_body(name, size, extension in VIDEO), contents=False),
+            "base": folder + os.sep,
+            "name": name,
+        }
 
     if extension in IMAGES:
         # Never read as text, and never inlined: the server next door can
@@ -200,6 +228,38 @@ def render(path: str) -> dict:
         body = _page(name, _text_body(name, source), contents=False)
 
     return {"ok": True, "html": body, "base": folder + os.sep, "name": name}
+
+
+def _player_body(name: str, size: int, is_video: bool) -> str:
+    """A real player element, pointed at the file next to this page.
+
+    Relative, because the page and the file are served from the same folder -
+    which is also why scrubbing works: the server answers byte ranges, and a
+    browser will not offer a scrub bar to something that cannot.
+    """
+    escaped = html_escape.escape(name, quote=True)
+    kind = "video" if is_video else "audio"
+    element = (
+        f"<{kind} controls playsinline preload='metadata' src='{escaped}' "
+        f"style='width:100%;{' max-height:70vh;' if is_video else ''}'></{kind}>"
+    )
+    readable = _readable_size(size)
+    return (
+        f"<p class='pycmd-note'>{html_escape.escape(name)} - {readable}</p>"
+        f"<div class='pycmd-player'>{element}</div>"
+        "<p class='pycmd-note'>What plays is up to the device: an Android WebView "
+        "handles mp3, m4a, wav, ogg, mp4 and webm. Anything it cannot decode shows "
+        "the controls and refuses to start, which is the browser telling you the "
+        "same thing.</p>"
+    )
+
+
+def _readable_size(size: int) -> str:
+    if size >= 1024 * 1024:
+        return f"{size / 1024 / 1024:.1f} MB"
+    if size >= 1024:
+        return f"{size // 1024} KB"
+    return f"{size} bytes"
 
 
 def _text_body(name: str, source: str) -> str:
@@ -693,12 +753,83 @@ def _ensure_server(folder: str):
                 self.end_headers()
                 self.wfile.write(body)
                 return
+            if self._serve_range():
+                return
             super().do_GET()
+
+        def _serve_range(self) -> bool:
+            """Answers a Range request, which is what lets media seek.
+
+            SimpleHTTPRequestHandler only ever sends whole files, and a
+            browser will not give you a scrub bar for a source that cannot
+            answer a range - so a fifty-minute recording had to be downloaded
+            from the top to hear the end of it. Returns False for anything
+            this does not handle, leaving the ordinary path to it.
+            """
+            header = self.headers.get("Range")
+            if not header or not header.startswith("bytes="):
+                return False
+
+            path = self.translate_path(self.path)
+            if not os.path.isfile(path):
+                return False
+            try:
+                size = os.path.getsize(path)
+            except OSError:
+                return False
+
+            first, _, last = header[len("bytes="):].partition("-")
+            try:
+                if first:
+                    start = int(first)
+                    end = int(last) if last else size - 1
+                else:
+                    # "bytes=-500" means the last 500 bytes.
+                    if not last:
+                        return False
+                    start = max(0, size - int(last))
+                    end = size - 1
+            except ValueError:
+                return False
+
+            if start >= size or start > end:
+                self.send_response(416)
+                self.send_header("Content-Range", f"bytes */{size}")
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+                return True
+
+            end = min(end, size - 1)
+            length = end - start + 1
+            self.send_response(206)
+            self.send_header("Content-Type", self.guess_type(path))
+            self.send_header("Content-Range", f"bytes {start}-{end}/{size}")
+            self.send_header("Content-Length", str(length))
+            # Accept-Ranges is added by end_headers for every response.
+            self.end_headers()
+
+            with open(path, "rb") as handle:
+                handle.seek(start)
+                remaining = length
+                while remaining > 0:
+                    chunk = handle.read(min(64 * 1024, remaining))
+                    if not chunk:
+                        break
+                    try:
+                        self.wfile.write(chunk)
+                    except (BrokenPipeError, ConnectionResetError):
+                        # Skipping around a video closes connections mid-send;
+                        # that is the player doing its job, not an error.
+                        return True
+                    remaining -= len(chunk)
+            return True
 
         def end_headers(self):
             # A preview that shows a cached copy of the page you just edited
             # is worse than no preview.
             self.send_header("Cache-Control", "no-store, must-revalidate")
+            # Says a range request is worth making at all.
+            self.send_header("Accept-Ranges", "bytes")
             super().end_headers()
 
         def log_message(self, format, *args):  # noqa: A002

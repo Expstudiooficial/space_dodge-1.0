@@ -1,17 +1,71 @@
 # Prebuilt APK
 
-`PyCmd-2.3-debug.apk` — ready to install, nothing else needed.
+`PyCmd-2.4-debug.apk` — ready to install, nothing else needed.
 
 | | |
 |---|---|
 | Package | `com.expstudio.pycmd.debug` |
-| Version | 2.3-debug |
+| Version | 2.4-debug |
 | Size | 33 MB |
-| Signed with | the standard Android debug key |
+| Signed with | the key in [`keystore/`](../keystore/), committed so updates can install over it |
 | Works on | Android 7.0 (API 24) and newer, **arm64-v8a** (every phone since about 2016) |
 | SHA-256 | see [SHA256SUMS.txt](SHA256SUMS.txt) |
 
-## What is new in 2.3
+## What is new in 2.4
+
+**PyCmd can update itself now.** **More → System → Check for updates** reads a
+small published manifest, and if there is a newer build it downloads it, checks
+it against the fingerprint published beside it, checks it carries the same
+signing key as the build you are running, and hands it to Android to install
+**over** this one. Your workspace, the packages you installed with pip, your
+plugins and every setting stay exactly where they are - Android replaces the
+app rather than removing it. Deleting PyCmd first is the thing that loses all
+of that, and until now that was the only way to move between versions.
+
+**Which needed one key, kept in the repo.** Android only lets an APK replace an
+installed one when both were signed by the same key, and Gradle's debug key is
+generated per machine - so two builds of the same source, made in two places,
+were two different apps to the installer. [`keystore/pycmd.keystore`](../keystore/)
+is now that one key (the standard Android debug certificate; not a secret, not
+for a store), and this APK is signed with it. It is the same key 2.3 was signed
+with, so **2.4 installs straight over 2.3**. From here on, every build can.
+
+**And it tells you an update exists.** Once a day, while the app is running, it
+reads that one manifest by itself and puts a dot on **More** and a line on the
+System card if something newer is out. That is the whole of it: nothing is
+downloaded until you press Download, nothing is installed until you press
+Install, and a check that fails on a phone with no signal says nothing at all,
+because it is not a question you asked.
+
+**It tells you before it cannot.** A build calling itself another package, or
+signed with a different key, is refused with the reason instead of being handed
+to the installer to fail as "App not installed" - the failure that makes people
+uninstall the app, which is precisely what empties the workspace. The address
+it checks is editable too, at the bottom of the card: a fork, another branch, a
+machine of your own. The fingerprint check runs whatever it points at.
+
+**Music, video and everything else you do not type.** The new-file menu now
+offers audio, video, images, PDFs, archives and fonts, and picking one opens the
+phone's picker instead of writing a template - an empty `.mp3` is not a file
+anybody wanted. They come in through the same importer as everything else, sit
+in the workspace, and export back out. This rides with **Polyglot Files**, the
+built-in kit plugin, along with the rest of the file types.
+
+**And they play.** Tap an `.mp3` or `.mp4` and it opens a real player - with a
+seek bar you can drag, because the preview server now answers HTTP byte ranges
+(206, `Content-Range`, open-ended and suffix ranges, 416 past the end). Browsers
+will not let you scrub without that, which is why a media file opened from a
+`file://` URL only ever plays from the start. What decodes is the phone's
+business: MP3, AAC/M4A, FLAC, Ogg, WAV, MP4 and WebM are safe, MKV and MOV
+depend on the device, and the player says so rather than showing a dead control.
+
+**A file that is bytes is never opened as text.** Tapping media opens the
+player, and anything else with a NUL in its first few KB refuses the editor
+with a sentence. The editor reads text: it turns every byte it cannot decode
+into a replacement character, and saving that writes the ruined version over a
+file that was fine a moment ago.
+
+## What was new in 2.3
 
 **The examples folder can be deleted.** It was re-created on every start, which
 made `examples/` a folder you were not allowed to be rid of - not the app's
@@ -273,10 +327,10 @@ on, its console command answered, and its panel called back into its own
 Python. The APK here is that source built for arm64 instead, which changes
 the CPython binaries and nothing else.
 
-772 checks run before any of this is committed: `test_runtime.py` (145),
+802 checks run before any of this is committed: `test_runtime.py` (157),
 `test_plugins.py` (120), `test_go.py` (92), `test_rust.py` (73),
-`test_cloud.py` (68), `test_bundled.py` (61), `test_c.py` (54), `test_js.js`
-(43), `test_editor.js` (46), `test_doctor.py` (37) and `test_preview.py` (33).
+`test_cloud.py` (68), `test_bundled.py` (61), `test_c.py` (54), `test_preview.py`
+(51), `test_editor.js` (46), `test_js.js` (43) and `test_doctor.py` (37).
 Each language check is a real program paired with the output the real compiler
 produces. The rest go after the things that are
 awkward to be sure of by looking: a script wedged in `accept()` is started for
@@ -295,17 +349,36 @@ bundled plugins the way the app does and drives them: it starts a real server
 and restarts it through Server Pro, schedules a real job, and renders every
 panel.
 
-The 2.3 changes were verified by those checks and by Lint on the built APK,
-not on an emulator: this build machine has no hardware virtualisation, so no
-emulator could be started for it.
+The preview suite covers this release's range serving directly: it asks the
+real loopback server for `bytes=10-19`, an open-ended range and a suffix range,
+and checks the status line, the `Content-Range` header and the exact bytes that
+come back - plus a 416 past the end of the file and a nonsense `Range` falling
+back to the whole file. `tools/make_latest.py` runs in the suite too, and fails
+the build if `dist/latest.json` does not match the APK sitting beside it: a
+manifest whose hash is stale is a download every phone would refuse.
 
-It is a debug build, so it is already signed and installs without any keystore
-or Play Store involvement. It also carries the `.debug` package suffix, which
-means it can sit alongside a release build of the same app without either one
-replacing the other.
+The 2.4 changes were verified by those checks and by Lint on the built APK,
+not on an emulator: this build machine has no hardware virtualisation, so no
+emulator could be started for it. In particular, **the update flow has not been
+run on a device** - what is checked here is that the manifest matches the APK,
+that this APK carries the same signing certificate as 2.3
+(`c318e126...4f8d6c`, confirmed with `apksigner`), and that the code paths
+compile and lint clean.
+
+It is a debug build, so it installs without any Play Store involvement. It
+carries the `.debug` package suffix, which means it can sit alongside a release
+build of the same app without either one replacing the other. The signing key
+is in the repo, which is what makes an update possible at all - and also means
+anybody can build an APK this one would accept as an update. That is the price
+of shipping an APK by hand rather than through a store; it is not a key to use
+for anything published.
 
 ## Installing it on a phone
 
+0. **Already running PyCmd? Do not uninstall it.** Install this straight over
+   it - same key, same package, so Android upgrades it and keeps everything.
+   Uninstalling is what deletes the workspace. (And from 2.4 on you will not
+   need to do this by hand: **More → System → Check for updates**.)
 1. Download the APK onto the phone (or copy it across by USB).
 2. Open it from the Files app or the download notification.
 3. Android will ask whether to allow installs from this source — that prompt
@@ -323,7 +396,7 @@ every tab with things to paste in and try.
 ## Installing over USB
 
 ```bash
-adb install -r dist/PyCmd-2.3-debug.apk
+adb install -r dist/PyCmd-2.4-debug.apk
 ```
 
 ## Checking the download
@@ -331,6 +404,28 @@ adb install -r dist/PyCmd-2.3-debug.apk
 ```bash
 sha256sum -c dist/SHA256SUMS.txt
 ```
+
+## What `latest.json` is
+
+The file the app checks. It is generated from the APK next to it, never typed:
+
+```bash
+python3 tools/make_latest.py dist/PyCmd-2.4-debug.apk --notes "one line"
+python3 tools/make_latest.py            # checks the one that is there
+```
+
+| Field | What it is |
+|---|---|
+| `versionCode` | The build number. The app offers an update only when this is higher than its own. |
+| `versionName` | What the card shows: `2.4-debug`. |
+| `package` | Which app this is for. A mismatch is refused before the download starts. |
+| `url` | An `https://` address of the APK. Plain `http` is refused. |
+| `sha256` | The APK's fingerprint. The download is checked against it and thrown away if it differs. |
+| `bytes` | Its size, so the progress bar means something before the server says. |
+| `notes` | One line, shown on the card. |
+
+The check runs as part of `tools/run-tests.sh`, so a manifest that no longer
+matches the APK in `dist/` fails the suite rather than reaching a phone.
 
 ## A note on the device requirement
 

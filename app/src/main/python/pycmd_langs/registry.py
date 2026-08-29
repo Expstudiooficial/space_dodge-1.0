@@ -23,12 +23,20 @@ import os
 RUN = "run"
 PREVIEW = "preview"
 EDIT = "edit"
+# Something the app can hold, show and serve, but not write from a template:
+# an empty .mp3 is not a file anybody wanted. Picking one of these in the
+# new-file menu brings a real one in from the phone instead.
+MEDIA = "media"
 
 
 class Language:
-    __slots__ = ("id", "name", "extensions", "mode", "highlight", "comment", "template", "note")
+    __slots__ = (
+        "id", "name", "extensions", "mode", "highlight", "comment", "template",
+        "note", "mime",
+    )
 
-    def __init__(self, id, name, extensions, mode, highlight, comment="//", template="", note=""):
+    def __init__(self, id, name, extensions, mode, highlight, comment="//", template="",
+                 note="", mime=""):
         self.id = id
         self.name = name
         self.extensions = extensions
@@ -37,6 +45,9 @@ class Language:
         self.comment = comment
         self.template = template
         self.note = note
+        # What the system file picker should offer when importing one of
+        # these. Only media needs it; everything else is text.
+        self.mime = mime
 
     def as_dict(self) -> dict:
         return {
@@ -49,6 +60,10 @@ class Language:
             "comment": self.comment,
             "template": self.template,
             "note": self.note,
+            "mime": self.mime,
+            # Whether the new-file menu can write one from a template. Media
+            # cannot: it is imported instead.
+            "creatable": self.mode != MEDIA,
         }
 
 
@@ -154,6 +169,36 @@ LANGUAGES = [
              template='print("hello")\n', note=NO_TOOLCHAIN),
     Language("lua", "Lua", [".lua"], EDIT, "python", "--",
              template='print("hello")\n', note=NO_TOOLCHAIN),
+
+    # ---- media and the other things a workspace ends up holding -----------
+    #
+    # None of these is code, and none can be written from a template, but a
+    # workspace that cannot hold the .mp3 your script is about is a workspace
+    # with a hole in it. They are recognised, playable, servable and exportable
+    # like everything else.
+    Language("audio", "Audio", [".mp3", ".wav", ".ogg", ".m4a", ".aac", ".flac", ".opus"],
+             MEDIA, "text", "", mime="audio/*",
+             note="Plays in the preview, and is served with byte ranges so it can seek."),
+    Language("video", "Video", [".mp4", ".webm", ".mkv", ".mov", ".m4v", ".avi"],
+             MEDIA, "text", "", mime="video/*",
+             note="Plays in the preview. What decodes depends on the device: mp4 and "
+                  "webm play everywhere, mkv and avi often do not."),
+    Language("image", "Image", [".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".ico"],
+             MEDIA, "text", "", mime="image/*",
+             note="Shown in the preview at its real size."),
+    Language("pdf", "PDF", [".pdf"], MEDIA, "text", "", mime="application/pdf",
+             note="Stored and served, but not rendered: Android's WebView has no PDF "
+                  "viewer, so opening one needs an app that does."),
+    # Both of these are picked with no filter at all, deliberately. Android's
+    # file providers label a zip as anything from application/zip to
+    # octet-stream and a font almost always as octet-stream, so a filter that
+    # looks correct is the one that shows an empty picker.
+    Language("archive", "Archive", [".zip", ".tar", ".gz", ".tgz", ".7z", ".rar"],
+             MEDIA, "text", "", mime="*/*",
+             note="Kept and served as it is. Workspace exports land here as .zip."),
+    Language("font", "Font", [".ttf", ".otf", ".woff", ".woff2"],
+             MEDIA, "text", "", mime="*/*",
+             note="Served, so a page you are previewing can use it."),
 ]
 
 # Files people create that have no extension at all.
@@ -215,9 +260,15 @@ def catalogue(include_all: bool = True) -> list:
     """Every language, for the new-file menu."""
     rows = [language.as_dict() for language in LANGUAGES]
     if not include_all:
-        # Without Polyglot Files the app is Python-only, as it started.
+        # Without Polyglot Files the app is Python-only, as it started - and
+        # the media types are part of what that plugin adds, so they go too.
         rows = [row for row in rows if row["id"] in ("python", "text", "markdown")]
     return rows
+
+
+def media_types() -> list:
+    """The types that are imported rather than written."""
+    return [language.as_dict() for language in LANGUAGES if language.mode == MEDIA]
 
 
 def template_for(name: str) -> str:

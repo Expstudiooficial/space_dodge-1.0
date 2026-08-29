@@ -611,6 +611,36 @@ check(
     all(r["id"] in ("python", "text", "markdown") for r in registry.catalogue(False)),
     registry.catalogue(False),
 )
+# Media: recognised everywhere, never written from a template, and part of
+# what the kit plugin adds rather than something the app has on its own.
+check("mp3 is media", registry.for_path("song.mp3")["mode"] == "media",
+      registry.for_path("song.mp3"))
+check("mp4 is media", registry.for_path("clip.MP4")["mode"] == "media",
+      registry.for_path("clip.MP4"))
+check("media is not creatable", registry.for_path("song.mp3")["creatable"] is False,
+      registry.for_path("song.mp3"))
+check("media carries a picker type", registry.for_path("song.mp3")["mime"] == "audio/*",
+      registry.for_path("song.mp3"))
+check("a zip is picked with no filter", registry.for_path("x.zip")["mime"] == "*/*",
+      registry.for_path("x.zip"))
+check("media has no template", registry.template_for("song.mp3") == "",
+      repr(registry.template_for("song.mp3")))
+check("code is still creatable", registry.for_path("x.py")["creatable"] is True,
+      registry.for_path("x.py"))
+check("svg is still xml, not an image", registry.for_path("logo.svg")["id"] == "xml",
+      registry.for_path("logo.svg"))
+check("media rides with the kit", any(r["mode"] == "media" for r in registry.catalogue()),
+      [r["id"] for r in registry.catalogue() if r["mode"] == "media"])
+check("and is gone without it", not any(r["mode"] == "media" for r in registry.catalogue(False)),
+      registry.catalogue(False))
+check("media_types lists exactly those", 
+      {r["id"] for r in registry.media_types()} ==
+      {r["id"] for r in registry.catalogue() if r["mode"] == "media"},
+      [r["id"] for r in registry.media_types()])
+check("every media type says how it is picked",
+      all(r["mime"] for r in registry.media_types()),
+      [(r["id"], r["mime"]) for r in registry.media_types()])
+
 check("C template compiles", "int main" in registry.template_for("x.c"), registry.template_for("x.c"))
 check("LICENSE template is the MIT text", "MIT License" in registry.template_for("LICENSE"),
       registry.template_for("LICENSE")[:40])

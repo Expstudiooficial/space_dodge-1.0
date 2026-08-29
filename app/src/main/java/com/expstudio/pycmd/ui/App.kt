@@ -51,6 +51,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.expstudio.pycmd.plugins.PluginIds
 import com.expstudio.pycmd.python.forFileName
+import com.expstudio.pycmd.util.UpdateState
 import com.expstudio.pycmd.util.WorkspaceEntry
 import com.expstudio.pycmd.BuildConfig
 import com.expstudio.pycmd.python.OutputChunk
@@ -99,6 +100,13 @@ fun PyCmdRoot(viewModel: MainViewModel = viewModel()) {
     val pendingImport by viewModel.pendingImport.collectAsState()
     val systemInfo by viewModel.system.collectAsState()
     val systemBusy by viewModel.systemBusy.collectAsState()
+    val updateState by viewModel.update.collectAsState()
+    val updateSource by viewModel.updateSource.collectAsState()
+
+    // Worth a dot on More: a newer build found but not yet installed is the
+    // one thing in System somebody would want to be told about.
+    val updateWaiting = updateState is UpdateState.Available ||
+        updateState is UpdateState.Ready
 
     // Picking a plugin from outside the app: one launcher for a file or zip,
     // one for a whole folder. Both are only reached after the warning dialog.
@@ -336,6 +344,9 @@ fun PyCmdRoot(viewModel: MainViewModel = viewModel()) {
                     PyIcons.MoreVert,
                     tab,
                     viewModel::selectTab,
+                    // A newer build is behind this tab; a dot is how anybody
+                    // finds that out without going looking for it.
+                    dot = updateWaiting,
                     // The other destinations live here, so More has to show
                     // that one of them is the current screen.
                     forceSelected = tab in setOf(
@@ -489,6 +500,14 @@ fun PyCmdRoot(viewModel: MainViewModel = viewModel()) {
                     onClearCache = viewModel::clearCache,
                     onClearPycache = viewModel::clearPycache,
                     onExportLog = viewModel::saveDebugLog,
+                    update = updateState,
+                    updateSource = updateSource,
+                    onCheckForUpdate = viewModel::checkForUpdate,
+                    onDownloadUpdate = viewModel::downloadUpdate,
+                    onCancelUpdate = viewModel::cancelUpdate,
+                    onInstallUpdate = viewModel::installUpdate,
+                    onDismissUpdate = viewModel::dismissUpdate,
+                    onSetUpdateSource = viewModel::setUpdateSource,
                     // Keyed on the file list so deleting the folder makes the
                     // button appear without a trip somewhere else and back.
                     onRestoreExamples = remember(filesState.entries, systemInfo) {
@@ -509,6 +528,7 @@ fun PyCmdRoot(viewModel: MainViewModel = viewModel()) {
                     pluginCount = pluginsEnabled.size,
                     errorCount = debugErrors,
                     onSelect = viewModel::selectTab,
+                    updateWaiting = updateWaiting,
                     // Only tabs from plugins that are switched on: a tab is a
                     // way into running code, so an installed-but-off plugin
                     // must not have one.
@@ -663,6 +683,11 @@ fun PyCmdRoot(viewModel: MainViewModel = viewModel()) {
             info = runtimeInfo,
             status = status,
             onDismiss = { aboutOpen = false },
+            onOpenUpdates = {
+                aboutOpen = false
+                viewModel.selectTab(Tab.SYSTEM)
+                viewModel.checkForUpdate()
+            },
         )
     }
 }
@@ -709,6 +734,7 @@ private fun AboutDialog(
     info: Map<String, String>,
     status: com.expstudio.pycmd.python.EngineStatus,
     onDismiss: () -> Unit,
+    onOpenUpdates: () -> Unit,
 ) {
     androidx.compose.material3.AlertDialog(
         onDismissRequest = onDismiss,
@@ -745,6 +771,13 @@ private fun AboutDialog(
         },
         confirmButton = {
             androidx.compose.material3.TextButton(onClick = onDismiss) { Text("Close") }
+        },
+        // The version is right here, so this is where somebody wonders whether
+        // it is the current one. It goes to System and starts the check.
+        dismissButton = {
+            androidx.compose.material3.TextButton(onClick = onOpenUpdates) {
+                Text("Check for updates")
+            }
         },
     )
 }

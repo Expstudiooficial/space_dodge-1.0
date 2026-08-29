@@ -50,6 +50,24 @@ object Exports {
         "png" -> "image/png"
         "jpg", "jpeg" -> "image/jpeg"
         "svg" -> "image/svg+xml"
+        "gif" -> "image/gif"
+        "webp" -> "image/webp"
+        // Media, so saving a track out of the workspace lands somewhere a
+        // music app will find it rather than as an unlabelled blob.
+        "mp3" -> "audio/mpeg"
+        "wav" -> "audio/wav"
+        "ogg", "opus" -> "audio/ogg"
+        "m4a", "aac" -> "audio/mp4"
+        "flac" -> "audio/flac"
+        "mp4", "m4v" -> "video/mp4"
+        "webm" -> "video/webm"
+        "mkv" -> "video/x-matroska"
+        "mov" -> "video/quicktime"
+        "pdf" -> "application/pdf"
+        "ttf" -> "font/ttf"
+        "otf" -> "font/otf"
+        "woff" -> "font/woff"
+        "woff2" -> "font/woff2"
         else -> "application/octet-stream"
     }
 }

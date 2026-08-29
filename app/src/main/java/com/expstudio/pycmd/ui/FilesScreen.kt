@@ -269,6 +269,10 @@ fun FilesScreen(
                 dialog = null
                 if (extension.isEmpty()) onNewFile(name) else onNewFileOfType(name, extension)
             },
+            onImportType = { language ->
+                dialog = null
+                importLauncher.launch(arrayOf(language.mime.ifBlank { "*/*" }))
+            },
         )
 
         FileDialog.NewFolder -> TextPromptDialog(
@@ -551,6 +555,8 @@ private fun NewFileDialog(
     languages: List<LanguageInfo>,
     onDismiss: () -> Unit,
     onCreate: (String, String) -> Unit,
+    /** Media is imported rather than written; this opens the picker for it. */
+    onImportType: (LanguageInfo) -> Unit,
 ) {
     var name by remember { mutableStateOf("script") }
     var chosen by remember(languages) {
@@ -564,23 +570,33 @@ private fun NewFileDialog(
         title = { Text("New file", style = MaterialTheme.typography.titleMedium) },
         text = {
             Column {
-                OutlinedTextField(
-                    value = name,
-                    onValueChange = { name = it },
-                    label = { Text("Name") },
-                    singleLine = true,
-                    shape = RoundedCornerShape(12.dp),
-                    textStyle = MaterialTheme.typography.bodyMedium.copy(fontFamily = MonoFamily),
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedBorderColor = MaterialTheme.colorScheme.primary,
-                        unfocusedBorderColor = MaterialTheme.colorScheme.outline,
-                    ),
-                    modifier = Modifier.fillMaxWidth(),
-                )
+                // Media keeps the name it arrives with, so asking for one
+                // would only be a box whose answer is thrown away.
+                if (chosen?.creatable != false) {
+                    OutlinedTextField(
+                        value = name,
+                        onValueChange = { name = it },
+                        label = { Text("Name") },
+                        singleLine = true,
+                        shape = RoundedCornerShape(12.dp),
+                        textStyle = MaterialTheme.typography.bodyMedium.copy(fontFamily = MonoFamily),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = MaterialTheme.colorScheme.primary,
+                            unfocusedBorderColor = MaterialTheme.colorScheme.outline,
+                        ),
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
 
                 Spacer(Modifier.height(6.dp))
                 Text(
-                    text = chosen?.let { "${it.name}  ->  $name${it.extension}" } ?: name,
+                    text = when {
+                        chosen == null -> name
+                        // Nothing is written for media, so promising a name
+                        // would be a lie: it arrives with the one it has.
+                        !chosen!!.creatable -> "${chosen!!.name}  ->  pick one from this phone"
+                        else -> "${chosen!!.name}  ->  $name${chosen!!.extension}"
+                    },
                     style = MaterialTheme.typography.labelSmall,
                     fontFamily = MonoFamily,
                     color = MaterialTheme.colorScheme.secondary,
@@ -637,10 +653,14 @@ private fun NewFileDialog(
             }
         },
         confirmButton = {
+            val importing = chosen?.creatable == false
             TextButton(
-                onClick = { onCreate(name.trim(), chosen?.extension.orEmpty()) },
-                enabled = name.isNotBlank() && chosen != null,
-            ) { Text("Create") }
+                onClick = {
+                    val language = chosen ?: return@TextButton
+                    if (importing) onImportType(language) else onCreate(name.trim(), language.extension)
+                },
+                enabled = chosen != null && (importing || name.isNotBlank()),
+            ) { Text(if (importing) "Choose a file" else "Create") }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
     )
@@ -649,5 +669,6 @@ private fun NewFileDialog(
 private fun runLabel(language: LanguageInfo): String = when (language.mode) {
     "run" -> "   runs on the device"
     "preview" -> "   previewable"
+    "media" -> "   brought in from the phone"
     else -> ""
 }

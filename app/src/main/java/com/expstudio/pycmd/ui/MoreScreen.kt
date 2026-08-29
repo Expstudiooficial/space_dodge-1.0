@@ -46,6 +46,8 @@ fun MoreScreen(
     pluginCount: Int,
     errorCount: Int,
     onSelect: (Tab) -> Unit,
+    /** True when a newer build is waiting in System, so the row says so. */
+    updateWaiting: Boolean,
     modifier: Modifier = Modifier,
     pluginTabs: List<InstalledPlugin> = emptyList(),
     onOpenPluginTab: (InstalledPlugin) -> Unit = {},
@@ -97,8 +99,12 @@ fun MoreScreen(
             DestinationRow(
                 icon = PyIcons.Tune,
                 title = "System",
-                subtitle = "Storage, versions, what is running, and the housekeeping buttons",
-                badge = null,
+                subtitle = if (updateWaiting) {
+                    "A newer PyCmd is out - and storage, versions and housekeeping"
+                } else {
+                    "Storage, versions, what is running, and the housekeeping buttons"
+                },
+                badge = if (updateWaiting) "1" else null,
                 onClick = { onSelect(Tab.SYSTEM) },
             )
         }

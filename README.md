@@ -9,9 +9,10 @@ Six languages actually run on the device: **Python**, **C**, **Go**, **Rust**,
 written for this app, because Android has not allowed an app to execute code it
 compiled itself since API 29; JavaScript is handed to the engine the device
 already has. Another twenty file types are edited, highlighted, previewed and
-served.
+served, and music, video, images, PDFs, archives and fonts are brought in from
+the phone, kept, served and played.
 
-Version 2.3. Kotlin and Jetpack Compose for the app, JavaScript for the console
+Version 2.4. Kotlin and Jetpack Compose for the app, JavaScript for the console
 and editor.
 
 ---
@@ -35,14 +36,21 @@ straight from the toolbar, whatever language it is.
 **Files** — a private workspace you can browse, filter, create in, rename and
 delete. Upload files or a whole folder from anywhere on the device; if the name
 is already taken it asks whether to replace or keep both, rather than quietly
-leaving you with the old copy. Examples ship on first launch, including two
-working plugins, and deleting them sticks.
+leaving you with the old copy. The new-file menu also lists music, video,
+images, PDFs, archives and fonts: picking one of those opens the phone's picker
+instead of writing a template, because an empty `.mp3` is not a file anybody
+wanted. Tapping media opens the player rather than the editor, and a file that
+is bytes rather than text is never loaded into a text box it could be ruined
+in. Examples ship on first launch, including two working plugins, and deleting
+them sticks.
 
-**Preview** — HTML, CSS, Markdown, JavaScript, JSON, CSV, SVG and images. A
-page is served over a loopback HTTP server rooted at its own folder, so it
-behaves like a real site: scripts run, `fetch` works, relative paths resolve,
-and links inside the site follow. Whatever the page logs or throws is copied
-into the debug console.
+**Preview** — HTML, CSS, Markdown, JavaScript, JSON, CSV, SVG, images, and
+music and video that actually play. A page is served over a loopback HTTP
+server rooted at its own folder, so it behaves like a real site: scripts run,
+`fetch` works, relative paths resolve, and links inside the site follow. That
+server answers byte ranges, which is what lets you drag through the middle of a
+track or a film instead of only playing it from the start. Whatever the page
+logs or throws is copied into the debug console.
 
 **Downloads** — a folder kept apart from the workspace: files fetched from a
 URL, workspace and folder exports, and anything you add from the phone. Each
@@ -101,15 +109,35 @@ save-to-workspace.
 the app is using: versions, architecture, what each folder costs, what is
 running, and housekeeping that touches nothing you wrote.
 
+**Updates that keep your files** — **More → System → Check for updates** reads
+a small manifest, and if there is a newer build it downloads it, checks it
+against the published fingerprint, checks it is signed with the same key as the
+build you are running, and hands it to Android to install *over* this one. The
+workspace, the packages you installed and every setting stay where they are.
+Deleting PyCmd first is what loses them - and that was the only way to move
+between versions before this.
+
+PyCmd also takes one quiet look for itself, at most once a day while it is
+running: it reads that one small manifest and, if something newer is out, puts
+a dot on More and a line on the System card. Nothing is downloaded and nothing
+is installed without you pressing the button, and a check that fails - no
+signal, no answer - says nothing at all.
+
 ---
 
 ## Just want to try it
 
 A ready-to-install debug APK is in [`dist/`](dist/) - download
-[`PyCmd-2.3-debug.apk`](dist/PyCmd-2.3-debug.apk), open it on the phone, and
-allow the install when Android asks. It is signed with the standard debug key,
-so no keystore or store account is involved. See [dist/README.md](dist/README.md)
-for the details.
+[`PyCmd-2.4-debug.apk`](dist/PyCmd-2.4-debug.apk), open it on the phone, and
+allow the install when Android asks. It is signed with the key in
+[`keystore/`](keystore/) - the standard Android debug certificate, committed so
+that every build of this repo can replace the last one on a phone instead of
+demanding an uninstall. No store account is involved. See
+[dist/README.md](dist/README.md) for the details.
+
+**Already have PyCmd on the phone?** Install this APK straight over it - do not
+uninstall first, that is what deletes the workspace. From 2.4 onward the app
+does it for you: **More → System → Check for updates**.
 
 Once it's installed, **[TUTORIAL.md](TUTORIAL.md)** walks through every tab
 with ready-to-paste snippets — console one-liners, a script that uses the
@@ -164,11 +192,12 @@ that no phone can use and gives a single 33 MB APK, which is what `dist/` ships.
 tools/run-tests.sh
 ```
 
-That runs three things: the embedded Python modules against a stand-in for the
+That runs four things: the embedded Python modules against a stand-in for the
 Kotlin bridge (execution, error reporting, stdin, interrupt-and-recover,
 completions, a real install/import/uninstall round trip against PyPI and a real
-HTTP server), the WebView JavaScript under Node against a stub document, and a
-debug build with Android Lint.
+HTTP server, byte-range requests for the media player), the published update
+manifest against the APK actually sitting in `dist/`, the WebView JavaScript
+under Node against a stub document, and a debug build with Android Lint.
 
 The suites can also be run on their own:
 
@@ -307,6 +336,7 @@ app/src/main/
     ui/                      Compose screens, theme, WebView hosting, icons
     util/Workspace.kt        file operations, all confined to the workspace
     util/DebugLog.kt         the process-wide record behind the debug console
+    util/Updater.kt          checking, downloading and verifying a newer build
   python/
     pycmd_runtime.py         execution, streams, interrupt, completions
     pycmd_packages.py        on-device wheel installs
@@ -314,7 +344,9 @@ app/src/main/
   assets/
     web/                     console and editor pages, ANSI and highlighting
     examples/                scripts seeded into the workspace on first launch
-tools/                       host-side test suites
+tools/                       host-side test suites, and make_latest.py
+keystore/pycmd.keystore      the one signing key, so updates can install
+dist/                        the built APK, its hash, and latest.json
 ```
 
 ---

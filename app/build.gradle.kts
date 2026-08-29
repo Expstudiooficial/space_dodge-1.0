@@ -29,11 +29,37 @@ android {
         applicationId = "com.expstudio.pycmd"
         minSdk = 24
         targetSdk = 35
-        versionCode = 10
-        versionName = "2.3"
+        versionCode = 11
+        versionName = "2.4"
 
         ndk {
             abiFilters += targetAbis
+        }
+    }
+
+    /**
+     * One signing key, kept in the repo, so an update installs over the build
+     * already on the phone.
+     *
+     * Android only lets an APK replace an installed one when both were signed
+     * by the same key. Gradle's own debug key is generated per machine and
+     * lives outside the checkout, so two builds from two machines are two
+     * different apps as far as the installer is concerned - which is what
+     * turns "update" into "uninstall first", and uninstalling is what takes
+     * the workspace with it.
+     *
+     * This is that key, captured and committed: the standard Android debug
+     * certificate (alias androiddebugkey, password android). It is not a
+     * secret and it is not a Play upload key - anybody can build an APK that
+     * this one will accept as an update, which is the price of shipping an
+     * APK by hand. Do not use it for anything published to a store.
+     */
+    signingConfigs {
+        getByName("debug") {
+            storeFile = rootProject.file("keystore/pycmd.keystore")
+            storePassword = "android"
+            keyAlias = "androiddebugkey"
+            keyPassword = "android"
         }
     }
 

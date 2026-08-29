@@ -84,6 +84,26 @@ class Workspace(context: Context) {
         runCatching { file.readText() }
     }
 
+    /**
+     * Whether a file is bytes rather than text.
+     *
+     * A NUL in the first few KB is the oldest test there is and it is right
+     * about every format that matters here: mp3, mp4, png, zip, a compiled
+     * anything. It matters because the editor reads text - `readText` turns
+     * every byte it cannot decode into U+FFFD, and saving that back writes a
+     * ruined file over a perfectly good one.
+     */
+    suspend fun looksBinary(file: File): Boolean = withContext(Dispatchers.IO) {
+        runCatching {
+            file.inputStream().use { input ->
+                val head = ByteArray(8 * 1024)
+                val read = input.read(head)
+                if (read <= 0) return@use false
+                (0 until read).any { head[it] == 0.toByte() }
+            }
+        }.getOrDefault(false)
+    }
+
     suspend fun write(file: File, content: String): Result<Unit> = withContext(Dispatchers.IO) {
         if (!isInsideWorkspace(file)) return@withContext Result.failure(IOException("Outside the workspace."))
         runCatching {

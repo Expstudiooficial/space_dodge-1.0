@@ -30,6 +30,10 @@ echo "== Plugins, doctor, preview, cloud, bundled =="
 "$PYTHON" tools/test_bundled.py
 
 echo
+echo "== The published update manifest =="
+"$PYTHON" tools/make_latest.py
+
+echo
 echo "== WebView JavaScript =="
 node tools/test_js.js
 node tools/test_editor.js

@@ -142,11 +142,18 @@ alive later, so nothing here claims a schedule that survives being closed.
 
 | Plugin | What it does |
 |---|---|
-| **Polyglot Files** | Create and edit 25+ file types, not just `.py`. Decides which types the new-file menu offers. |
+| **Polyglot Files** | Create and edit 30+ file types, not just `.py`. Decides which types the new-file menu offers, media included. |
 | **Polyglot Runner** | Actually run them: C, Go, Rust and JavaScript on the device. |
 | **Power Pack** | Turns the other plugins up — more snippets, more tools, more of each panel. |
 
 Turning all three on is what the plugin list calls the full kit.
+
+**Polyglot Files also brings in the things you do not write.** Music, video,
+images, PDFs, archives and fonts appear in the new-file menu, and picking one
+opens the phone's file picker instead of writing a template - an empty `.mp3`
+is not a file anybody wanted. Audio and video then play in the preview, seek
+bar and all. With the plugin off, the menu is Python, text and Markdown, the
+way the app started.
 
 ### Languages, tools and workflow
 

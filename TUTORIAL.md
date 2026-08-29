@@ -336,6 +336,19 @@ The same button previews Markdown, a JSON file (validated and pretty-printed),
 a CSV (as a table), an SVG or an image, and a `.js` file (which runs it and
 shows what it logged).
 
+**Music and video too.** Put an `.mp3` or an `.mp4` in the workspace - **Files
+→ + → Music / Video** opens the phone's picker, since there is no such thing
+as a starter template for a song - and tap it. It opens in a real player with
+a seek bar you can drag: the preview server answers byte ranges, which is the
+thing browsers insist on before they will let you scrub. Tapping media never
+opens the editor, and neither does any other file that turns out to be bytes
+rather than text; loading one into a text box is how a good file gets saved
+back ruined.
+
+Which formats actually play is the phone's business, not the app's - Android
+decodes MP3, AAC/M4A, FLAC, Ogg and WAV, and MP4/WebM video, while MKV and MOV
+depend on the device.
+
 ---
 
 ## 8. The plugins that ship with it
@@ -448,6 +461,38 @@ useful than a description.
 
 ---
 
+## 12. Updating without losing anything
+
+**More → System → Updates → Check for updates.**
+
+If there is a newer build, the card says which version and how big the download
+is. Press **Download** and PyCmd fetches the APK, checks it against the
+fingerprint published beside it, checks it is signed with the same key as the
+build you are running, and only then offers **Install**. Android puts up its own
+confirmation, PyCmd closes for a moment, and it comes back updated.
+
+Nothing is deleted. The workspace, the packages you installed with pip, your
+plugins and every setting are still there, because Android replaced the app
+rather than removing it. **Deleting PyCmd first is the thing that loses all of
+that** - so when a new version turns up, install it over the old one and never
+uninstall to make room.
+
+The first time, Android will ask whether PyCmd may install apps. That switch is
+per-app and you can turn it back off afterwards.
+
+You do not have to remember to check. Once a day, while the app is running, it
+reads that one small file by itself and - if something newer is out - puts a dot
+on **More** and a line on the System card. It downloads nothing until you press
+Download, installs nothing until you press Install, and a check that fails
+because the phone is offline says nothing at all.
+
+**Where updates come from** at the bottom of the card takes an https address of
+a `latest.json` - a fork, another branch, or a machine of your own. Whatever it
+points at, the fingerprint check still runs, and a build signed with a different
+key is refused with an explanation rather than a failed install.
+
+---
+
 ## Things worth specifically checking
 
 - **Stop actually stops.** Run `loop_forever.py`, watch a few ticks print,
@@ -459,16 +504,20 @@ useful than a description.
   (top bar) — the variable should be gone if you try to use it again.
 - **Rotate the phone / switch tabs mid-run.** Output shouldn't be lost, and
   a running script shouldn't stop just because you looked at another tab.
+- **An update keeps your files.** After installing a newer build over this
+  one, Files should look exactly as you left it - same folders, same scripts,
+  same installed packages.
 
 ---
 
 ## If something looks wrong
 
-This build has 139 automated checks behind it against the Python engine and
-the JavaScript console/editor (see `tools/` in the repo), and it was
-installed and driven on an Android 11 emulator: the app launches, Python
-3.13.9 starts, and pressing Run in the editor prints its output to the
-console.
+This build has over 700 automated checks behind it against the Python engine
+and the JavaScript console/editor (see `tools/` in the repo), and an earlier
+build was installed and driven on an Android 11 emulator: the app launches,
+Python 3.13.9 starts, and pressing Run in the editor prints its output to the
+console. This one has not been on an emulator - the machine it was built on
+has no hardware virtualisation to run one.
 
 What has *not* been verified on a device is most of what this page asks you
 to try — installing a package, serving a folder over Wi-Fi, the Stop button,

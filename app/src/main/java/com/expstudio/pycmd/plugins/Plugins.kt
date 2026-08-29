@@ -76,11 +76,14 @@ object Plugins {
         PluginSpec(
             id = PluginIds.POLYGLOT_FILES,
             name = "Polyglot Files",
-            tagline = "Create and edit 25+ file types, not just .py",
+            tagline = "Create and edit 30+ file types, not just .py",
             description = "Adds JavaScript, TypeScript, HTML, CSS, JSON, Markdown, C, C++, " +
                 "Rust, Go, Java, Kotlin, SQL, YAML, TOML, XML, shell and more to the new-file " +
                 "menu, each with a starter template. The editor highlights whichever language " +
-                "the file is, and Files shows a coloured icon per type.",
+                "the file is, and Files shows a coloured icon per type. Music, video, images, " +
+                "PDFs, archives and fonts come in from the phone instead of a template - an " +
+                "empty .mp3 is nobody's idea of a new file - and audio and video play in the " +
+                "preview, scrubbing included.",
             group = PluginGroup.KIT,
             defaultEnabled = true,
             poweredUp = "Adds README, LICENSE, .gitignore, Dockerfile, Makefile and package " +

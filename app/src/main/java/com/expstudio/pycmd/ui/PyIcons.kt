@@ -11,7 +11,7 @@ import androidx.compose.ui.unit.dp
  *
  * `material-icons-extended` ships five complete icon styles - thousands of
  * vectors - and accounted for 13.7 MB of the 24 MB dex, well over half, to
- * supply the twenty-nine glyphs below. Since a debug build does no shrinking,
+ * supply the thirty-seven glyphs below. Since a debug build does no shrinking,
  * every one of those icons rode along into the APK people have to download.
  *
  * Each entry is standard Material path data on the usual 24x24 viewport, built
@@ -101,6 +101,15 @@ object PyIcons {
                 "c0,-0.55 -0.45,-1 -1,-1zM7,19c-1.1,0 -2,-0.9 -2,-2s0.9,-2 2,-2 2,0.9 2,2 -0.9,2 -2,2z" +
                 "M20,3H4c-0.55,0 -1,0.45 -1,1v6c0,0.55 0.45,1 1,1h16c0.55,0 1,-0.45 1,-1V4" +
                 "c0,-0.55 -0.45,-1 -1,-1zM7,9c-1.1,0 -2,-0.9 -2,-2s0.9,-2 2,-2 2,0.9 2,2 -0.9,2 -2,2z",
+        )
+    }
+
+    val Download: ImageVector by lazy {
+        icon(
+            "Download",
+            "M12,16l-5,-5 1.41,-1.41L11,12.17V4h2v8.17l2.59,-2.58L17,11l-5,5zM6,20" +
+                "c-0.55,0 -1.02,-0.2 -1.41,-0.59C4.2,19.02 4,18.55 4,18v-3h2v3h12v-3h2v3" +
+                "c0,0.55 -0.2,1.02 -0.59,1.41C19.02,19.8 18.55,20 18,20L6,20z",
         )
     }
 

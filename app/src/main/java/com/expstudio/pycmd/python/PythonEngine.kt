@@ -591,6 +591,7 @@ object PythonEngine {
                         highlight = map.str("highlight"),
                         note = map.str("note"),
                         extensions = map.str("extensions"),
+                        mime = map.str("mime"),
                     )
                 }
             }.getOrElse {
@@ -1325,15 +1326,25 @@ data class LanguageInfo(
     val id: String,
     val name: String,
     val extension: String,
-    /** "run", "preview" or "edit". */
+    /** "run", "preview", "edit" or "media". */
     val mode: String,
     val highlight: String,
     val note: String,
     /** Every extension this language claims, comma separated. */
     val extensions: String = extension,
+    /** What the file picker should offer when importing one. Media only. */
+    val mime: String = "",
 ) {
     val canRun: Boolean get() = mode == "run"
     val canPreview: Boolean get() = mode == "preview"
+
+    /**
+     * Whether a new one can be written from a template.
+     *
+     * False for media: an empty .mp3 is not a file anybody wanted, so picking
+     * one in the new-file menu brings a real one in from the phone instead.
+     */
+    val creatable: Boolean get() = mode != "media"
 }
 
 data class DownloadResult(

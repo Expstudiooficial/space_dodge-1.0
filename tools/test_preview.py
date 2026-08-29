@@ -10,6 +10,7 @@ from __future__ import annotations
 import os
 import sys
 import tempfile
+import urllib.error
 import urllib.request
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -79,6 +80,61 @@ check(
     "a relative script loads",
     urllib.request.urlopen(sibling, timeout=5).read().decode("utf-8").startswith("console.log"),
 )
+preview.stop()
+
+print("\n== media plays, and can be scrubbed ==")
+song = write("media/track.mp3", "ID3" + "x" * 5000)
+page = preview.render(song)
+check("an mp3 is previewable", page.get("ok") and "<audio" in page["html"], page.get("error"))
+check("with real controls", "controls" in page["html"])
+check("pointed at the file beside the page", "src='track.mp3'" in page["html"], page["html"][:400])
+check("and its size is stated", "4 KB" in page["html"], page["html"][-600:])
+
+clip = write("media/clip.mp4", "\x00" * 3000)
+page = preview.render(clip)
+check("an mp4 gets a video element", "<video" in page["html"], page["html"][:300])
+check("that plays inline rather than full screen", "playsinline" in page["html"])
+
+check("both are offered a preview button",
+      preview.can_preview("a.mp3") and preview.can_preview("a.mp4"))
+check("but an archive is not", not preview.can_preview("a.zip"))
+
+served = preview.serve(song)
+check("the folder is served", served.get("served"), served)
+base = served["url"].rsplit("/", 1)[0]
+
+whole = urllib.request.urlopen(f"{base}/track.mp3", timeout=5)
+check("a whole-file request still works", len(whole.read()) == 5003)
+check("and advertises that ranges are welcome",
+      whole.headers.get("Accept-Ranges") == "bytes", dict(whole.headers))
+
+request = urllib.request.Request(f"{base}/track.mp3", headers={"Range": "bytes=10-19"})
+partial = urllib.request.urlopen(request, timeout=5)
+body = partial.read()
+check("a range comes back as 206", partial.status == 206, partial.status)
+check("with exactly those bytes", len(body) == 10 and body == b"x" * 10, body)
+check("and says where they came from",
+      partial.headers.get("Content-Range") == "bytes 10-19/5003",
+      partial.headers.get("Content-Range"))
+
+request = urllib.request.Request(f"{base}/track.mp3", headers={"Range": "bytes=5000-"})
+check("an open-ended range runs to the end",
+      len(urllib.request.urlopen(request, timeout=5).read()) == 3)
+
+request = urllib.request.Request(f"{base}/track.mp3", headers={"Range": "bytes=-4"})
+check("a suffix range takes the last bytes",
+      urllib.request.urlopen(request, timeout=5).read() == b"xxxx")
+
+request = urllib.request.Request(f"{base}/track.mp3", headers={"Range": "bytes=99999-"})
+try:
+    urllib.request.urlopen(request, timeout=5)
+    check("a range past the end is refused", False, "no error")
+except urllib.error.HTTPError as error:
+    check("a range past the end is refused", error.code == 416, error.code)
+
+request = urllib.request.Request(f"{base}/track.mp3", headers={"Range": "rubbish"})
+check("nonsense in the header falls back to the whole file",
+      len(urllib.request.urlopen(request, timeout=5).read()) == 5003)
 preview.stop()
 
 print("\n== putting a file into Downloads ==")

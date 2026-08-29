@@ -1,7 +1,9 @@
 package com.expstudio.pycmd.ui
 
 import android.app.Application
+import android.content.Context
 import android.net.Uri
+import androidx.core.content.edit
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.expstudio.pycmd.python.CONSOLE_CHANNEL
@@ -26,10 +28,13 @@ import com.expstudio.pycmd.plugins.PluginIds
 import com.expstudio.pycmd.plugins.PluginScreen
 import com.expstudio.pycmd.plugins.PluginSpec
 import com.expstudio.pycmd.plugins.Plugins
+import com.expstudio.pycmd.BuildConfig
 import com.expstudio.pycmd.util.DebugLog
 import com.expstudio.pycmd.util.LogEntry
 import com.expstudio.pycmd.util.Exports
 import com.expstudio.pycmd.util.Imports
+import com.expstudio.pycmd.util.UpdateState
+import com.expstudio.pycmd.util.Updater
 import com.expstudio.pycmd.util.Workspace
 import com.expstudio.pycmd.util.WorkspaceEntry
 import java.io.File
@@ -208,6 +213,14 @@ private const val TAG_VIEW = "ui"
 /** How long typing has to stop before Autosave writes the file. */
 private const val AUTOSAVE_DELAY_MS = 2000L
 
+/** Remembered so a fork or a moved branch stays pointed at after a restart. */
+private const val KEY_UPDATE_SOURCE = "manifest-url"
+
+/** When the app last looked, so it looks once a day rather than every launch. */
+private const val KEY_UPDATE_CHECKED = "checked-at"
+
+private const val DAY_MS = 24L * 60 * 60 * 1000
+
 private const val DEFAULT_SNIPPET = """# Welcome to PyCmd.
 # Write Python here, then press Run. Output lands in the Console tab.
 
@@ -358,6 +371,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             _previewable.value = engine.previewableExtensions()
             refreshCustomPlugins()
             installBundledPlugins()
+            quietlyCheckForUpdate()
         }
     }
 
@@ -561,7 +575,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun refreshSystem() {
         viewModelScope.launch {
             _systemBusy.value = "Measuring..."
-            _system.value = withContext(Dispatchers.IO) { measureSystem() }
+            _system.value = withContext(Dispatchers.IO) {
+                tidyUpdates()
+                measureSystem()
+            }
             _systemBusy.value = ""
         }
     }
@@ -638,6 +655,178 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             refreshFiles(_files.value.directory ?: workspace.root)
             refreshSystem()
         }
+    }
+
+    // ---- Updating in place -------------------------------------------------
+
+    private val _update = MutableStateFlow<UpdateState>(UpdateState.Idle)
+    val update: StateFlow<UpdateState> = _update.asStateFlow()
+
+    private val _updateSource = MutableStateFlow(readUpdateSource())
+
+    /** Where the check looks. Editable, because a branch can move. */
+    val updateSource: StateFlow<String> = _updateSource.asStateFlow()
+
+    private var updateJob: Job? = null
+
+    private fun updatePreferences() = getApplication<Application>()
+        .getSharedPreferences("pycmd-update", Context.MODE_PRIVATE)
+
+    private fun readUpdateSource(): String =
+        updatePreferences().getString(KEY_UPDATE_SOURCE, null)?.takeIf { it.isNotBlank() }
+            ?: Updater.DEFAULT_MANIFEST_URL
+
+    /**
+     * Points the check somewhere else: a fork, another branch, a server of
+     * your own. Blank puts it back to where PyCmd itself is published.
+     */
+    fun setUpdateSource(url: String) {
+        val cleaned = url.trim().ifBlank { Updater.DEFAULT_MANIFEST_URL }
+        if (cleaned == _updateSource.value) return
+        _updateSource.value = cleaned
+        updatePreferences().edit { putString(KEY_UPDATE_SOURCE, cleaned) }
+        // What was found at the old address says nothing about the new one.
+        updateJob?.cancel()
+        _update.value = UpdateState.Idle
+    }
+
+    /**
+     * A quiet look for a newer build, at most once a day.
+     *
+     * Without this the whole feature is invisible: nobody opens System to ask
+     * whether there is an update, so the update they wanted sits unfound. It
+     * reads one small file and stops there - nothing is downloaded and nothing
+     * is installed without a tap, and a check that fails says nothing at all,
+     * because a phone with no signal is not an error the user asked about.
+     */
+    private fun quietlyCheckForUpdate() {
+        val store = updatePreferences()
+        val last = store.getLong(KEY_UPDATE_CHECKED, 0)
+        val age = System.currentTimeMillis() - last
+        // A clock moved backwards gives a negative age; that is a reason to
+        // check, not a reason to wait until the phone catches up with itself.
+        if (age in 0 until DAY_MS) return
+        store.edit { putLong(KEY_UPDATE_CHECKED, System.currentTimeMillis()) }
+
+        viewModelScope.launch {
+            Updater.fetch(_updateSource.value).onSuccess { release ->
+                val mine = getApplication<Application>().packageName
+                val newer = release.versionCode > BuildConfig.VERSION_CODE &&
+                    (release.packageName.isBlank() || release.packageName == mine)
+                // Never over the top of something the user started.
+                if (newer && _update.value is UpdateState.Idle) {
+                    _update.value = UpdateState.Available(release)
+                    DebugLog.info(TAG_VIEW, "an update is available", release.versionName)
+                }
+            }
+        }
+    }
+
+    /** Reads the manifest and says whether there is anything newer. */
+    fun checkForUpdate() {
+        if (_update.value is UpdateState.Downloading) return
+        updateJob?.cancel()
+        updateJob = viewModelScope.launch {
+            _update.value = UpdateState.Checking
+            Updater.fetch(_updateSource.value)
+                .onSuccess { release ->
+                    val mine = getApplication<Application>().packageName
+                    _update.value = when {
+                        release.versionCode <= BuildConfig.VERSION_CODE ->
+                            UpdateState.UpToDate(BuildConfig.VERSION_NAME)
+                        // Said before the download rather than after it: 35 MB
+                        // is a lot to spend on finding out it is another app.
+                        release.packageName.isNotBlank() && release.packageName != mine ->
+                            UpdateState.Failed(
+                                "That address publishes a different app.",
+                                "It offers ${release.packageName}; this is $mine. " +
+                                    "Installing it would put a second app on the phone " +
+                                    "rather than updating this one.",
+                            )
+                        else -> UpdateState.Available(release)
+                    }
+                }
+                .onFailure {
+                    _update.value = UpdateState.Failed(
+                        "Could not check for an update.",
+                        it.message.orEmpty(),
+                    )
+                }
+        }
+    }
+
+    /** Downloads the APK the check found, and verifies it before offering it. */
+    fun downloadUpdate() {
+        val release = (_update.value as? UpdateState.Available)?.release ?: return
+        updateJob?.cancel()
+        updateJob = viewModelScope.launch {
+            val context = getApplication<Application>()
+            _update.value = UpdateState.Downloading(release, 0, release.bytes)
+            Updater.download(context, release) { got, total ->
+                _update.value = UpdateState.Downloading(release, got, total)
+            }
+                .onSuccess { file ->
+                    // Better to say why it cannot install now than to let the
+                    // system installer say "App not installed" and leave the
+                    // user reaching for uninstall.
+                    val blocker = withContext(Dispatchers.IO) { Updater.blocker(context, file) }
+                    _update.value = if (blocker == null) {
+                        UpdateState.Ready(release, file)
+                    } else {
+                        Updater.forget(context)
+                        UpdateState.Failed("That build will not install over this one.", blocker)
+                    }
+                    refreshSystem()
+                }
+                .onFailure {
+                    _update.value = UpdateState.Failed(
+                        "The download did not finish.",
+                        it.message.orEmpty(),
+                    )
+                }
+        }
+    }
+
+    /** Stops a download and puts the offer back the way it was. */
+    fun cancelUpdate() {
+        val release = (_update.value as? UpdateState.Downloading)?.release
+        updateJob?.cancel()
+        updateJob = null
+        _update.value = release?.let { UpdateState.Available(it) } ?: UpdateState.Idle
+    }
+
+    /** Hands the verified APK to the system installer. */
+    fun installUpdate() {
+        val ready = _update.value as? UpdateState.Ready ?: return
+        val context = getApplication<Application>()
+        if (!Updater.canInstall(context)) {
+            showToast("Let PyCmd install apps, then press Install again.")
+            Updater.requestInstallPermission(context)
+            return
+        }
+        Updater.install(context, ready.file)
+            .onFailure { showToast(it.message ?: "Could not open the installer.") }
+    }
+
+    /** Clears the card, and the download with it. */
+    fun dismissUpdate() {
+        updateJob?.cancel()
+        updateJob = null
+        val context = getApplication<Application>()
+        Updater.forget(context)
+        _update.value = UpdateState.Idle
+        refreshSystem()
+    }
+
+    /**
+     * Throws away a download that is no longer worth its 30-odd MB.
+     *
+     * Once the update has been installed, the APK it came from is the version
+     * that is now running - it would sit there forever otherwise.
+     */
+    private fun tidyUpdates() {
+        if (_update.value is UpdateState.Downloading || _update.value is UpdateState.Ready) return
+        Updater.tidy(getApplication(), BuildConfig.VERSION_CODE)
     }
 
     private val _pluginCandidates = MutableStateFlow<List<File>>(emptyList())
@@ -1182,8 +1371,28 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private fun nextEpoch(): Long = ++epochCounter
 
+    /**
+     * Opens a file the way that file wants to be opened.
+     *
+     * Music, video and anything else that is bytes rather than text goes to
+     * the preview, which can actually play it. The editor would show it as
+     * mojibake and - worse - saving that back would write the mojibake over
+     * the real file, so it is not offered as a choice.
+     */
     fun openInEditor(file: File) {
         viewModelScope.launch {
+            val extension = "." + file.name.substringAfterLast('.', "").lowercase()
+            val isMedia = languageForName(file.name)?.mode == "media"
+            if (isMedia || workspace.looksBinary(file)) {
+                when {
+                    extension in _previewable.value -> previewFile(file)
+                    isMedia -> showToast(
+                        "${file.name} can be kept and served, but nothing here plays it."
+                    )
+                    else -> showToast("${file.name} is not text - there is nothing to edit in it.")
+                }
+                return@launch
+            }
             workspace.read(file)
                 .onSuccess { text ->
                     _editor.value = EditorState(

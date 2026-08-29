@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The one folder the app is willing to hand out through the provider.
+
+  Downloaded updates only. The installer is another app, so it cannot read
+  files/updates/ by itself; a content:// URI for exactly that folder is the
+  narrowest way to give it the APK and nothing else.
+-->
+<paths>
+    <files-path name="updates" path="updates/" />
+</paths>
