@@ -12,7 +12,7 @@ already has. Another twenty file types are edited, highlighted, previewed and
 served, and music, video, images, PDFs, archives and fonts are brought in from
 the phone, kept, served and played.
 
-Version 2.4.1. Kotlin and Jetpack Compose for the app, JavaScript for the console
+Version 2.4.2. Kotlin and Jetpack Compose for the app, JavaScript for the console
 and editor.
 
 ---
@@ -131,13 +131,14 @@ signal, no answer - says nothing at all.
 
 ## Just want to try it
 
-A ready-to-install debug APK is in [`dist/`](dist/) - download
-[`PyCmd-2.4.1-debug.apk`](dist/PyCmd-2.4.1-debug.apk), open it on the phone, and
-allow the install when Android asks. It is signed with the key in
-[`keystore/`](keystore/) - the standard Android debug certificate, committed so
-that every build of this repo can replace the last one on a phone instead of
-demanding an uninstall. No store account is involved. See
-[dist/README.md](dist/README.md) for the details.
+A ready-to-install APK is in [`dist/`](dist/) - download
+[`PyCmd-2.4.2.apk`](dist/PyCmd-2.4.2.apk), open it on the phone, and allow the
+install when Android asks. It is a release build: minified by R8, not
+debuggable, and about 18 MB rather than the 35 MB the debug builds were. It is
+signed with the key in [`keystore/`](keystore/) - the standard Android debug
+certificate, committed so that every build of this repo can replace the last
+one on a phone instead of demanding an uninstall. No store account is involved.
+See [dist/README.md](dist/README.md) for the details.
 
 **Already have PyCmd on the phone?** Install this APK straight over it - do not
 uninstall first, that is what deletes the workspace. From 2.4 onward the app
@@ -184,9 +185,16 @@ runtime does not ship 32-bit binaries, which matters only for phones from before
 about 2016.
 
 The APK is large because a complete CPython interpreter and standard library are
-inside it. The default build produces one APK per ABI plus a universal one
-(36 MB each, 46 MB universal); `-Ppycmd.abi=arm64-v8a` drops the x86_64 runtime
-that no phone can use and gives a single 33 MB APK, which is what `dist/` ships.
+inside it. The default build produces one APK per ABI plus a universal one;
+`-Ppycmd.abi=arm64-v8a` drops the x86_64 runtime that no phone can use. What
+`dist/` ships is `./gradlew :app:assembleRelease -Ppycmd.abi=arm64-v8a`: about
+18 MB, of which 11 MB is the Python standard library and the bundled packages,
+3.7 MB the native CPython, and 3 MB the app's own code once R8 has removed the
+AndroidX and Compose it never calls. The debug build of the same source is
+35 MB. The native libraries are packed compressed
+(`packaging { jniLibs { useLegacyPackaging = true } }`) because this APK is
+downloaded raw rather than through a store: it halves the download, at the cost
+of about 10 MB more room on the device once Android unpacks them.
 
 ---
 

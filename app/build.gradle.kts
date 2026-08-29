@@ -29,8 +29,8 @@ android {
         applicationId = "com.expstudio.pycmd"
         minSdk = 24
         targetSdk = 35
-        versionCode = 12
-        versionName = "2.4.1"
+        versionCode = 13
+        versionName = "2.4.2"
 
         ndk {
             abiFilters += targetAbis
@@ -65,8 +65,28 @@ android {
 
     buildTypes {
         release {
-            isMinifyEnabled = false
+            // What is published. R8 removes the AndroidX and Compose code
+            // nothing here calls, which is most of the dex - about a third of
+            // the download, for an app whose own classes are a small part of
+            // it. Everything reflective is kept by name in proguard-rules.pro:
+            // Python calls back into Kotlin by method name, and a renamed
+            // method is a crash nobody sees until the phone runs it.
+            isMinifyEnabled = true
+            isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+
+            // The same key the debug builds used, because that is the one on
+            // people's phones and Android replaces an app only when the
+            // signature matches.
+            signingConfig = signingConfigs.getByName("debug")
+
+            // And the same application id, which is why it says ".debug" on a
+            // release build. Android has no way to change an installed app's
+            // id: a new one installs *beside* the old app rather than over it,
+            // and the workspace stays behind in the one nobody opens any more.
+            // The id is a name, not a claim about the build; every copy in the
+            // wild carries this one, so it stays.
+            applicationIdSuffix = ".debug"
         }
         debug {
             applicationIdSuffix = ".debug"
@@ -123,6 +143,20 @@ android {
     packaging {
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
+        }
+        jniLibs {
+            // CPython and its OpenSSL are 10 MB of native library, and modern
+            // packaging stores them uncompressed so Android can map them
+            // straight out of the APK. That is the right trade for an app
+            // downloaded through a store, which compresses the transfer
+            // itself. This one is downloaded as a raw APK over somebody's
+            // phone connection, where those 10 MB are 10 MB: compressed they
+            // are 3.7, and the download goes from 26 MB to 18.
+            //
+            // The cost is real and worth knowing: Android unpacks the
+            // libraries at install time, so the app takes about 10 MB more
+            // room on the device and the install itself is a little slower.
+            useLegacyPackaging = true
         }
     }
 }

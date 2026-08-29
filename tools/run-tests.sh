@@ -40,7 +40,10 @@ node tools/test_editor.js
 
 echo
 echo "== Build and lint =="
-./gradlew :app:assembleDebug :app:lintDebug --console=plain
+# The release build too, because that is what is published: R8 runs there and
+# nowhere else, and a keep rule that stopped being right would otherwise only
+# show up on somebody's phone.
+./gradlew :app:assembleDebug :app:assembleRelease :app:lintDebug --console=plain
 
 echo
 echo "All checks passed."

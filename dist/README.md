@@ -1,17 +1,57 @@
 # Prebuilt APK
 
-`PyCmd-2.4.1-debug.apk` — ready to install, nothing else needed.
+`PyCmd-2.4.2.apk` — ready to install, nothing else needed.
 
 | | |
 |---|---|
 | Package | `com.expstudio.pycmd.debug` |
-| Version | 2.4.1-debug |
-| Size | 33 MB |
+| Version | 2.4.2 |
+| Size | 18 MB |
 | Signed with | the key in [`keystore/`](../keystore/), committed so updates can install over it |
 | Works on | Android 7.0 (API 24) and newer, **arm64-v8a** (every phone since about 2016) |
 | SHA-256 | see [SHA256SUMS.txt](SHA256SUMS.txt) |
 
-## What is new in 2.4.1
+## What is new in 2.4.2
+
+**It is a release build now, and half the download.** **35 MB to 18 MB**, same
+source, packaged the way an app is meant to be shipped.
+
+Two things did it. R8 strips out the AndroidX and Compose code this app never
+calls - 10 MB of dex down to 3 - and resources nothing references go with it;
+the `debuggable` flag, which let anything with a USB cable read the app's
+private storage, is gone at the same time. Then the native libraries: CPython
+and its OpenSSL are 10 MB, and modern packaging stores them uncompressed so
+Android can map them straight out of the APK. That is the right trade for an
+app downloaded through a store, which compresses the transfer itself; this one
+is a raw APK coming down somebody's phone connection, where 10 MB is 10 MB.
+Compressed they are 3.7.
+
+The cost of that second one is worth knowing: Android unpacks those libraries
+when it installs, so the app takes about 10 MB more room on the device and the
+install itself is a little slower. The download is half the size. If you would
+rather have the storage back, that is one line in `app/build.gradle.kts`.
+
+**And it still updates in place.** It carries the same application id and the
+same signing key as every build before it, so it installs straight over
+2.4.1-debug - or over 2.3 - and keeps the workspace. That is also why a release build says
+`.debug` in its package name: Android has no way to change an installed app's
+id, and a new one would install *beside* the old app rather than over it,
+leaving the workspace behind in the copy nobody opens again. The id is a name,
+not a claim about the build.
+
+**Nothing else changes.** `latest.json` points at this APK, the app checks the
+same address it always did, and **More → System → Check for updates** downloads
+it, verifies the hash and the signature, and installs it over itself. There is
+nothing to set up and no site to visit.
+
+**What R8 was told to leave alone.** Everything reached by name rather than by
+a call: Chaquopy's runtime, this app's own classes (Python calls back into
+several of them by method name, and a renamed method is a crash that only
+happens on a phone), and anything a WebView invokes from JavaScript. The build
+now runs in the test suite too, so a keep rule that stops being right fails
+here rather than after a download.
+
+## What was new in 2.4.1
 
 **Pointing Run at a folder runs the project in it.** It used to mean one thing -
 hand the folder to a file server - so a Flask project answered with a directory
@@ -401,6 +441,15 @@ back to the whole file. `tools/make_latest.py` runs in the suite too, and fails
 the build if `dist/latest.json` does not match the APK sitting beside it: a
 manifest whose hash is stale is a download every phone would refuse.
 
+The 2.4.2 packaging change was verified by building it and reading the result:
+R8's own report says none of this app's classes or Chaquopy's were removed or
+renamed (only empty static initialisers went), the APK still declares the same
+package, versionCode 13 and the same signing certificate as 2.3 did, it is no
+longer marked debuggable, and every asset - the Python runtime, the guides, the
+bundled plugins, the examples - is still inside it. It has not been launched on
+a device. If it misbehaves, install a newer build over it from the browser;
+that path does not need the app to start.
+
 The 2.4 changes were verified by those checks and by Lint on the built APK,
 not on an emulator: this build machine has no hardware virtualisation, so no
 emulator could be started for it. In particular, **the update flow has not been
@@ -409,13 +458,11 @@ that this APK carries the same signing certificate as 2.3
 (`c318e126...4f8d6c`, confirmed with `apksigner`), and that the code paths
 compile and lint clean.
 
-It is a debug build, so it installs without any Play Store involvement. It
-carries the `.debug` package suffix, which means it can sit alongside a release
-build of the same app without either one replacing the other. The signing key
-is in the repo, which is what makes an update possible at all - and also means
-anybody can build an APK this one would accept as an update. That is the price
-of shipping an APK by hand rather than through a store; it is not a key to use
-for anything published.
+It installs without any Play Store involvement. The signing key is in the repo,
+which is what makes an update possible at all - and also means anybody can
+build an APK this one would accept as an update. That is the price of shipping
+an APK by hand rather than through a store; it is not a key to use for anything
+published to one.
 
 ## Installing it on a phone
 
@@ -440,7 +487,7 @@ every tab with things to paste in and try.
 ## Installing over USB
 
 ```bash
-adb install -r dist/PyCmd-2.4.1-debug.apk
+adb install -r dist/PyCmd-2.4.2.apk
 ```
 
 ## Checking the download
@@ -461,7 +508,7 @@ python3 tools/make_latest.py            # checks the one that is there
 | Field | What it is |
 |---|---|
 | `versionCode` | The build number. The app offers an update only when this is higher than its own. |
-| `versionName` | What the card shows: `2.4.1-debug`. |
+| `versionName` | What the card shows: `2.4.2`. |
 | `package` | Which app this is for. A mismatch is refused before the download starts. |
 | `url` | An `https://` address of the APK. Plain `http` is refused. |
 | `sha256` | The APK's fingerprint. The download is checked against it and thrown away if it differs. |
