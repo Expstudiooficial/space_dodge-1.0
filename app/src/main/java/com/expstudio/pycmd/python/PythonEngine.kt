@@ -364,6 +364,38 @@ object PythonEngine {
      * only begin once the first has returned — which is the behaviour a console
      * wants.
      */
+    /**
+     * A line typed into the console, which may be a command rather than Python.
+     *
+     * Python is still what most of it is; the split happens on the Python side
+     * so a command runs on the same thread, with the same output routing and
+     * the same Stop button as everything else.
+     */
+    suspend fun runConsoleLine(source: String): String {
+        if (!_status.value.ready) return "error"
+        cancelledChannels.remove(CONSOLE_CHANNEL)
+        queueFor(CONSOLE_CHANNEL).clear()
+        _status.value = _status.value.copy(running = true)
+        return try {
+            withContext(pythonDispatcher) {
+                runtime.callAttr("run_console", source).toString()
+            }
+        } catch (error: Throwable) {
+            emit(OutputChunk.Stream.STDERR, "Internal error: ${error.message}\n")
+            DebugLog.error(TAG, "console line failed", error)
+            "error"
+        } finally {
+            _status.value = _status.value.copy(running = false)
+        }
+    }
+
+    /** The console's own command names, for completion. */
+    suspend fun consoleCommands(): List<String> = withContext(pythonDispatcher) {
+        runCatching {
+            runtime.callAttr("console_commands").asList().map { it.toString() }
+        }.getOrDefault(emptyList())
+    }
+
     suspend fun run(source: String, sourceName: String = "<console>", echoResult: Boolean = true): String {
         if (!_status.value.ready) return "error"
         cancelledChannels.remove(CONSOLE_CHANNEL)
@@ -537,6 +569,18 @@ object PythonEngine {
         }
 
     /** Every extension the preview can show, so the file list knows. */
+    /**
+     * What PyPI says about a package, before anything is downloaded.
+     *
+     * The Packages tab used to find out a package cannot work here by trying
+     * it: a minute of downloading, then a sentence about compiled wheels.
+     */
+    suspend fun packageInfo(name: String): JSONObject = withContext(pythonDispatcher) {
+        runCatching {
+            JSONObject(packages.callAttr("info", name).toString())
+        }.getOrElse { JSONObject().put("ok", false).put("error", it.message.orEmpty()) }
+    }
+
     suspend fun previewableExtensions(): Set<String> = withContext(controlDispatcher) {
         if (!_status.value.ready) return@withContext emptySet()
         runCatching {
@@ -1292,6 +1336,29 @@ object PythonEngine {
  * flow's value without subscribing to it, and the row then never notices when
  * the catalogue finally arrives.
  */
+/**
+ * The catalogue as an extension lookup, built once.
+ *
+ * [forFileName] splits every language's extension list on every call, which is
+ * nothing once and a great deal per row: the file list asks for one language
+ * per file, and Compose redraws rows as they scroll. Two hundred files times
+ * thirty-odd languages is seven thousand string splits to answer a question
+ * whose answer cannot change until the catalogue does.
+ *
+ * First registration wins, matching [forFileName]: `.svg` is XML because XML
+ * claims it first, not an image.
+ */
+fun List<LanguageInfo>.byExtension(): Map<String, LanguageInfo> {
+    val index = HashMap<String, LanguageInfo>(size * 3)
+    for (info in this) {
+        for (raw in info.extensions.split(",")) {
+            val key = raw.trim().removePrefix(".").lowercase()
+            if (key.isNotEmpty() && !index.containsKey(key)) index[key] = info
+        }
+    }
+    return index
+}
+
 fun List<LanguageInfo>.forFileName(name: String): LanguageInfo? {
     val extension = name.substringAfterLast('.', "").lowercase()
     if (extension.isEmpty()) return null

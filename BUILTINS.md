@@ -14,7 +14,7 @@ runs with everything the app can do — exactly like a plugin you installed
 yourself. They appear under *Ships with PyCmd*, and they cannot be deleted,
 because the next start would only put them back.
 
-Each of the three bundled plugins ships its own guide, which appears in
+Each of the four bundled plugins ships its own guide, which appears in
 **Guides → From your plugins** once you switch it on.
 
 If you want to write one of your own, [PLUGINS.md](PLUGINS.md) is the guide.
@@ -116,6 +116,42 @@ Realtime Database and Firebase Storage.
 listeners. Both are WebSocket protocols, `urllib` does not speak WebSocket, and
 a fake built out of polling would be a worse thing to have than an honest gap.
 Poll the read calls yourself if you need to; they are cheap.
+
+### Packages Pro
+
+Packages for everything that is not Python.
+
+The Packages tab installs wheels from PyPI, which is the right answer for
+Python and no answer at all for the other half of what people write here. A
+page that wants htmx or a chart library has one option on a phone - a CDN - and
+that means it only works with a connection, which for a loopback preview server
+is not the same as working.
+
+So this fetches the file. **Packages → Web libraries and kits**, or from the
+console:
+
+| Command | What it does |
+|---|---|
+| `web install htmx` | Vendors it into `vendor/htmx/`, and prints the tag to paste |
+| `web install chart.js@4.4.0` | A version you pick |
+| `web list` / `web remove <name>` | What is vendored, and undoing it |
+| `web catalogue` | The seventeen with a one-tap button |
+| `kit new blog flask` | A whole project the Servers tab can run |
+| `kit kits` | The seven kits |
+
+Seventeen libraries are written out by hand - htmx, Alpine, Tailwind,
+Bootstrap, Bulma, normalize.css, three.js, Chart.js, D3, Vue, Preact, marked,
+highlight.js, Lodash, Day.js and two self-hosted fonts - because npm packages
+disagree about where their built file lives and a wrong guess is a broken page.
+Anything else on npm works by its own name.
+
+The kits are folders rather than files, because the Servers tab knows how to
+run a folder: `flask`, `site`, `htmx`, `chart`, `three`, `api` and `cli`.
+
+It cannot install what needs building - React with JSX, anything with a bundler
+step, a Go module, a Rust crate - and says so rather than half-fetching it.
+
+---
 
 ### Scheduler
 

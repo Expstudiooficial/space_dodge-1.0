@@ -56,6 +56,12 @@ private val DOCS = listOf(
         "About this app",
         "What it is, what it can and cannot do, and how it is built.",
     ),
+    Doc(
+        "docs/FORKING.md",
+        "Forking PyCmd",
+        "How this is put together, how to build it, and how to publish updates " +
+            "for a fork of your own.",
+    ),
 )
 
 /**
@@ -68,7 +74,9 @@ private val DOCS = listOf(
 fun DocsScreen(
     languages: List<LanguageInfo>,
     onOpen: (String, String) -> Unit,
+    onDownloadSource: () -> Unit,
     modifier: Modifier = Modifier,
+    sourceBusy: Boolean = false,
     /** Guides published by plugins that are switched on. */
     pluginGuides: List<Pair<InstalledPlugin, PluginGuide>> = emptyList(),
     onOpenPluginGuide: (InstalledPlugin, PluginGuide) -> Unit = { _, _ -> },
@@ -178,6 +186,40 @@ fun DocsScreen(
                 Spacer(Modifier.height(8.dp))
                 LanguageLine("Edit, highlight and serve", editable.joinToString(", ") { it.name },
                              MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+
+        item {
+            Spacer(Modifier.height(6.dp))
+            SectionTitle("Take the source")
+            PyCard {
+                Text(
+                    "Forks are welcome, and this is the whole starting kit: the " +
+                        "repository as a zip, straight onto this phone. It lands in " +
+                        "Downloads, where Save to device puts it somewhere your file " +
+                        "manager can see.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(Modifier.height(10.dp))
+                if (sourceBusy) {
+                    BusyRow("Fetching the source...")
+                } else {
+                    GhostButton(
+                        "Download the source",
+                        PyIcons.Download,
+                        onDownloadSource,
+                        Modifier.fillMaxWidth(),
+                    )
+                }
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    "Keep PyCmd's name and credit where they are, and do not claim " +
+                        "the original is a copy of your fork. Read \"Forking PyCmd\" " +
+                        "above for the rest.",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             }
         }
 

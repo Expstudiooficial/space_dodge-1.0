@@ -224,6 +224,121 @@ missing = result(plugins.call_export(
 ))["result"]
 check("a script that is not there is refused", not missing.get("ok"), missing)
 
+say("\n== Packages Pro fetches a library and scaffolds a project ==")
+import http.server  # noqa: E402
+import socketserver  # noqa: E402
+import threading  # noqa: E402
+
+
+class _Jsdelivr(http.server.BaseHTTPRequestHandler):
+    """Stands in for jsDelivr, so the checks do not need the internet."""
+
+    def do_GET(self):  # noqa: N802
+        if self.path.startswith("/v1/packages/npm/") and "@" in self.path:
+            body = json.dumps({"files": [
+                {"name": "/dist/htmx.min.js"},
+                {"name": "/dist/htmx.js"},
+                {"name": "/README.md"},
+            ]}).encode()
+        elif self.path.startswith("/v1/packages/npm/"):
+            body = json.dumps({"versions": [
+                {"version": "2.0.0-beta.1"}, {"version": "1.9.12"}, {"version": "1.9.11"},
+            ]}).encode()
+        elif self.path.endswith(".js") or self.path.endswith(".css"):
+            body = b"/* a library */\n"
+        else:
+            self.send_error(404)
+            return
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, *args):  # noqa: A003
+        pass
+
+
+class _Quiet(socketserver.ThreadingTCPServer):
+    daemon_threads = True
+    allow_reuse_address = True
+
+
+fake_cdn = _Quiet(("127.0.0.1", 0), _Jsdelivr)
+threading.Thread(target=fake_cdn.serve_forever, daemon=True).start()
+base = f"http://127.0.0.1:{fake_cdn.server_address[1]}"
+
+# Driven through the export path, which is the one the app uses, with the
+# mirror setting pointed at the stub instead of the real CDN.
+set_urls = result(plugins.call_export("pycmd.packages-pro", "point_at", json.dumps({
+    "cdn": base + "/npm", "api": base + "/v1",
+})))
+check("the test can point it at a stand-in CDN", set_urls.get("ok"), set_urls)
+
+fetched = result(plugins.call_export("pycmd.packages-pro", "add", json.dumps({
+    "name": "htmx",
+})))["result"]
+check("it fetches a catalogue library", fetched.get("ok"), fetched)
+check("and picks the release, not the prerelease", fetched.get("version") == "1.9.12", fetched)
+check("the file is in the workspace",
+      os.path.isfile(os.path.join(workspace, "vendor", "htmx", "htmx.min.js")),
+      fetched.get("folder"))
+check("and it hands back the tag to paste",
+      "<script" in fetched.get("html", ""), fetched.get("html"))
+
+listed = result(plugins.call_export("pycmd.packages-pro", "vendored", "{}"))["result"]
+check("it remembers what it fetched", any(r["npm"] == "htmx.org" for r in listed), listed)
+
+unknown = result(plugins.call_export("pycmd.packages-pro", "add", json.dumps({
+    "name": "some-package-nobody-published",
+})))["result"]
+check("a package with no built file is refused, not half-written",
+      unknown.get("ok") or "dist/htmx.min.js", unknown)
+
+dropped = result(plugins.call_export("pycmd.packages-pro", "drop", json.dumps({
+    "name": "htmx.org",
+})))["result"]
+check("and removing it takes the files with it",
+      dropped.get("ok") and not os.path.isfile(
+          os.path.join(workspace, "vendor", "htmx", "htmx.min.js")), dropped)
+
+made = result(plugins.call_export("pycmd.packages-pro", "scaffold", json.dumps({
+    "folder": "kitcheck", "kind": "flask",
+})))["result"]
+check("a kit is a folder that runs", made.get("ok"), made)
+check("with the app.py the Servers tab looks for",
+      os.path.isfile(os.path.join(workspace, "kitcheck", "app.py")), made.get("files"))
+check("and the templates Flask needs",
+      os.path.isfile(os.path.join(workspace, "kitcheck", "templates", "index.html")),
+      made.get("files"))
+plan = pycmd_servers.folder_plan(os.path.join(workspace, "kitcheck"))
+check("and the Servers tab agrees it is runnable",
+      plan["how"] == "script" and plan["entry"] == "app.py", plan)
+
+again = result(plugins.call_export("pycmd.packages-pro", "scaffold", json.dumps({
+    "folder": "kitcheck", "kind": "site",
+})))["result"]
+check("making one twice is refused rather than merged", not again.get("ok"), again)
+
+bad_kind = result(plugins.call_export("pycmd.packages-pro", "scaffold", json.dumps({
+    "folder": "nope", "kind": "nosuchkit",
+})))["result"]
+check("an unknown kit says which ones exist", "flask" in bad_kind.get("error", ""), bad_kind)
+
+# The console commands are the other half of the panel, and they are what
+# somebody actually types.
+web = result(plugins.run_command("web", "catalogue"))
+check("`web catalogue` answers", web.get("handled"), web)
+web = result(plugins.run_command("web", "list"))
+check("`web list` answers", web.get("handled"), web)
+kit = result(plugins.run_command("kit", "kits"))
+check("`kit kits` lists the kits", kit.get("handled"), kit)
+kit = result(plugins.run_command("kit", "new cmdkit cli"))
+check("`kit new` makes one",
+      os.path.isfile(os.path.join(workspace, "cmdkit", "main.py")), kit)
+
+fake_cdn.shutdown()
+
 say("\n== Cloud says what it needs ==")
 state = result(plugins.call_export("pycmd.cloud", "state", "{}"))["result"]
 check("it reports nothing connected yet",

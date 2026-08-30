@@ -138,6 +138,34 @@ guessing: *Replace* (the old one goes first, so nothing of it is left mixed in),
 *Keep both*, or *Cancel*. It tells you how big the existing one is and when it
 last changed, so the choice is an informed one.
 
+## 3b. The console is a shell too
+
+`pip install flask` works exactly as typed. So does most of what your fingers
+already know:
+
+```
+pip install rich          pip list          pip show flask
+ls          cd notes      pwd               cat app.py
+head -20 log.txt          tree              find hello
+mkdir src   touch a.py    cp a.py b.py      rm -r old
+run app.py  serve . 8000  servers           stop all
+open app.py preview page.html               go files
+help        clear         version
+```
+
+`help` prints the lot. Everything that is not one of those commands is still
+Python, and the rule for which is which is deliberately narrow:
+
+- `ls` is a command; **`ls = [1, 2]` is an assignment**, and Python gets it.
+- If you have defined a name yourself, your name wins - after `ls = [1, 2]`,
+  typing `ls` prints your list.
+- `import`, `def`, a call, a dot, an operator - all Python, always.
+
+So nothing you could type in a REPL is swallowed, and the one command everybody
+tries first finally works.
+
+---
+
 ## 4. Packages — install something from PyPI, live
 
 Tap **Packages**. `requests`, `flask` and `rich` are already built in (you
@@ -386,13 +414,15 @@ depend on the device.
 
 ## 8. The plugins that ship with it
 
-**More → Plugins**. Three sit under **Ships with PyCmd**, installed for you and
+**More → Plugins**. Four sit under **Ships with PyCmd**, installed for you and
 switched **off**:
 
 * **Server Pro** — turns the Servers tab into a board you can work in.
 * **Cloud** — Supabase and Firebase, from the console, a panel, or your own
   scripts.
 * **Scheduler** — run a script again every so often.
+* **Packages Pro** — JavaScript and CSS libraries, web fonts, and whole starter
+  projects, fetched into your workspace.
 
 Turn Cloud on, open **More → Cloud**, and connect a project. Then, from the
 console:
@@ -494,6 +524,28 @@ useful than a description.
 
 ---
 
+## 11b. Packages Pro — libraries that are not Python
+
+**More → Plugins**, switch on **Packages Pro**. Then, in the console:
+
+```
+web install htmx
+web catalogue
+kit new blog flask
+```
+
+`web install` fetches a library's real file into `vendor/` in your workspace
+and prints the tag to paste into a page. That matters more here than on a
+laptop: the preview is a loopback server, so a page that relies on a CDN only
+works while you have a connection, and a vendored one always works.
+
+`kit new <folder> <kind>` makes a whole project rather than a file - `flask`,
+`site`, `htmx`, `chart`, `three`, `api`, `cli` - and since the Servers tab
+knows how to run a folder, `kit new blog flask` is runnable the moment it
+exists. There is a panel for all of it under **Packages**.
+
+---
+
 ## 12. Updating without losing anything
 
 **More → System → Updates → Check for updates.**
@@ -519,10 +571,40 @@ on **More** and a line on the System card. It downloads nothing until you press
 Download, installs nothing until you press Install, and a check that fails
 because the phone is offline says nothing at all.
 
+**The versions you have had are kept.** Every update PyCmd downloads is filed
+away on external storage instead of being deleted - up to a ceiling you set
+(250 MB, 500 MB, 1 GB, 2 GB, or off entirely), oldest pruned first. Each one can
+be reinstalled, saved out to the phone, or deleted.
+
+Going *back* to an older build is the one thing Android will not do in place:
+it refuses to install a lower version over a higher one, and no app can override
+that. So the card does not pretend. It lays out the sequence that does work -
+save the old APK to the phone, back up the workspace (it writes the zip for
+you), uninstall, install the saved APK, bring the workspace back - and the
+backup step is the one that makes it safe, because uninstalling deletes
+everything the app owns.
+
 **Where updates come from** at the bottom of the card takes an https address of
 a `latest.json` - a fork, another branch, or a machine of your own. Whatever it
 points at, the fingerprint check still runs, and a build signed with a different
 key is refused with an explanation rather than a failed install.
+
+---
+
+## 13. Forking it, and telling us when it breaks
+
+**More → Guides → Forking PyCmd** is the walkthrough: what the code is made of,
+how to build it, what not to change, and how to publish updates for a fork of
+your own - the update address in System is editable precisely so a fork can
+serve its own `latest.json`. At the end of that screen, **Download the source**
+pulls the whole repository onto the phone as a zip.
+
+Forks are welcome. Keep PyCmd's name and credit where they are, and do not
+present the original as a copy of your fork. Beyond that, change what you like.
+
+And when something is wrong - a crash, a wrong answer, a thing that should
+exist - **More → System** has the address: `andrejbaltes4@proton.me`. Save the
+debug log first if something failed; it is worth more than a description.
 
 ---
 
@@ -540,6 +622,10 @@ key is refused with an explanation rather than a failed install.
 - **An update keeps your files.** After installing a newer build over this
   one, Files should look exactly as you left it - same folders, same scripts,
   same installed packages.
+- **`pip install` works from the console.** Type `pip install tabulate`, then
+  `import tabulate` on the next line. No `os.system`, no restart.
+- **A command never eats your Python.** Type `ls = [1, 2]`, press Run, then
+  type `ls` - you should get your list back, not a directory listing.
 
 ---
 

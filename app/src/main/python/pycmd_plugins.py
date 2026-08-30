@@ -65,6 +65,24 @@ def configure(plugins_dir: str, workspace_dir: str, host=None) -> str:
     return plugins_dir
 
 
+def app_action(sender: str, action: str, **detail) -> bool:
+    """Asks the app for something, from outside a plugin.
+
+    The console's own commands need the same three or four things plugins do -
+    open this file, serve that folder, switch tab - and there is no reason for
+    a second bridge. `sender` is the id the app sees; the console uses a
+    reserved one it always trusts.
+    """
+    if _host is None:
+        return False
+    try:
+        _host.onPluginAction(sender, action, _json(detail))
+        return True
+    except Exception as error:  # noqa: BLE001
+        _report("warn", f"the app refused {action}", str(error))
+        return False
+
+
 def plugin_dir(plugin_id: str) -> str:
     return os.path.join(_plugins_dir, _safe_id(plugin_id))
 

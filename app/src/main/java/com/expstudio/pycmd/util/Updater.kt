@@ -45,6 +45,16 @@ data class Release(
         }
 }
 
+/** One APK in the archive of past versions. */
+data class KeptVersion(
+    val file: File,
+    val versionName: String,
+    val versionCode: Int,
+    val bytes: Long,
+    val savedAt: Long,
+    val packageName: String,
+)
+
 /** What an APK sitting on disk actually is, read out of the file itself. */
 data class ApkFacts(
     val packageName: String,
@@ -109,6 +119,17 @@ object Updater {
         "https://raw.githubusercontent.com/expstudiooficial/space_dodge-1.0/" +
             "claude/python-mobile-cmd-android-dj1ixb/dist/latest.json"
 
+    /**
+     * This app's own source, as a zip.
+     *
+     * codeload is GitHub's plain-file host for archives: no API, no token, and
+     * one redirect-free URL per branch. A fork changes this line and the one
+     * above it, and its users get its source instead.
+     */
+    const val SOURCE_ZIP_URL =
+        "https://codeload.github.com/expstudiooficial/space_dodge-1.0/zip/refs/heads/" +
+            "claude/python-mobile-cmd-android-dj1ixb"
+
     private const val CONNECT_TIMEOUT = 20_000
     private const val READ_TIMEOUT = 30_000
 
@@ -121,8 +142,91 @@ object Updater {
     /** Redirect chains are normal on release hosts; a loop is not. */
     private const val MAX_REDIRECTS = 5
 
-    /** Where downloads land. Kept out of the workspace: it is not the user's file. */
+    /** Where a download in progress lives. Small, and emptied as it goes. */
     fun folder(context: Context): File = File(context.filesDir, "updates")
+
+    /**
+     * Where past versions are kept.
+     *
+     * On external app storage rather than in `filesDir`, for two reasons: the
+     * app's own storage figure stays about the app rather than about an
+     * archive of installers, and a phone short of room reports this space
+     * where its user can see it.
+     *
+     * Both are still deleted when PyCmd is uninstalled - Android gives an app
+     * no folder that survives that. Anything you actually want to keep across
+     * an uninstall has to be saved out to the phone, which the card offers.
+     */
+    fun library(context: Context): File {
+        val external = runCatching { context.getExternalFilesDir("versions") }.getOrNull()
+        return external ?: File(context.filesDir, "versions")
+    }
+
+    /** Every APK kept, newest build first. */
+    fun versions(context: Context): List<KeptVersion> {
+        val files = library(context).listFiles()?.filter { it.isFile } ?: return emptyList()
+        return files.mapNotNull { file ->
+            val facts = inspect(context, file) ?: return@mapNotNull null
+            KeptVersion(
+                file = file,
+                versionName = facts.versionName.ifBlank { file.name },
+                versionCode = facts.versionCode,
+                bytes = file.length(),
+                savedAt = file.lastModified(),
+                packageName = facts.packageName,
+            )
+        }.sortedByDescending { it.versionCode }
+    }
+
+    /**
+     * Files a verified download away, and prunes the archive to [capBytes].
+     *
+     * Oldest build first, and never the one running: going back to the version
+     * you are on is the one rollback nobody needs, but the file is also the
+     * only copy of it if the update it came from is gone.
+     */
+    fun keep(context: Context, apk: File, capBytes: Long, currentVersionCode: Int): File? {
+        if (capBytes <= 0) return null
+        val library = library(context)
+        library.mkdirs()
+        val target = File(library, apk.name)
+        if (target.absolutePath != apk.absolutePath) {
+            runCatching { apk.copyTo(target, overwrite = true) }
+                .onFailure {
+                    DebugLog.warn(TAG, "could not keep ${apk.name}", it.message.orEmpty())
+                    return null
+                }
+        }
+        prune(context, capBytes, currentVersionCode)
+        return target.takeIf { it.isFile }
+    }
+
+    /** Deletes oldest-first until the archive fits under [capBytes]. */
+    fun prune(context: Context, capBytes: Long, currentVersionCode: Int) {
+        if (capBytes <= 0) {
+            clearLibrary(context)
+            return
+        }
+        val kept = versions(context).sortedBy { it.versionCode }.toMutableList()
+        var total = kept.sumOf { it.bytes }
+        for (version in kept) {
+            if (total <= capBytes) break
+            if (version.versionCode == currentVersionCode) continue
+            if (version.file.delete()) {
+                total -= version.bytes
+                DebugLog.info(TAG, "pruned an old version", version.versionName)
+            }
+        }
+    }
+
+    fun clearLibrary(context: Context): Int {
+        val files = library(context).listFiles()?.filter { it.isFile } ?: return 0
+        return files.count { it.delete() }
+    }
+
+    /** How much room the archive is using. */
+    fun libraryBytes(context: Context): Long =
+        library(context).listFiles()?.sumOf { it.length() } ?: 0L
 
     /**
      * Reads the manifest.

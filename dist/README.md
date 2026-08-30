@@ -1,17 +1,98 @@
 # Prebuilt APK
 
-`PyCmd-2.4.2.apk` — ready to install, nothing else needed.
+`PyCmd-2.5.apk` — ready to install, nothing else needed.
 
 | | |
 |---|---|
 | Package | `com.expstudio.pycmd.debug` |
-| Version | 2.4.2 |
-| Size | 18 MB |
+| Version | 2.5 |
+| Size | 17 MB |
 | Signed with | the key in [`keystore/`](../keystore/), committed so updates can install over it |
 | Works on | Android 7.0 (API 24) and newer, **arm64-v8a** (every phone since about 2016) |
 | SHA-256 | see [SHA256SUMS.txt](SHA256SUMS.txt) |
 
-## What is new in 2.4.2
+## What is new in 2.5
+
+**`pip install flask` works, typed exactly like that.** The console now takes
+the line before Python does, so the thing everybody tries first is no longer a
+syntax error answered with
+
+```python
+import os
+os.system("pip install flask")     # which does not work on Android either
+```
+
+There is no pip binary on a phone - the installer is inside this app - so that
+workaround never installed anything. Now `pip install`, `pip list`, `pip show`,
+`pip uninstall` and `pip freeze` all do what they say, and about thirty more
+commands come with them: `ls`, `cd`, `pwd`, `cat`, `head`, `tail`, `mkdir`,
+`touch`, `rm`, `mv`, `cp`, `find`, `tree`, `du`, `run`, `serve`, `servers`,
+`stop`, `open`, `preview`, `go`, `clear`, `version`, `env`, `which`, `help`.
+
+**And it never eats your Python.** The rule is narrow and tested from both
+sides: the first word has to be a command, a name you have defined wins over
+the command of the same name (`ls = [1, 2]` then `ls` gives you your list), and
+anything that looks like Python - an assignment, a call, a dot, an operator, a
+keyword - goes straight to the interpreter. Paths that start with an operator
+character are understood as paths: `cd ..`, `ls /sdcard`, `cat ~/notes.md`,
+`head -3 file` all work, while `ls - 1` is still arithmetic.
+
+**Packages says whether a package can work here before you download it.**
+**Look it up first** asks PyPI for the summary, the size, the Python it needs
+and the versions it has - and, most usefully, whether there is a wheel a phone
+can install at all. A library that ships only compiled builds used to cost a
+minute of downloading before it said so.
+
+**Packages Pro, a new built-in plugin: packages for everything that is not
+Python.** JavaScript and CSS libraries, web fonts and whole starter projects,
+fetched into `vendor/` in your workspace so a page works with no connection -
+which matters here, because the preview is a loopback server and "needs a CDN"
+means "needs the internet to look at your own file".
+
+```
+web install htmx          web catalogue        web list
+kit new blog flask        kit kits
+```
+
+Seventeen libraries have a one-tap button - htmx, Alpine, Tailwind, Bootstrap,
+Bulma, normalize.css, three.js, Chart.js, D3, Vue, Preact, marked, highlight.js,
+Lodash, Day.js and two self-hosted fonts - and anything else on npm works by its
+own name. The seven kits are folders rather than files, because the Servers tab
+knows how to run a folder: `kit new blog flask` is a project that runs the
+moment it exists.
+
+**The versions you have had are kept, and you can go back.** Every update is
+filed on external storage instead of being thrown away, up to a ceiling you set
+- 250 MB, 500 MB, 1 GB, 2 GB or off - with the oldest pruned first. Each build
+can be reinstalled, saved out to the phone, or deleted.
+
+Going *back* to an older build is the one thing Android will not do in place:
+it refuses a lower versionCode over a higher one and no ordinary app can
+override that. So the card says so, and gives the sequence that does work -
+save the APK to the phone, back up the workspace (it writes the zip and asks
+where to put it), uninstall, install the saved APK, bring the workspace back.
+The backup step is the point: uninstalling deletes everything the app owns.
+
+**Where to write when something breaks.** **More → System** now carries
+`andrejbaltes4@proton.me`, and tapping it opens a mail app with the version
+already in the subject.
+
+**Forks are welcome, and there is a guide.** A new **Forking PyCmd** guide
+covers what the code is made of, how to build it, what not to change (the
+application id, or every installed copy becomes a second app), and how to
+publish updates for a fork of your own - the update address is editable
+precisely so a fork can serve its own `latest.json`. At the end of it, a
+**Download the source** button pulls the whole repository onto the phone as a
+zip. The conditions are the ordinary ones: keep PyCmd's name and credit where
+they are, and do not present the original as a copy of your fork.
+
+**`latest.json` now describes the release properly**, so a download page can be
+built from it with nothing else: `name`, `sizeText`, `releasedAt`, `minSdk`,
+`minAndroid`, `abi`, `python`, and links to the changelog, the checksums, the
+source and the source zip. The app still reads only the handful it needs and
+ignores the rest.
+
+## What was new in 2.4.2
 
 **It is a release build now, and half the download.** **35 MB to 18 MB**, same
 source, packaged the way an app is meant to be shipped.
@@ -411,10 +492,12 @@ on, its console command answered, and its panel called back into its own
 Python. The APK here is that source built for arm64 instead, which changes
 the CPython binaries and nothing else.
 
-835 checks run before any of this is committed: `test_runtime.py` (190),
-`test_plugins.py` (120), `test_go.py` (92), `test_rust.py` (73),
-`test_cloud.py` (68), `test_bundled.py` (61), `test_c.py` (54), `test_preview.py`
-(51), `test_editor.js` (46), `test_js.js` (43) and `test_doctor.py` (37).
+984 checks run before any of this is committed, across thirteen suites:
+`test_runtime.py`, `test_plugins.py`, `test_shell.py` (the console's commands,
+and the lines it must *not* take), `test_go.py`, `test_rust.py`, `test_cloud.py`,
+`test_bundled.py` (every plugin that ships, driven for real), `test_c.py`,
+`test_preview.py`, `test_branding.py`, `test_doctor.py`, `test_editor.js` and
+`test_js.js`.
 Each language check is a real program paired with the output the real compiler
 produces. The rest go after the things that are
 awkward to be sure of by looking: a script wedged in `accept()` is started for
@@ -440,6 +523,13 @@ come back - plus a 416 past the end of the file and a nonsense `Range` falling
 back to the whole file. `tools/make_latest.py` runs in the suite too, and fails
 the build if `dist/latest.json` does not match the APK sitting beside it: a
 manifest whose hash is stale is a download every phone would refuse.
+
+The 2.5 work was verified by those suites and by Lint on the built APK, and by
+reading the shipped file: the APK declares versionCode 14, the same package and
+the same signing certificate as every build since 2.3, it is not debuggable,
+and it carries the new plugin, the new guide and the console's command module.
+It has not been run on a device - this machine has no hardware virtualisation,
+so no emulator can start here.
 
 The 2.4.2 packaging change was verified by building it and reading the result:
 R8's own report says none of this app's classes or Chaquopy's were removed or
@@ -487,7 +577,7 @@ every tab with things to paste in and try.
 ## Installing over USB
 
 ```bash
-adb install -r dist/PyCmd-2.4.2.apk
+adb install -r dist/PyCmd-2.5.apk
 ```
 
 ## Checking the download
@@ -508,7 +598,7 @@ python3 tools/make_latest.py            # checks the one that is there
 | Field | What it is |
 |---|---|
 | `versionCode` | The build number. The app offers an update only when this is higher than its own. |
-| `versionName` | What the card shows: `2.4.2`. |
+| `versionName` | What the card shows: `2.5`. |
 | `package` | Which app this is for. A mismatch is refused before the download starts. |
 | `url` | An `https://` address of the APK. Plain `http` is refused. |
 | `sha256` | The APK's fingerprint. The download is checked against it and thrown away if it differs. |

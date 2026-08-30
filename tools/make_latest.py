@@ -15,6 +15,7 @@ APK sitting beside it.
 from __future__ import annotations
 
 import argparse
+import datetime
 import hashlib
 import json
 import os
@@ -102,8 +103,33 @@ def apk_facts(apk: str) -> dict:
         fallback_code, fallback_name = gradle_version()
         return {"versionCode": fallback_code, "versionName": fallback_name,
                 "package": "", "read": False}
-    return {"versionCode": int(code.group(1)), "versionName": name.group(1),
-            "package": package.group(1), "read": True}
+
+    min_sdk = re.search(r"sdkVersion:'(\d+)'", out)
+    abis = re.findall(r"native-code: '([^']+)'", out)
+    return {
+        "versionCode": int(code.group(1)),
+        "versionName": name.group(1),
+        "package": package.group(1),
+        "minSdk": int(min_sdk.group(1)) if min_sdk else 0,
+        "abi": " ".join(abis),
+        "read": True,
+    }
+
+
+# What a minSdk means to somebody reading a download page.
+ANDROID_NAMES = {
+    21: "5.0", 22: "5.1", 23: "6.0", 24: "7.0", 25: "7.1", 26: "8.0",
+    27: "8.1", 28: "9", 29: "10", 30: "11", 31: "12", 32: "12L", 33: "13",
+    34: "14", 35: "15",
+}
+
+
+def size_text(count: int) -> str:
+    if count >= 1024 * 1024:
+        return f"{count / 1024 / 1024:.0f} MB"
+    if count >= 1024:
+        return f"{count // 1024} KB"
+    return f"{count} B"
 
 
 def sha256(path: str) -> str:
@@ -130,14 +156,31 @@ def build(apk: str, notes: str) -> dict:
     if not facts["read"]:
         print("  (no aapt2 here - using the version from app/build.gradle.kts)")
     relative = os.path.relpath(os.path.abspath(apk), HERE).replace(os.sep, "/")
+    size = os.path.getsize(apk)
+    min_sdk = facts.get("minSdk") or 24
+    # Everything below `notes` is for a download page rather than for the app,
+    # which reads only what it needs and ignores the rest. A site should not
+    # have to scrape a README to say how big the file is or what it runs on.
     return {
+        "name": "PyCmd",
         "versionCode": facts["versionCode"],
         "versionName": facts["versionName"],
         "package": facts["package"] or "com.expstudio.pycmd.debug",
         "url": RAW.format(repo=REPO, branch=BRANCH, path=relative),
         "sha256": sha256(apk),
-        "bytes": os.path.getsize(apk),
+        "bytes": size,
         "notes": notes,
+        "sizeText": size_text(size),
+        "releasedAt": datetime.datetime.now(datetime.timezone.utc)
+                              .strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "minSdk": min_sdk,
+        "minAndroid": ANDROID_NAMES.get(min_sdk, str(min_sdk)),
+        "abi": facts.get("abi") or "arm64-v8a",
+        "python": "3.13",
+        "changelog": RAW.format(repo=REPO, branch=BRANCH, path="dist/README.md"),
+        "checksums": RAW.format(repo=REPO, branch=BRANCH, path="dist/SHA256SUMS.txt"),
+        "source": f"https://github.com/{REPO}",
+        "sourceZip": f"https://codeload.github.com/{REPO}/zip/refs/heads/{BRANCH}",
     }
 
 
@@ -186,6 +229,17 @@ def check(manifest: dict) -> list[str]:
 
     if not manifest.get("versionName"):
         problems.append("versionName is missing")
+
+    # The fields a website reads. Missing ones are not fatal for the app, but
+    # they are for the page, and a page nobody checked is how a download link
+    # goes stale.
+    for field in ("name", "sizeText", "releasedAt", "minSdk", "minAndroid",
+                  "abi", "changelog", "source", "sourceZip"):
+        if not manifest.get(field):
+            problems.append(f"{field} is missing (the website reads it)")
+    if manifest.get("sizeText") and local and os.path.isfile(local):
+        if manifest["sizeText"] != size_text(os.path.getsize(local)):
+            problems.append("sizeText does not match the APK's size")
     return problems
 
 

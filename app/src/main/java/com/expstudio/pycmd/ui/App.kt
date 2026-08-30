@@ -4,6 +4,7 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import androidx.activity.compose.BackHandler
+import androidx.core.net.toUri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
@@ -50,7 +51,9 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.expstudio.pycmd.plugins.PluginIds
+import com.expstudio.pycmd.python.byExtension
 import com.expstudio.pycmd.python.forFileName
+import com.expstudio.pycmd.util.Branding
 import com.expstudio.pycmd.util.UpdateState
 import com.expstudio.pycmd.util.WorkspaceEntry
 import com.expstudio.pycmd.BuildConfig
@@ -100,6 +103,10 @@ fun PyCmdRoot(viewModel: MainViewModel = viewModel()) {
     val pendingImport by viewModel.pendingImport.collectAsState()
     val systemInfo by viewModel.system.collectAsState()
     val systemBusy by viewModel.systemBusy.collectAsState()
+    val clearConsoleAt by viewModel.clearConsole.collectAsState()
+    val sourceBusy by viewModel.sourceBusy.collectAsState()
+    val keptVersions by viewModel.versions.collectAsState()
+    val versionsCap by viewModel.versionsCap.collectAsState()
     val updateState by viewModel.update.collectAsState()
     val updateSource by viewModel.updateSource.collectAsState()
 
@@ -141,10 +148,13 @@ fun PyCmdRoot(viewModel: MainViewModel = viewModel()) {
 
     // Keyed on the catalogue, so the play buttons appear the moment it loads
     // rather than the next time something else happens to redraw the list.
-    val fileAction: (WorkspaceEntry) -> FileAction = remember(languages, previewable) {
+    // Built once per catalogue rather than searched per row: see byExtension.
+    val languageIndex = remember(languages) { languages.byExtension() }
+
+    val fileAction: (WorkspaceEntry) -> FileAction = remember(languageIndex, previewable) {
         { entry ->
-            val language = languages.forFileName(entry.name)
             val extension = entry.name.substringAfterLast('.', "").lowercase()
+            val language = languageIndex[extension]
             when {
                 entry.isDirectory -> FileAction.NONE
                 language?.canRun == true -> FileAction.RUN
@@ -160,6 +170,12 @@ fun PyCmdRoot(viewModel: MainViewModel = viewModel()) {
     // console history and editor state survive tab switches.
     val consoleHost = rememberWebHost("console.html")
     val editorHost = rememberWebHost("editor.html")
+
+    // `clear` typed in the console has to reach the page that holds the
+    // scrollback. Keyed on the timestamp so a second clear fires again.
+    LaunchedEffect(clearConsoleAt) {
+        if (clearConsoleAt > 0L) consoleHost.eval("PyConsole.clear();")
+    }
 
     var aboutOpen by remember { mutableStateOf(false) }
     var saveAsOpen by remember { mutableStateOf(false) }
@@ -251,7 +267,7 @@ fun PyCmdRoot(viewModel: MainViewModel = viewModel()) {
                 ),
                 title = {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text("PyCmd", style = MaterialTheme.typography.titleLarge)
+                        Text(Branding.NAME, style = MaterialTheme.typography.titleLarge)
                         Spacer(Modifier.width(10.dp))
                         when {
                             status.startupError != null -> StatusChip(
@@ -439,6 +455,8 @@ fun PyCmdRoot(viewModel: MainViewModel = viewModel()) {
                     pythonVersion = status.pythonVersion.ifBlank { "3.13" },
                     onInstall = viewModel::installPackage,
                     onUninstall = viewModel::uninstallPackage,
+                    onLookUp = viewModel::lookUpPackage,
+                    onClearLookup = viewModel::clearPackageLookup,
                 
                     pluginSections = {
                         PluginSections(
@@ -482,6 +500,8 @@ fun PyCmdRoot(viewModel: MainViewModel = viewModel()) {
                 Tab.DOCS -> DocsScreen(
                     languages = languages,
                     onOpen = { asset, title -> viewModel.openGuide(asset, title) },
+                    onDownloadSource = viewModel::downloadSource,
+                    sourceBusy = sourceBusy,
                     pluginGuides = guidesFor(installedPlugins, installedEnabled),
                     onOpenPluginGuide = viewModel::openPluginGuide,
                 
@@ -508,6 +528,29 @@ fun PyCmdRoot(viewModel: MainViewModel = viewModel()) {
                     onInstallUpdate = viewModel::installUpdate,
                     onDismissUpdate = viewModel::dismissUpdate,
                     onSetUpdateSource = viewModel::setUpdateSource,
+                    versions = keptVersions,
+                    versionsCap = versionsCap,
+                    onSetVersionsCap = viewModel::setVersionsCap,
+                    onInstallVersion = viewModel::installVersion,
+                    onDeleteVersion = viewModel::deleteVersion,
+                    onDeleteAllVersions = viewModel::deleteAllVersions,
+                    onSaveVersionToPhone = { saveToDevice(it.file) },
+                    onBackupWorkspace = { viewModel.backupWorkspaceForRollback(saveToDevice) },
+                    onEmail = { address ->
+                        val intent = android.content.Intent(
+                            android.content.Intent.ACTION_SENDTO,
+                            ("mailto:$address?subject=${Branding.NAME}" +
+                                "%20${BuildConfig.VERSION_NAME}").toUri(),
+                        )
+                        runCatching { context.startActivity(intent) }
+                            .onFailure {
+                                // No mail app is ordinary on a phone used for
+                                // one thing; the address is no use unread, so
+                                // it goes to the clipboard instead.
+                                copyToClipboard(context, address)
+                                viewModel.showToast("No mail app - address copied")
+                            }
+                    },
                     // Keyed on the file list so deleting the folder makes the
                     // button appear without a trip somewhere else and back.
                     onRestoreExamples = remember(filesState.entries, systemInfo) {
@@ -742,7 +785,7 @@ private fun AboutDialog(
         title = {
             // The build type appends "-debug"; the title wants the version.
             val version = BuildConfig.VERSION_NAME.substringBefore('-')
-            Text("PyCmd $version", style = MaterialTheme.typography.titleMedium)
+            Text("${Branding.NAME} $version", style = MaterialTheme.typography.titleMedium)
         },
         text = {
             Column {

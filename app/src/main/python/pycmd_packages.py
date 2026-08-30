@@ -16,6 +16,7 @@ import importlib
 import io
 import json
 import os
+import re
 import shutil
 import site
 import sys
@@ -92,6 +93,62 @@ def _pick_wheel(release_files: list) -> dict | None:
         if filename.endswith("-none-any.whl") and best is None:
             best = item
     return best
+
+
+def info(name: str) -> dict:
+    """What PyPI says about a package, and whether this device can have it.
+
+    Worth asking before installing rather than after: a package with only
+    compiled wheels fails at the end of a download, and "there is no wheel for
+    Android" is a better answer given up front. Also carries the recent
+    versions, so pinning one does not need a trip to a browser.
+    """
+    name = name.strip()
+    if not name:
+        return {"ok": False, "error": "Enter a package name."}
+    try:
+        payload = json.loads(_fetch(PYPI_JSON.format(name=urllib.parse.quote(name))))
+    except urllib.error.HTTPError as exc:
+        if exc.code == 404:
+            return {"ok": False, "error": f"PyPI has nothing called '{name}'."}
+        return {"ok": False, "error": f"PyPI returned HTTP {exc.code}."}
+    except (urllib.error.URLError, ValueError) as exc:
+        return {"ok": False, "error": f"Could not reach PyPI: {exc}"}
+
+    payload_info = payload.get("info", {})
+    latest = payload_info.get("version", "")
+    releases = payload.get("releases", {})
+    wheel = _pick_wheel(payload.get("urls", []) or releases.get(latest, []))
+
+    # Newest first, and only versions that actually published something.
+    versions = [key for key, files in releases.items() if files]
+    versions.sort(key=_version_key, reverse=True)
+
+    return {
+        "ok": True,
+        "name": payload_info.get("name", name),
+        "version": latest,
+        "summary": payload_info.get("summary") or "",
+        "home_page": payload_info.get("home_page") or payload_info.get("project_url") or "",
+        "requires_python": payload_info.get("requires_python") or "",
+        "license": (payload_info.get("license") or "")[:60],
+        "installable": wheel is not None,
+        "why_not": "" if wheel else (
+            "This one ships only compiled wheels, which have to be built for "
+            "Android's exact ABI and Python version. There is nothing on PyPI "
+            "for a phone to fetch."
+        ),
+        "size": int((wheel or {}).get("size", 0)),
+        "versions": versions[:12],
+    }
+
+
+def _version_key(version: str) -> tuple:
+    """Sorts versions the way people expect, without packaging installed."""
+    parts = []
+    for chunk in re.split(r"[._-]", version):
+        parts.append((0, int(chunk)) if chunk.isdigit() else (1, 0))
+    return tuple(parts)
 
 
 def install(name: str, version: str | None = None, progress=None) -> dict:

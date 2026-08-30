@@ -12,14 +12,18 @@ already has. Another twenty file types are edited, highlighted, previewed and
 served, and music, video, images, PDFs, archives and fonts are brought in from
 the phone, kept, served and played.
 
-Version 2.4.2. Kotlin and Jetpack Compose for the app, JavaScript for the console
+Version 2.5. Kotlin and Jetpack Compose for the app, JavaScript for the console
 and editor.
 
 ---
 
 ## What it does
 
-**Console** — a real REPL. Type an expression and its value is printed back;
+**Console** — a real REPL, with a shell in front of it. `pip install flask`
+works as typed, and so do `ls`, `cd`, `cat`, `run`, `serve`, `open`, `tree`,
+`find` and a dozen more; everything else is Python. The split is narrow on
+purpose - `ls` is a command, `ls = [1, 2]` is an assignment, and a name you
+have defined always wins. Type an expression and its value is printed back;
 type a block and it runs. Output streams in as it is produced rather than
 appearing all at once when the script ends, `input()` prompts you and waits,
 and Stop interrupts a runaway loop. Terminal colours from libraries like `rich`
@@ -57,7 +61,13 @@ URL, workspace and folder exports, and anything you add from the phone. Each
 one can be opened, copied into the workspace, or saved back out to the device.
 
 **Packages** — install pure-Python libraries from PyPI onto the device at
-runtime. `requests`, `flask` and `rich` are already built in.
+runtime, from the tab or with `pip install` in the console. **Look it up first**
+asks PyPI what a package is and whether it can work here *before* the download,
+so a library that ships only compiled wheels is a sentence rather than a wasted
+minute. `requests`, `flask` and `rich` are already built in. The **Packages
+Pro** plugin adds everything that is not Python: JavaScript and CSS libraries,
+web fonts and whole starter projects, vendored into the workspace so a page
+works with no connection.
 
 **Servers** — a launch form that runs whatever you point it at: a Python
 script, a C, Go or Rust program, a JavaScript file, an HTML page (whose folder
@@ -81,9 +91,9 @@ doing while it does it, on its own thread, so Stop and Kill keep working
 throughout. It never acts on its own.
 
 **Plugins** — three kinds of the same idea. Thirteen **built-in switches**,
-each over behaviour already compiled into the app. Three **bundled plugins**
-that ship inside the APK and start switched off: **Server Pro**, **Cloud** and
-**Scheduler**. And **plugins you write yourself** — Python that PyCmd imports,
+each over behaviour already compiled into the app. Four **bundled plugins**
+that ship inside the APK and start switched off: **Server Pro**, **Cloud**,
+**Scheduler** and **Packages Pro**. And **plugins you write yourself** — Python that PyCmd imports,
 which can publish a row in More with its own name and picture, put a card of
 its own inside one of the app's existing screens, register console commands,
 claim a file type the Servers tab can then run, and reach Supabase or Firebase
@@ -109,9 +119,24 @@ JavaScript errors from a preview or a panel, and uncaught Java exceptions, with
 level filters, text search, expandable stack traces, copy-all and
 save-to-workspace.
 
-**Guides and System** — the manuals on the phone, and a screen that says what
-the app is using: versions, architecture, what each folder costs, what is
-running, and housekeeping that touches nothing you wrote.
+**Guides and System** — the manuals on the phone, including a guide to forking
+this app and a button that downloads its source as a zip; and a screen that
+says what the app is using: versions, architecture, what each folder costs,
+what is running, housekeeping that touches nothing you wrote, and where to
+write when something is wrong (`andrejbaltes4@proton.me`).
+
+**Forks are welcome** — the update address is editable so a fork can publish
+its own builds, `tools/make_latest.py` writes the manifest, and
+[FORKING.md](FORKING.md) is the walkthrough. Keep PyCmd's name and credit where
+they are, and do not present the original as a copy of your fork; the rest is
+yours to change.
+
+**Old versions, kept** — every update it downloads is filed on external
+storage rather than thrown away, up to a ceiling you set (250 MB to 2 GB, or
+off). Each one can be reinstalled, saved out to the phone or deleted. Going
+back to an *older* build is the one thing Android will not do in place, and the
+app says so plainly instead of pretending: it walks through the sequence that
+does work, and writes the workspace backup that makes it safe.
 
 **Updates that keep your files** — **More → System → Check for updates** reads
 a small manifest, and if there is a newer build it downloads it, checks it
@@ -132,7 +157,7 @@ signal, no answer - says nothing at all.
 ## Just want to try it
 
 A ready-to-install APK is in [`dist/`](dist/) - download
-[`PyCmd-2.4.2.apk`](dist/PyCmd-2.4.2.apk), open it on the phone, and allow the
+[`PyCmd-2.5.apk`](dist/PyCmd-2.5.apk), open it on the phone, and allow the
 install when Android asks. It is a release build: minified by R8, not
 debuggable, and about 18 MB rather than the 35 MB the debug builds were. It is
 signed with the key in [`keystore/`](keystore/) - the standard Android debug

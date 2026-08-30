@@ -22,6 +22,14 @@ echo "== Language interpreters =="
 "$PYTHON" tools/test_rust.py
 
 echo
+echo "== The app still says what it is called =="
+"$PYTHON" tools/test_branding.py
+
+echo
+echo "== The console's commands =="
+"$PYTHON" tools/test_shell.py
+
+echo
 echo "== Plugins, doctor, preview, cloud, bundled =="
 "$PYTHON" tools/test_plugins.py
 "$PYTHON" tools/test_doctor.py

@@ -1,0 +1,131 @@
+<h2>Web libraries and kits</h2>
+
+<div class="card">
+  <p>
+    <input id="name" placeholder="htmx, chart.js, or any npm package">
+    <button id="add">Fetch</button>
+  </p>
+  <p id="result" style="opacity:.8">
+    Files land in <code>vendor/</code> in your workspace, so a page works with
+    no connection and no CDN.
+  </p>
+</div>
+
+<h3>One tap</h3>
+<div id="catalogue"></div>
+
+<h3>In your workspace</h3>
+<div id="vendored"></div>
+
+<h3>Start a project</h3>
+<div class="card">
+  <p>
+    <input id="folder" placeholder="folder name, e.g. blog" style="width:10em">
+    <select id="kind"></select>
+    <button id="make">Make it</button>
+  </p>
+  <p id="kitresult" style="opacity:.8">
+    A kit is a folder, not a file: the Servers tab knows how to run one.
+  </p>
+</div>
+
+<script>
+  const $ = (id) => document.getElementById(id);
+  const esc = (t) => String(t ?? '').replace(/[&<>"]/g, (c) => (
+    { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+
+  async function call(name, payload) {
+    try { return await pycmd.call(name, payload || {}); }
+    catch (error) { return { ok: false, error: error.message }; }
+  }
+
+  async function drawCatalogue() {
+    const rows = await call('catalogue');
+    if (!Array.isArray(rows)) { $('catalogue').textContent = 'Could not read the list.'; return; }
+    $('catalogue').innerHTML = rows.map((row) => `
+      <div class="card">
+        <p><strong>${esc(row.name)}</strong>
+           <span style="opacity:.6">${esc(row.npm)}</span>
+           ${row.installed ? `<span style="color:#7ee0a6">· ${esc(row.version)}</span>` : ''}</p>
+        <p style="opacity:.8">${esc(row.about)}</p>
+        <p>
+          <button data-get="${esc(row.id)}">${row.installed ? 'Fetch again' : 'Fetch'}</button>
+          ${row.installed ? `<button data-drop="${esc(row.npm)}">Remove</button>` : ''}
+        </p>
+      </div>`).join('');
+
+    for (const button of $('catalogue').querySelectorAll('[data-get]')) {
+      button.onclick = async () => {
+        button.disabled = true;
+        button.textContent = 'Fetching...';
+        const result = await call('add', { name: button.dataset.get });
+        report(result);
+        refresh();
+      };
+    }
+    for (const button of $('catalogue').querySelectorAll('[data-drop]')) {
+      button.onclick = async () => { await call('drop', { name: button.dataset.drop }); refresh(); };
+    }
+  }
+
+  async function drawVendored() {
+    const rows = await call('vendored');
+    if (!Array.isArray(rows) || !rows.length) {
+      $('vendored').innerHTML = '<div class="card"><p>Nothing fetched yet.</p></div>';
+      return;
+    }
+    $('vendored').innerHTML = rows.map((row) => `
+      <div class="card">
+        <p><strong>${esc(row.name)}</strong> ${esc(row.version)}</p>
+        <p style="opacity:.8">${esc((row.files || []).join(', '))}</p>
+        <p><button data-drop="${esc(row.npm)}">Remove</button></p>
+      </div>`).join('');
+    for (const button of $('vendored').querySelectorAll('[data-drop]')) {
+      button.onclick = async () => { await call('drop', { name: button.dataset.drop }); refresh(); };
+    }
+  }
+
+  function report(result) {
+    if (result && result.ok) {
+      const paste = result.html ? `<br><code>${esc(result.html)}</code>` : '';
+      $('result').innerHTML =
+        `Fetched <strong>${esc(result.name)} ${esc(result.version)}</strong>${paste}`;
+    } else {
+      $('result').textContent = (result && result.error) || 'That did not work.';
+    }
+  }
+
+  async function refresh() {
+    await drawCatalogue();
+    await drawVendored();
+  }
+
+  $('add').onclick = async () => {
+    const name = $('name').value.trim();
+    if (!name) return;
+    $('result').textContent = 'Fetching ' + name + '...';
+    report(await call('add', { name }));
+    $('name').value = '';
+    refresh();
+  };
+
+  $('make').onclick = async () => {
+    const folder = $('folder').value.trim();
+    if (!folder) { $('kitresult').textContent = 'Give it a folder name.'; return; }
+    $('kitresult').textContent = 'Making ' + folder + '...';
+    const result = await call('scaffold', { folder, kind: $('kind').value });
+    $('kitresult').textContent = result && result.ok
+      ? `Made ${folder}/ - ${(result.files || []).join(', ')}. ${result.how || ''}`
+      : (result && result.error) || 'That did not work.';
+    $('folder').value = '';
+  };
+
+  (async () => {
+    const kinds = await call('kits');
+    if (Array.isArray(kinds)) {
+      $('kind').innerHTML = kinds
+        .map((row) => `<option value="${esc(row.id)}">${esc(row.id)}</option>`).join('');
+    }
+    refresh();
+  })();
+</script>

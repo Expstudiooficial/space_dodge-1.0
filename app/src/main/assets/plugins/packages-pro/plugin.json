@@ -1,0 +1,66 @@
+{
+  "id": "pycmd.packages-pro",
+  "name": "Packages Pro",
+  "version": "2.5.0",
+  "author": "PyCmd",
+  "description": "Packages for everything that is not Python. Fetches JavaScript and CSS libraries - htmx, Alpine, Tailwind, Bootstrap, three.js, Chart.js, D3, Vue, marked, highlight.js - and web fonts, straight from jsDelivr into a vendor/ folder in your workspace, so a page can use them with no CDN and no connection. Any npm package by name, too. Then it scaffolds whole projects: a Flask app with templates, a static site, an htmx page with its own backend, a three.js scene - each one ready for the Servers tab to run.",
+  "entry": "main.py",
+  "extends": [
+    {
+      "tab": "packages",
+      "title": "Web libraries and kits",
+      "description": "JavaScript, CSS, fonts and starter projects",
+      "panel": "ui.html",
+      "height": "tall"
+    }
+  ],
+  "commands": [
+    {
+      "name": "web",
+      "help": "web install <name>[@version] | list | remove <name> | catalogue"
+    },
+    {
+      "name": "kit",
+      "help": "kit new <folder> <flask|site|htmx|chart|three|api|cli> | kits"
+    }
+  ],
+  "permissions": [
+    "network",
+    "files"
+  ],
+  "settings": [
+    {
+      "name": "vendor_dir",
+      "type": "text",
+      "label": "Where libraries land",
+      "help": "A folder inside your workspace.",
+      "default": "vendor"
+    },
+    {
+      "name": "minified",
+      "type": "switch",
+      "label": "Prefer minified files",
+      "default": true
+    },
+    {
+      "name": "open_after_kit",
+      "type": "switch",
+      "label": "Open a new project after making it",
+      "default": true
+    },
+    {
+      "name": "mirror",
+      "type": "text",
+      "label": "CDN mirror",
+      "help": "Where libraries are fetched from. Blank means jsDelivr. https only.",
+      "default": ""
+    }
+  ],
+  "guides": [
+    {
+      "file": "GUIDE.md",
+      "title": "Packages Pro",
+      "summary": "Vendor JavaScript, CSS and fonts into your workspace, and start a project that already runs."
+    }
+  ]
+}

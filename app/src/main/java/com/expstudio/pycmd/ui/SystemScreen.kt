@@ -1,5 +1,6 @@
 package com.expstudio.pycmd.ui
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -21,11 +22,18 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
+import com.expstudio.pycmd.BuildConfig
+import com.expstudio.pycmd.util.Branding
+import com.expstudio.pycmd.util.KeptVersion
 import com.expstudio.pycmd.util.UpdateState
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 /** What the app is using, and the housekeeping worth having a button for. */
 data class SystemInfo(
@@ -39,6 +47,7 @@ data class SystemInfo(
     val packagesBytes: Long = 0,
     val downloadsBytes: Long = 0,
     val pluginBytes: Long = 0,
+    val versionsBytes: Long = 0,
     val cacheBytes: Long = 0,
     val cacheFiles: Int = 0,
     val freeBytes: Long = 0,
@@ -70,6 +79,15 @@ fun SystemScreen(
     onInstallUpdate: () -> Unit,
     onDismissUpdate: () -> Unit,
     onSetUpdateSource: (String) -> Unit,
+    versions: List<KeptVersion>,
+    versionsCap: Long,
+    onSetVersionsCap: (Long) -> Unit,
+    onInstallVersion: (KeptVersion) -> Unit,
+    onDeleteVersion: (KeptVersion) -> Unit,
+    onDeleteAllVersions: () -> Unit,
+    onSaveVersionToPhone: (KeptVersion) -> Unit,
+    onBackupWorkspace: () -> Unit,
+    onEmail: (String) -> Unit,
     modifier: Modifier = Modifier,
     /** Null when the examples are still there and nothing needs restoring. */
     onRestoreExamples: (() -> Unit)? = null,
@@ -85,7 +103,7 @@ fun SystemScreen(
         item {
             PyCard {
                 InfoRow("Python", info.pythonVersion.ifEmpty { "starting..." })
-                InfoRow("PyCmd", info.appVersion)
+                InfoRow(Branding.NAME, info.appVersion)
                 InfoRow("Architecture", info.abi)
                 InfoRow("Android", info.androidVersion)
                 InfoRow("Device", info.device)
@@ -107,6 +125,20 @@ fun SystemScreen(
             )
         }
 
+        item { SectionTitle("Versions kept") }
+        item {
+            VersionsCard(
+                versions = versions,
+                cap = versionsCap,
+                onSetCap = onSetVersionsCap,
+                onInstall = onInstallVersion,
+                onDelete = onDeleteVersion,
+                onDeleteAll = onDeleteAllVersions,
+                onSaveToPhone = onSaveVersionToPhone,
+                onBackupWorkspace = onBackupWorkspace,
+            )
+        }
+
         item { SectionTitle("Storage") }
         item {
             PyCard {
@@ -114,6 +146,7 @@ fun SystemScreen(
                 InfoRow("Installed packages", readable(info.packagesBytes))
                 InfoRow("Downloads", readable(info.downloadsBytes))
                 InfoRow("Plugins", readable(info.pluginBytes))
+                InfoRow("Versions kept", readable(info.versionsBytes))
                 InfoRow("Cache", "${readable(info.cacheBytes)}  ·  ${info.cacheFiles} files")
                 Spacer(Modifier.height(6.dp))
                 Divider()
@@ -129,6 +162,9 @@ fun SystemScreen(
                 InfoRow("Plugins loaded", info.plugins.toString())
             }
         }
+
+        item { SectionTitle("Getting in touch") }
+        item { ContactCard(onEmail = onEmail) }
 
         item { SectionTitle("Housekeeping") }
         item { pluginSections() }
@@ -377,6 +413,203 @@ private fun UpdateSourceRow(source: String, onSetSource: (String) -> Unit) {
         GhostButton("Back to default", PyIcons.RestartAlt, { onSetSource("") }, Modifier.weight(1f))
     }
 }
+
+/**
+ * The builds this phone still has, and the truth about going back to one.
+ *
+ * Android will not install a lower versionCode over a higher one. There is no
+ * flag an ordinary app can set for that, so "roll back" is not a button that
+ * can work on its own - it is a sequence, and the honest thing is to say so
+ * and hand over the two files that sequence needs.
+ */
+/**
+ * Who to tell when something is wrong, and where a fork stands.
+ *
+ * Both belong on this screen for the same reason: it is where somebody ends up
+ * when they are trying to work out what this app is doing.
+ */
+@Composable
+private fun ContactCard(onEmail: (String) -> Unit) {
+    PyCard {
+        Text("Found a bug? Tell us.", style = MaterialTheme.typography.titleSmall,
+             fontWeight = FontWeight.SemiBold)
+        Spacer(Modifier.height(6.dp))
+        Text(
+            "Anything that crashes, misbehaves or is simply wrong - and anything " +
+                "you wish it did. Save the debug log first if something failed; it " +
+                "is worth more than a description.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Spacer(Modifier.height(10.dp))
+        Text(
+            SUPPORT_EMAIL,
+            style = MaterialTheme.typography.bodyMedium,
+            fontFamily = MonoFamily,
+            color = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.clickable { onEmail(SUPPORT_EMAIL) },
+        )
+        Spacer(Modifier.height(14.dp))
+        Divider()
+        Spacer(Modifier.height(10.dp))
+        Text("Forks are welcome", style = MaterialTheme.typography.titleSmall,
+             fontWeight = FontWeight.SemiBold)
+        Spacer(Modifier.height(6.dp))
+        Text(
+            "Take the source, change it, ship it. The update address above is " +
+                "editable precisely so a fork can publish its own builds, and a " +
+                "fork that adds something good is the best thing that can happen " +
+                "to a project like this. Guides has a walkthrough, and the source " +
+                "downloads from the end of it.\n\n" +
+                "Two conditions, and they are the ordinary ones: keep PyCmd's name " +
+                "and credit where they are, and do not claim the original is a copy " +
+                "of your fork. Beyond that it is yours to change.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+}
+
+/** Where to write when something here is wrong. */
+const val SUPPORT_EMAIL = "andrejbaltes4@proton.me"
+
+@Composable
+private fun VersionsCard(
+    versions: List<KeptVersion>,
+    cap: Long,
+    onSetCap: (Long) -> Unit,
+    onInstall: (KeptVersion) -> Unit,
+    onDelete: (KeptVersion) -> Unit,
+    onDeleteAll: () -> Unit,
+    onSaveToPhone: (KeptVersion) -> Unit,
+    onBackupWorkspace: () -> Unit,
+) {
+    var goingBackTo by remember { mutableStateOf<KeptVersion?>(null) }
+    val used = versions.sumOf { it.bytes }
+    val running = BuildConfig.VERSION_CODE
+
+    PyCard {
+        Text(
+            "Every update PyCmd downloads is filed here instead of being thrown " +
+                "away, so an older build is one tap from coming back - and the " +
+                "downloads do not sit in the app's own storage.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Spacer(Modifier.height(10.dp))
+        InfoRow("Kept", "${versions.size}  ·  ${readable(used)} of ${capLabel(cap)}")
+
+        if (versions.isEmpty()) {
+            Text(
+                "Nothing yet. The next update you take is kept automatically.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+
+        versions.forEach { version ->
+            Spacer(Modifier.height(10.dp))
+            Divider()
+            Spacer(Modifier.height(10.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        "PyCmd ${version.versionName}" +
+                            if (version.versionCode == running) "  (running)" else "",
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.Medium,
+                        fontFamily = MonoFamily,
+                    )
+                    Text(
+                        "build ${version.versionCode}  ·  ${readable(version.bytes)}  ·  " +
+                            SimpleDateFormat("dd MMM HH:mm", Locale.US)
+                                .format(Date(version.savedAt)),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+            Spacer(Modifier.height(8.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (version.versionCode > running) {
+                    GhostButton("Install", PyIcons.Download, { onInstall(version) },
+                                Modifier.weight(1f))
+                } else if (version.versionCode < running) {
+                    GhostButton("Go back to it", PyIcons.History, { goingBackTo = version },
+                                Modifier.weight(1f))
+                } else {
+                    GhostButton("Reinstall", PyIcons.RestartAlt, { onInstall(version) },
+                                Modifier.weight(1f))
+                }
+                GhostButton("Save", PyIcons.Save, { onSaveToPhone(version) }, Modifier.weight(1f))
+                GhostButton("Delete", PyIcons.Delete, { onDelete(version) }, Modifier.weight(1f))
+            }
+        }
+
+        Spacer(Modifier.height(12.dp))
+        Divider()
+        Spacer(Modifier.height(10.dp))
+        Text(
+            "Keep at most",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Spacer(Modifier.height(6.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            CAPS.forEach { (label, bytes) ->
+                StatusChip(
+                    text = label,
+                    color = if (cap == bytes) {
+                        MaterialTheme.colorScheme.primary
+                    } else {
+                        MaterialTheme.colorScheme.onSurfaceVariant
+                    },
+                    modifier = Modifier.clickable { onSetCap(bytes) },
+                )
+            }
+        }
+        if (versions.isNotEmpty()) {
+            Spacer(Modifier.height(10.dp))
+            GhostButton("Delete them all", PyIcons.Delete, onDeleteAll, Modifier.fillMaxWidth())
+        }
+    }
+
+    val target = goingBackTo
+    if (target != null) {
+        ConfirmDialog(
+            title = "Go back to ${target.versionName}?",
+            message = "Android will not install an older build over a newer one - " +
+                "there is no way around that from inside an app. Going back means " +
+                "uninstalling PyCmd first, and uninstalling deletes your workspace, " +
+                "your packages and this archive along with it.\n\n" +
+                "So do it in this order:\n" +
+                "1. Save ${target.versionName} to the phone (the Save button).\n" +
+                "2. Back up the workspace - the button below writes a zip and asks " +
+                "where to put it.\n" +
+                "3. Uninstall PyCmd.\n" +
+                "4. Open the saved APK from your Files app.\n" +
+                "5. Bring the workspace back in from Files.",
+            confirmLabel = "Back up the workspace",
+            onDismiss = { goingBackTo = null },
+            onConfirm = {
+                goingBackTo = null
+                onBackupWorkspace()
+            },
+        )
+    }
+}
+
+/** The ceilings offered for the archive. A gigabyte is the default. */
+private val CAPS = listOf(
+    "off" to 0L,
+    "250 MB" to 250L * 1024 * 1024,
+    "500 MB" to 500L * 1024 * 1024,
+    "1 GB" to 1024L * 1024 * 1024,
+    "2 GB" to 2048L * 1024 * 1024,
+)
+
+private fun capLabel(bytes: Long): String =
+    CAPS.firstOrNull { it.second == bytes }?.first ?: readable(bytes)
 
 @Composable
 private fun InfoRow(label: String, value: String) {

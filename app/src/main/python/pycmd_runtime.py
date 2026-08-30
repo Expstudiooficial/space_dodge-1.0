@@ -24,6 +24,8 @@ import types
 
 __all__ = [
     "configure",
+    "run_console",
+    "console_commands",
     "run_source",
     "run_file",
     "request_stop",
@@ -538,6 +540,36 @@ def _split_last_expression(source: str, filename: str):
     return compile(tree, filename, "exec"), None
 
 
+def run_console(source: str) -> str:
+    """A line typed into the console: a command if it is one, else Python.
+
+    The split lives here rather than in the app so both halves run on the same
+    thread, with the same output routing and the same Stop button. See
+    pycmd_shell for what counts as a command - the rule is narrow on purpose.
+    """
+    try:
+        import pycmd_shell
+
+        with _state_lock:
+            taken = set(_namespace)
+        reply = pycmd_shell.handle(source, taken)
+        if reply.get("handled"):
+            return reply.get("status", "ok")
+    except Exception as error:  # noqa: BLE001 - never let the shell eat a line
+        sys.stderr.write(f"console: {type(error).__name__}: {error}\n")
+    return run_source(source)
+
+
+def console_commands() -> list:
+    """Command names, for completion and for the help sheet in the app."""
+    try:
+        import pycmd_shell
+
+        return pycmd_shell.commands()
+    except Exception:  # noqa: BLE001
+        return []
+
+
 def run_source(source: str, source_name: str = "<console>", echo_result: bool = True) -> str:
     """Execute a chunk of code. Returns "ok", "error" or "stopped"."""
     global _run_counter, _active_thread_id, _stop_requested
@@ -781,7 +813,9 @@ def completions(prefix: str, limit: int = 40):
         names = [n for n in dir(obj) if n.startswith(tail) and not n.startswith("__")]
         return [f"{head}.{n}" for n in sorted(names)[:limit]]
 
-    pool = set(_KEYWORDS) | set(_namespace)
+    # Console commands complete too: `pi<tab>` should offer pip, which is the
+    # thing somebody typing that in this app almost certainly wants.
+    pool = set(_KEYWORDS) | set(_namespace) | set(console_commands())
     return sorted(n for n in pool if n.startswith(prefix) and not n.startswith("__"))[:limit]
 
 

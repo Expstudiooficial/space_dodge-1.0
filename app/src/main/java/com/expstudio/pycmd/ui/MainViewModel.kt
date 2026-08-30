@@ -33,6 +33,7 @@ import com.expstudio.pycmd.util.DebugLog
 import com.expstudio.pycmd.util.LogEntry
 import com.expstudio.pycmd.util.Exports
 import com.expstudio.pycmd.util.Imports
+import com.expstudio.pycmd.util.KeptVersion
 import com.expstudio.pycmd.util.UpdateState
 import com.expstudio.pycmd.util.Updater
 import com.expstudio.pycmd.util.Workspace
@@ -188,6 +189,27 @@ data class PackagesState(
     val bundled: List<String> = emptyList(),
     val busy: Boolean = false,
     val progress: String = "",
+    /** What PyPI says about the package somebody just looked up. */
+    val lookup: PackageLookup? = null,
+    val looking: Boolean = false,
+)
+
+/**
+ * A package, as PyPI describes it, before anything is downloaded.
+ *
+ * The point of the whole type is [installable]: a package with only compiled
+ * wheels cannot work here, and finding that out after a minute of downloading
+ * is the worst time to find it out.
+ */
+data class PackageLookup(
+    val name: String,
+    val version: String,
+    val summary: String,
+    val installable: Boolean,
+    val whyNot: String,
+    val requiresPython: String,
+    val sizeBytes: Long,
+    val versions: List<String>,
 )
 
 data class ServersState(
@@ -215,6 +237,15 @@ private const val AUTOSAVE_DELAY_MS = 2000L
 
 /** Remembered so a fork or a moved branch stays pointed at after a restart. */
 private const val KEY_UPDATE_SOURCE = "manifest-url"
+
+/** The console's own commands reach the app under this id. */
+private const val SHELL_ID = "pycmd.shell"
+
+/** How much room the kept-versions archive may take. */
+private const val KEY_VERSIONS_CAP = "versions-cap"
+
+/** A gigabyte: room for several builds, and a number people recognise. */
+private const val DEFAULT_VERSIONS_CAP = 1024L * 1024 * 1024
 
 /** When the app last looked, so it looks once a day rather than every launch. */
 private const val KEY_UPDATE_CHECKED = "checked-at"
@@ -301,6 +332,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _history = MutableStateFlow<List<String>>(emptyList())
     val history: StateFlow<List<String>> = _history.asStateFlow()
 
+    /**
+     * Bumped when something asks for the console to be wiped.
+     *
+     * The scrollback lives in the WebView, not here, so `clear` cannot empty a
+     * list - it has to reach the page. A timestamp rather than a flag: two
+     * clears in a row are two events, and a flag would only be one.
+     */
+    private val _clearConsole = MutableStateFlow(0L)
+    val clearConsole: StateFlow<Long> = _clearConsole.asStateFlow()
+
     /** Output per server channel, so each server console has its own scrollback. */
     private val _serverConsoles = MutableStateFlow<Map<String, List<OutputChunk>>>(emptyMap())
     val serverConsoles: StateFlow<Map<String, List<OutputChunk>>> = _serverConsoles.asStateFlow()
@@ -372,6 +413,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             refreshCustomPlugins()
             installBundledPlugins()
             quietlyCheckForUpdate()
+            refreshVersions()
         }
     }
 
@@ -609,6 +651,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             packagesBytes = folderSize(packages),
             downloadsBytes = folderSize(downloads),
             pluginBytes = folderSize(plugins),
+            versionsBytes = Updater.libraryBytes(context),
             cacheBytes = folderSize(cache),
             cacheFiles = countFiles(cache),
             freeBytes = runCatching { files.usableSpace }.getOrDefault(0L),
@@ -770,6 +813,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     // system installer say "App not installed" and leave the
                     // user reaching for uninstall.
                     val blocker = withContext(Dispatchers.IO) { Updater.blocker(context, file) }
+                    if (blocker == null) {
+                        // Filed away before it is installed, so going back to
+                        // this build later does not need another download.
+                        withContext(Dispatchers.IO) {
+                            Updater.keep(context, file, versionsCap(), BuildConfig.VERSION_CODE)
+                        }
+                        refreshVersions()
+                    }
                     _update.value = if (blocker == null) {
                         UpdateState.Ready(release, file)
                     } else {
@@ -806,6 +857,98 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
         Updater.install(context, ready.file)
             .onFailure { showToast(it.message ?: "Could not open the installer.") }
+    }
+
+    // ---- The versions you can go back to -----------------------------------
+
+    private val _versions = MutableStateFlow<List<KeptVersion>>(emptyList())
+
+    /** Every build kept on the device, newest first. */
+    val versions: StateFlow<List<KeptVersion>> = _versions.asStateFlow()
+
+    private val _versionsCap = MutableStateFlow(readVersionsCap())
+
+    /** How much room the archive may take, in bytes. 0 means keep none. */
+    val versionsCap: StateFlow<Long> = _versionsCap.asStateFlow()
+
+    private fun versionsCap(): Long = _versionsCap.value
+
+    private fun readVersionsCap(): Long =
+        updatePreferences().getLong(KEY_VERSIONS_CAP, DEFAULT_VERSIONS_CAP)
+
+    /**
+     * Changes the ceiling on the archive, and prunes to it straight away.
+     *
+     * Oldest first: the reason to keep an old build is to go back one step,
+     * and three steps back is a build nobody is going to install.
+     */
+    fun setVersionsCap(bytes: Long) {
+        val chosen = bytes.coerceAtLeast(0L)
+        _versionsCap.value = chosen
+        updatePreferences().edit { putLong(KEY_VERSIONS_CAP, chosen) }
+        viewModelScope.launch {
+            withContext(Dispatchers.IO) {
+                Updater.prune(getApplication(), chosen, BuildConfig.VERSION_CODE)
+            }
+            refreshVersions()
+            refreshSystem()
+        }
+    }
+
+    fun refreshVersions() {
+        viewModelScope.launch {
+            _versions.value = withContext(Dispatchers.IO) { Updater.versions(getApplication()) }
+        }
+    }
+
+    /** Hands one of the kept APKs to the installer. */
+    fun installVersion(version: KeptVersion) {
+        val context = getApplication<Application>()
+        if (!Updater.canInstall(context)) {
+            showToast("Let PyCmd install apps, then press Install again.")
+            Updater.requestInstallPermission(context)
+            return
+        }
+        Updater.install(context, version.file)
+            .onFailure { showToast(it.message ?: "Could not open the installer.") }
+    }
+
+    fun deleteVersion(version: KeptVersion) {
+        viewModelScope.launch {
+            withContext(Dispatchers.IO) { version.file.delete() }
+            refreshVersions()
+            refreshSystem()
+        }
+    }
+
+    fun deleteAllVersions() {
+        viewModelScope.launch {
+            val gone = withContext(Dispatchers.IO) { Updater.clearLibrary(getApplication()) }
+            showToast(if (gone == 0) "Nothing kept" else "Deleted $gone")
+            refreshVersions()
+            refreshSystem()
+        }
+    }
+
+    /**
+     * Writes the workspace to a zip and hands it back for saving out.
+     *
+     * The one thing that has to happen before going back to an older build:
+     * Android will not install a lower versionCode over a higher one, so a
+     * real rollback means uninstalling - and uninstalling takes the workspace,
+     * this archive and everything else the app owns with it.
+     */
+    fun backupWorkspaceForRollback(onReady: (File) -> Unit) {
+        viewModelScope.launch {
+            _systemBusy.value = "Packing the workspace..."
+            val result = engine.exportWorkspace()
+            _systemBusy.value = ""
+            if (result.ok && result.path.isNotEmpty()) {
+                onReady(File(result.path))
+            } else {
+                showToast(result.error.ifBlank { "Could not pack the workspace." })
+            }
+        }
     }
 
     /** Clears the card, and the download with it. */
@@ -873,7 +1016,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
      * switched off should not still be moving the app around.
      */
     private fun handlePluginAction(request: PluginAction) {
-        if (!CustomPlugins.isOn(request.pluginId)) return
+        // The console's own commands come through the same bridge under a
+        // reserved id: `open notes.md` and `serve .` need exactly what a
+        // plugin needs, and a second bridge would be the same code twice.
+        if (request.pluginId != SHELL_ID && !CustomPlugins.isOn(request.pluginId)) return
         val detail = runCatching { JSONObject(request.detail) }.getOrDefault(JSONObject())
         val path = detail.optString("path")
 
@@ -897,6 +1043,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }
 
             "go_to" -> tabNamed(detail.optString("tab"))?.let { selectTab(it) }
+
+            "clear_console" -> _clearConsole.value = System.currentTimeMillis()
 
             "open_panel" -> CustomPlugins.installed.value
                 .firstOrNull { it.id == request.pluginId }
@@ -1122,6 +1270,41 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    private val _sourceBusy = MutableStateFlow(false)
+
+    /** True while the repository zip is coming down. */
+    val sourceBusy: StateFlow<Boolean> = _sourceBusy.asStateFlow()
+
+    /**
+     * Pulls this app's own source onto the phone, as a zip in Downloads.
+     *
+     * The Kotlin is not in the APK - only the Python is - so this fetches the
+     * repository rather than unpacking itself. From Downloads, "Save to
+     * device" puts it somewhere a file manager can see, which is the whole
+     * starting kit for a fork.
+     */
+    fun downloadSource() {
+        if (_sourceBusy.value) return
+        viewModelScope.launch {
+            _sourceBusy.value = true
+            _downloads.value = _downloads.value.copy(busy = true, progress = "Fetching the source...")
+            val result = engine.downloadUrl(Updater.SOURCE_ZIP_URL) { message ->
+                _downloads.value = _downloads.value.copy(progress = message)
+            }
+            _downloads.value = _downloads.value.copy(busy = false, progress = "")
+            _sourceBusy.value = false
+            showToast(
+                if (result.ok) {
+                    "Saved ${result.name} to Downloads"
+                } else {
+                    result.error.ifBlank { "Could not fetch the source." }
+                },
+            )
+            refreshDownloads()
+            if (result.ok) selectTab(Tab.DOWNLOADS)
+        }
+    }
+
     fun exportWorkspace() {
         viewModelScope.launch {
             _downloads.value = _downloads.value.copy(busy = true, progress = "Zipping the workspace...")
@@ -1296,7 +1479,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 }
             }
 
-            engine.run(trimmed)
+            engine.runConsoleLine(trimmed)
             engine.firePluginEvent("console_run", JSONObject().put("source", trimmed).toString())
             refreshServers()
         }
@@ -1917,6 +2100,38 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 showToast(result.error.ifBlank { "Install failed." })
             }
         }
+    }
+
+    /** Asks PyPI what a package is, without installing it. */
+    fun lookUpPackage(name: String) {
+        val wanted = name.trim().substringBefore("==")
+        if (wanted.isBlank()) return
+        viewModelScope.launch {
+            _packages.value = _packages.value.copy(looking = true, lookup = null)
+            val reply = engine.packageInfo(wanted)
+            val found = if (reply.optBoolean("ok")) {
+                PackageLookup(
+                    name = reply.optString("name", wanted),
+                    version = reply.optString("version"),
+                    summary = reply.optString("summary"),
+                    installable = reply.optBoolean("installable"),
+                    whyNot = reply.optString("why_not"),
+                    requiresPython = reply.optString("requires_python"),
+                    sizeBytes = reply.optLong("size"),
+                    versions = reply.optJSONArray("versions")?.let { array ->
+                        (0 until array.length()).map { array.optString(it) }
+                    }.orEmpty(),
+                )
+            } else {
+                null
+            }
+            _packages.value = _packages.value.copy(looking = false, lookup = found)
+            if (found == null) showToast(reply.optString("error", "Could not reach PyPI."))
+        }
+    }
+
+    fun clearPackageLookup() {
+        _packages.value = _packages.value.copy(lookup = null)
     }
 
     fun uninstallPackage(name: String) {

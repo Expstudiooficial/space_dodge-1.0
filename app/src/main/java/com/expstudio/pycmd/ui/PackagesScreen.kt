@@ -51,6 +51,8 @@ fun PackagesScreen(
     pythonVersion: String,
     onInstall: (String, String?) -> Unit,
     onUninstall: (String) -> Unit,
+    onLookUp: (String) -> Unit,
+    onClearLookup: () -> Unit,
     modifier: Modifier = Modifier,
     /** Sections plugins have added to this screen; empty when none are on. */
     pluginSections: @Composable () -> Unit = {},
@@ -112,6 +114,35 @@ fun PackagesScreen(
                     icon = PyIcons.Add,
                     onClick = ::install,
                     enabled = !state.busy && query.isNotBlank(),
+                )
+            }
+
+            // Looking first costs one small request and answers the question
+            // that used to cost a whole download: can this one work here at all.
+            Spacer(Modifier.height(8.dp))
+            GhostButton(
+                text = "Look it up first",
+                icon = PyIcons.Search,
+                onClick = { onLookUp(query) },
+                enabled = !state.busy && !state.looking && query.isNotBlank(),
+                modifier = Modifier.fillMaxWidth(),
+            )
+
+            if (state.looking) {
+                BusyRow("Asking PyPI...")
+            }
+
+            state.lookup?.let { found ->
+                Spacer(Modifier.height(10.dp))
+                LookupCard(
+                    found = found,
+                    busy = state.busy,
+                    onInstall = { version ->
+                        onClearLookup()
+                        query = ""
+                        onInstall(found.name, version)
+                    },
+                    onDismiss = onClearLookup,
                 )
             }
 
@@ -228,6 +259,97 @@ fun PackagesScreen(
                 onUninstall(removal)
             },
         )
+    }
+}
+
+/**
+ * What PyPI says, before a byte is downloaded.
+ *
+ * The verdict is the top line, in the colour that means it: a package with no
+ * universal wheel cannot be installed on a phone whatever anybody does, and
+ * the sooner that is said the less time it wastes.
+ */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun LookupCard(
+    found: PackageLookup,
+    busy: Boolean,
+    onInstall: (String?) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    PyCard {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                "${found.name}  ${found.version}",
+                style = MaterialTheme.typography.titleSmall,
+                fontFamily = MonoFamily,
+                modifier = Modifier.weight(1f),
+            )
+            IconButton(onClick = onDismiss) {
+                Icon(PyIcons.Clear, contentDescription = "Close")
+            }
+        }
+        if (found.summary.isNotBlank()) {
+            Text(
+                found.summary,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        Spacer(Modifier.height(8.dp))
+        Text(
+            if (found.installable) {
+                "Installs here" + if (found.sizeBytes > 0) {
+                    "  ·  ${found.sizeBytes / 1024} KB"
+                } else {
+                    ""
+                } + if (found.requiresPython.isNotBlank()) {
+                    "  ·  needs Python ${found.requiresPython}"
+                } else {
+                    ""
+                }
+            } else {
+                found.whyNot
+            },
+            style = MaterialTheme.typography.bodySmall,
+            color = if (found.installable) {
+                MaterialTheme.colorScheme.primary
+            } else {
+                MaterialTheme.colorScheme.error
+            },
+        )
+
+        if (found.installable) {
+            Spacer(Modifier.height(10.dp))
+            ActionButton(
+                text = "Install ${found.version}",
+                icon = PyIcons.Add,
+                onClick = { onInstall(null) },
+                enabled = !busy,
+                modifier = Modifier.fillMaxWidth(),
+            )
+            if (found.versions.size > 1) {
+                Spacer(Modifier.height(10.dp))
+                Text(
+                    "Or an older one",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(Modifier.height(6.dp))
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    found.versions.drop(1).take(8).forEach { version ->
+                        StatusChip(
+                            text = version,
+                            color = MaterialTheme.colorScheme.secondary,
+                            modifier = Modifier.clickable(enabled = !busy) { onInstall(version) },
+                        )
+                    }
+                }
+            }
+        }
     }
 }
 
