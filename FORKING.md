@@ -24,6 +24,7 @@ app/src/main/
     ui/                        every screen is one Compose file, named after its tab
     python/PythonEngine.kt     the one door between Kotlin and Python
     plugins/                   the plugin registry and the built-in switches
+    music/                     the media session, and the controller for it
     util/                      files, imports, exports, the debug log, updates
   python/                      the interpreter side, and most of the behaviour
     pycmd_runtime.py           running code, streams, stop, completions
@@ -32,6 +33,7 @@ app/src/main/
     pycmd_pages.py             the Pages registry: projects, limits, start and stop
     pycmd_tunnel.py            a public address for a page, over localtunnel
     pycmd_cloudflare.py        Cloudflare Pages and Workers, over their REST API
+    pycmd_music.py             the music library: tracks, playlists, order
     pycmd_packages.py          installing wheels from PyPI onto the device
     pycmd_preview.py           the preview pages and the loopback server
     pycmd_plugins.py           loading plugins, and the API they are handed
@@ -142,7 +144,15 @@ page straight from it.
 
 ## The source, on the phone
 
-The end of this guide in the app has a **Download the source** button. It pulls
-the repository as a zip into Downloads, where **Save to device** puts it
-somewhere your file manager can see. That is the whole starting kit: unzip it
-on a machine with the SDK and build.
+[Download the source](pycmd://source)
+
+That is the whole starting kit: the repository as a zip, straight onto this
+phone. It lands in **Downloads**, where **Save to device** puts it somewhere
+your file manager can see. Unzip it on a machine with the SDK and build.
+
+The same button is on the Guides screen you opened this from, under **Take the
+source** - either one does the same thing.
+
+Reading this on a computer rather than in the app? The zip is at
+`https://codeload.github.com/expstudiooficial/space_dodge-1.0/zip/refs/heads/claude/python-mobile-cmd-android-dj1ixb`,
+or just clone the repository as above.

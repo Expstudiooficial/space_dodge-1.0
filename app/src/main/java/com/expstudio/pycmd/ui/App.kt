@@ -105,6 +105,8 @@ fun PyCmdRoot(viewModel: MainViewModel = viewModel()) {
     val systemBusy by viewModel.systemBusy.collectAsState()
     val clearConsoleAt by viewModel.clearConsole.collectAsState()
     val pagesState by viewModel.pages.collectAsState()
+    val musicState by viewModel.music.collectAsState()
+    val playback by viewModel.playback.collectAsState()
     val backgroundChecks by viewModel.backgroundChecks.collectAsState()
     val backgroundDownload by viewModel.backgroundDownload.collectAsState()
     // Recomputed whenever a switch moves, because the Cloudflare half of the
@@ -130,6 +132,13 @@ fun PyCmdRoot(viewModel: MainViewModel = viewModel()) {
     val pluginFolderLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocumentTree(),
     ) { uri -> if (uri != null) viewModel.installPluginFromUri(uri, isFolder = true) }
+
+    // Music comes in through the same picker as everything else, filtered to
+    // what can be played. Several at once, because a picked album is a picked
+    // album and importing it one tap at a time is nobody's idea of a library.
+    val musicLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenMultipleDocuments(),
+    ) { uris -> viewModel.importMusic(uris) }
 
     // Saving a file out of the app: the picker only tells us where afterwards,
     // so the file being saved is held until it comes back.
@@ -253,7 +262,7 @@ fun PyCmdRoot(viewModel: MainViewModel = viewModel()) {
         // A destination reached through More goes back to More first.
         val parent = if (tab in setOf(
                 Tab.PACKAGES, Tab.DOWNLOADS, Tab.PLUGINS, Tab.DOCS, Tab.SYSTEM,
-                Tab.PAGES,
+                Tab.PAGES, Tab.MUSIC,
             )
         ) {
             Tab.MORE
@@ -375,6 +384,7 @@ fun PyCmdRoot(viewModel: MainViewModel = viewModel()) {
                     forceSelected = tab in setOf(
                         Tab.PACKAGES, Tab.DOWNLOADS, Tab.PLUGINS, Tab.TOOL,
                         Tab.PLUGIN_PANEL, Tab.DOCS, Tab.SYSTEM, Tab.PAGES,
+                        Tab.MUSIC,
                     ),
                 )
             }
@@ -597,6 +607,48 @@ fun PyCmdRoot(viewModel: MainViewModel = viewModel()) {
                     onForgetCloudflare = viewModel::forgetCloudflare,
                     onDeploy = viewModel::deployPage,
                     onSetHost = { project, host -> viewModel.setPageHost(project.id, host) },
+                    pluginSections = {
+                        PluginSections(
+                            sectionsFor(Tab.PAGES, installedPlugins, installedEnabled),
+                            viewModel,
+                        )
+                    },
+                )
+
+                Tab.MUSIC -> MusicScreen(
+                    state = musicState,
+                    playback = playback,
+                    onImport = { musicLauncher.launch(arrayOf("audio/*", "video/*")) },
+                    onPlay = viewModel::playTrack,
+                    onPlayAll = viewModel::playEverything,
+                    onPlayPlaylist = viewModel::playPlaylist,
+                    onToggle = viewModel::togglePlayback,
+                    onNext = viewModel::skipNext,
+                    onPrevious = viewModel::skipPrevious,
+                    onSeek = viewModel::seekMusic,
+                    onStop = viewModel::stopMusic,
+                    onCycleLoop = viewModel::cycleLoop,
+                    onToggleShuffle = viewModel::toggleShuffle,
+                    onOpenPlaylist = viewModel::openPlaylist,
+                    onNewPlaylist = viewModel::createPlaylist,
+                    onRenamePlaylist = { playlist, name ->
+                        viewModel.renamePlaylist(playlist.id, name)
+                    },
+                    onRemovePlaylist = viewModel::removePlaylist,
+                    onRenameTrack = { track, title -> viewModel.renameTrack(track.id, title) },
+                    onRemoveTrack = viewModel::removeTrack,
+                    onAddToPlaylist = { id, track -> viewModel.addToPlaylist(id, track.id) },
+                    onRemoveFromPlaylist = { id, track ->
+                        viewModel.removeFromPlaylist(id, track.id)
+                    },
+                    onMove = { id, track, delta -> viewModel.moveInPlaylist(id, track.id, delta) },
+                    onTidy = viewModel::tidyMusic,
+                    pluginSections = {
+                        PluginSections(
+                            sectionsFor(Tab.MUSIC, installedPlugins, installedEnabled),
+                            viewModel,
+                        )
+                    },
                 )
 
                 Tab.MORE -> MoreScreen(
@@ -605,6 +657,7 @@ fun PyCmdRoot(viewModel: MainViewModel = viewModel()) {
                     pluginCount = pluginsEnabled.size,
                     errorCount = debugErrors,
                     pageCount = pagesState.active,
+                    musicPlaying = playback.playing,
                     onSelect = viewModel::selectTab,
                     updateWaiting = updateWaiting,
                     // Only tabs from plugins that are switched on: a tab is a
@@ -725,6 +778,7 @@ fun PyCmdRoot(viewModel: MainViewModel = viewModel()) {
                 page = page,
                 onClose = viewModel::closePreview,
                 onReload = { viewModel.previewFile(File(page.baseDirectory + page.name)) },
+                onLinkOut = viewModel::previewLink,
             )
         }
         BackHandler(enabled = true) { viewModel.closePreview() }

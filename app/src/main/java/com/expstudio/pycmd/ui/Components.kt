@@ -244,3 +244,15 @@ fun Divider(modifier: Modifier = Modifier) {
             .background(MaterialTheme.colorScheme.outline),
     )
 }
+
+/**
+ * Bytes, as a person reads them.
+ *
+ * Shared because three screens count the same thing - a page's folder, a
+ * track, a download - and three copies of it drifted apart once already.
+ */
+internal fun readableSize(bytes: Long): String = when {
+    bytes >= 1024L * 1024 -> "%.1f MB".format(bytes / 1024.0 / 1024.0)
+    bytes >= 1024 -> "${bytes / 1024} KB"
+    else -> "$bytes B"
+}

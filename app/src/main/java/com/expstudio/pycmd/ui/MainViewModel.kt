@@ -19,6 +19,10 @@ import com.expstudio.pycmd.python.PythonEngine
 import com.expstudio.pycmd.python.RunPlan
 import com.expstudio.pycmd.python.RunningServer
 import com.expstudio.pycmd.python.ServerService
+import com.expstudio.pycmd.music.MusicHub
+import com.expstudio.pycmd.music.MusicImport
+import com.expstudio.pycmd.music.MusicTrack
+import com.expstudio.pycmd.music.Playback
 import com.expstudio.pycmd.plugins.CustomPlugins
 import com.expstudio.pycmd.plugins.InstalledPlugin
 import com.expstudio.pycmd.plugins.PluginExtension
@@ -41,6 +45,7 @@ import com.expstudio.pycmd.util.Workspace
 import com.expstudio.pycmd.util.WorkspaceEntry
 import java.io.File
 import java.io.IOException
+import org.json.JSONArray
 import org.json.JSONObject
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -77,6 +82,7 @@ enum class Tab(val label: String) {
     PLUGIN_PANEL("Plugin"),
     DOCS("Guides"),
     PAGES("Pages"),
+    MUSIC("Music"),
     SYSTEM("System");
 
     /**
@@ -95,6 +101,7 @@ enum class Tab(val label: String) {
             DEBUG -> "debug"
             DOCS -> "guides"
             PAGES -> "pages"
+            MUSIC -> "music"
             // The console and the editor are a full-screen WebView each, with
             // nowhere to put a card that would not be in the way.
             CONSOLE, EDITOR, MORE, TOOL, PLUGIN_PANEL -> null
@@ -233,6 +240,46 @@ data class PagesState(
     val atRunningLimit: Boolean get() = active >= maxActive
 }
 
+/** A playlist as the Music tab draws it: the order, and what is in it. */
+data class MusicPlaylist(
+    val id: String,
+    val name: String,
+    val trackIds: List<String> = emptyList(),
+    val count: Int = 0,
+    val duration: Long = 0,
+    val bytes: Long = 0,
+    val preview: String = "",
+)
+
+/**
+ * The music library, and which part of it the screen is looking at.
+ *
+ * What is *playing* is not in here: that lives in the media session, which
+ * outlives this view model and every screen it draws, and comes back through
+ * [MainViewModel.playback].
+ */
+data class MusicState(
+    val tracks: List<MusicTrack> = emptyList(),
+    val playlists: List<MusicPlaylist> = emptyList(),
+    val openPlaylist: String = "",
+    val bytes: Long = 0,
+    val missing: Int = 0,
+    val maxTracks: Int = 2000,
+    val maxPlaylists: Int = 200,
+    val busy: String = "",
+    val importing: Boolean = false,
+) {
+    /** The playlist the screen has open, or null when it is showing everything. */
+    val current: MusicPlaylist? get() = playlists.firstOrNull { it.id == openPlaylist }
+
+    /** What the list shows: one playlist in order, or the whole library. */
+    val visible: List<MusicTrack>
+        get() = current?.let { playlist ->
+            val byId = tracks.associateBy { it.id }
+            playlist.trackIds.mapNotNull { byId[it] }
+        } ?: tracks
+}
+
 data class PackagesState(
     val installed: List<InstalledPackage> = emptyList(),
     val bundled: List<String> = emptyList(),
@@ -300,6 +347,31 @@ private const val DEFAULT_VERSIONS_CAP = 1024L * 1024 * 1024
 private const val KEY_UPDATE_CHECKED = "checked-at"
 
 private const val DAY_MS = 24L * 60 * 60 * 1000
+
+/**
+ * The guides that ship in `assets/docs`, so a link from one to another opens
+ * the guide instead of hunting for a file that is not on the phone.
+ */
+/**
+ * The two shapes of JSON array this file reads, as one line each.
+ *
+ * Everything crossing the bridge from Python is JSON, and `for (i in 0 until
+ * length())` written out eleven times is eleven chances to write `optString`
+ * where `optJSONObject` belonged.
+ */
+private fun JSONArray?.rows(): List<JSONObject> =
+    if (this == null) emptyList() else (0 until length()).mapNotNull { optJSONObject(it) }
+
+private fun JSONArray?.strings(): List<String> =
+    if (this == null) {
+        emptyList()
+    } else {
+        (0 until length()).map { optString(it) }.filter { it.isNotBlank() }
+    }
+
+private val SHIPPED_GUIDES = setOf(
+    "README.md", "TUTORIAL.md", "PLUGINS.md", "BUILTINS.md", "FORKING.md",
+)
 
 private const val DEFAULT_SNIPPET = """# Welcome to PyCmd.
 # Write Python here, then press Run. Output lands in the Console tab.
@@ -467,7 +539,23 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             quietlyCheckForUpdate()
             refreshVersions()
             refreshPages()
+            // Read at startup rather than when the tab is opened, so that
+            // music left playing from before is already on the controls - and
+            // so that More can say something is on without being visited.
+            refreshMusic()
         }
+    }
+
+    /**
+     * The activity is going for good.
+     *
+     * The controller is a binder held to another process; letting it go is
+     * not stopping the music. The service keeps whatever it was playing, and
+     * the notification stays the way to stop it.
+     */
+    override fun onCleared() {
+        hub.release()
+        super.onCleared()
     }
 
     /**
@@ -1140,6 +1228,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 "downloads" -> refreshDownloads()
                 "packages" -> refreshPackages()
                 "plugins" -> refreshCustomPlugins()
+                "pages" -> refreshPages()
+                "music" -> refreshMusic()
                 else -> refreshFiles(_files.value.directory ?: workspace.root)
             }
 
@@ -1161,6 +1251,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         "system" -> Tab.SYSTEM
         "debug" -> Tab.DEBUG
         "guides", "docs" -> Tab.DOCS
+        "pages" -> Tab.PAGES
+        "music" -> Tab.MUSIC
         "more" -> Tab.MORE
         else -> null
     }
@@ -1390,6 +1482,38 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    /**
+     * A link the preview would not load, handed back for the app to answer.
+     *
+     * Three kinds arrive here. A `pycmd://` address is a button written into a
+     * document - the guides use one so the **Download the source** the fork
+     * guide talks about is actually at the end of the fork guide, instead of
+     * being a sentence about a button on another screen. A link from one
+     * shipped guide to another is opened as that guide, because a document
+     * rendered from memory has no folder behind it to serve the sibling from.
+     * Anything else leads out of the app, and this says so rather than
+     * swallowing the tap in silence, which is what it used to do.
+     */
+    fun previewLink(url: String) {
+        val target = url.trim()
+        val guide = target.substringAfterLast('/').substringBefore('?')
+        when {
+            target.startsWith("pycmd://source") || target == Updater.SOURCE_ZIP_URL -> {
+                closePreview()
+                downloadSource()
+            }
+            target.startsWith("pycmd://") -> {
+                DebugLog.warn("preview", "a document asked for something this build has no answer for", target)
+                showToast("This build does not know that button.")
+            }
+            guide.endsWith(".md") && guide in SHIPPED_GUIDES -> openGuide("docs/$guide", guide)
+            else -> {
+                DebugLog.info("preview", "a link out of the preview", target)
+                showToast("That link goes outside PyCmd.")
+            }
+        }
+    }
+
     fun exportWorkspace() {
         viewModelScope.launch {
             _downloads.value = _downloads.value.copy(busy = true, progress = "Zipping the workspace...")
@@ -1541,6 +1665,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             // A page whose server died on its own is only noticed by looking,
             // and opening the tab is when somebody is looking.
             Tab.PAGES -> refreshPages()
+            // The library is small and reading it is cheap; a track deleted
+            // from the notification would otherwise still be listed here.
+            Tab.MUSIC -> refreshMusic()
             else -> Unit
         }
     }
@@ -2405,6 +2532,320 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             url = page.url,
             served = true,
         )
+    }
+
+    // ---- Music ------------------------------------------------------------
+
+    /**
+     * The player, which is not in this process's control at all.
+     *
+     * It lives in a media session in a service, so the sound carries on when
+     * this view model, this screen and the whole activity have gone. What is
+     * here is a controller pointed at it, and a library that says what there
+     * is to play.
+     */
+    private val hub = MusicHub(application).also { live ->
+        live.onChanged = { state -> rememberPlayback(state) }
+    }
+
+    val playback: StateFlow<Playback> = hub.playback
+
+    private val _music = MutableStateFlow(MusicState())
+    val music: StateFlow<MusicState> = _music.asStateFlow()
+
+    /** The last thing written down, so a pause does not rewrite the file. */
+    private var lastRemembered = ""
+
+    private var musicLoaded = false
+
+    /** Reads the library back. Cheap; the registry is one small JSON file. */
+    fun refreshMusic() {
+        viewModelScope.launch {
+            val reply = engine.musicLibrary()
+            if (!reply.has("tracks")) return@launch
+
+            val tracks = reply.optJSONArray("tracks").rows().map(::readTrack)
+            val playlists = reply.optJSONArray("playlists").rows().map { row ->
+                MusicPlaylist(
+                    id = row.optString("id"),
+                    name = row.optString("name"),
+                    trackIds = row.optJSONArray("tracks").strings(),
+                    count = row.optInt("count"),
+                    duration = row.optLong("duration"),
+                    bytes = row.optLong("bytes"),
+                    preview = row.optString("preview"),
+                )
+            }
+            val limits = reply.optJSONObject("limits") ?: JSONObject()
+            val open = _music.value.openPlaylist
+                .takeIf { id -> playlists.any { it.id == id } }
+                .orEmpty()
+
+            _music.value = _music.value.copy(
+                tracks = tracks,
+                playlists = playlists,
+                openPlaylist = open,
+                bytes = reply.optLong("bytes"),
+                missing = reply.optInt("missing"),
+                maxTracks = limits.optInt("tracks", 2000),
+                maxPlaylists = limits.optInt("playlists", 200),
+            )
+
+            // Once per run: put back the loop and shuffle somebody chose, and
+            // connect to the player so the notification's buttons and this
+            // screen agree with each other from the first frame.
+            if (!musicLoaded && tracks.isNotEmpty()) {
+                musicLoaded = true
+                val state = reply.optJSONObject("state") ?: JSONObject()
+                // Only once there is music to play: binding the media service
+                // on a phone with an empty library would put a player in the
+                // notification shade of somebody who never opened this tab.
+                hub.connect()
+                hub.setLoop(state.optString("loop", "off"))
+                hub.setShuffle(state.optBoolean("shuffle"))
+            }
+        }
+    }
+
+    private fun readTrack(row: JSONObject) = MusicTrack(
+        id = row.optString("id"),
+        title = row.optString("title"),
+        artist = row.optString("artist"),
+        file = row.optString("file"),
+        bytes = row.optLong("bytes"),
+        duration = row.optLong("duration"),
+        added = row.optLong("added"),
+        video = row.optBoolean("video"),
+        missing = row.optBoolean("missing"),
+    )
+
+    /**
+     * Writes down the loop, the shuffle and what is playing - but only when
+     * one of them actually changed.
+     *
+     * The player reports an event for every pause and every resume, and
+     * rewriting the library on each one would be a file write per tap.
+     */
+    private fun rememberPlayback(state: Playback) {
+        val key = "${state.loop}|${state.shuffle}|${state.trackId}"
+        if (key == lastRemembered) return
+        lastRemembered = key
+        viewModelScope.launch {
+            engine.rememberMusic(
+                state.loop,
+                state.shuffle,
+                state.trackId,
+                _music.value.openPlaylist,
+            )
+        }
+    }
+
+    private fun musicBusy(what: String) {
+        _music.value = _music.value.copy(busy = what)
+    }
+
+    /**
+     * Runs one library action and reads the library back afterwards.
+     *
+     * Same shape as the Pages tab's, and for the same reason: every one of
+     * these ends by saying what happened and refreshing the list.
+     */
+    private fun musicAction(busy: String, success: (JSONObject) -> String,
+                            block: suspend () -> JSONObject) {
+        viewModelScope.launch {
+            musicBusy(busy)
+            val reply = block()
+            musicBusy("")
+            if (reply.optBoolean("ok")) {
+                val said = success(reply)
+                if (said.isNotEmpty()) showToast(said)
+            } else {
+                showToast(reply.optString("error", "That did not work."))
+            }
+            refreshMusic()
+        }
+    }
+
+    /**
+     * Copies picked files into the library, one at a time.
+     *
+     * Sequentially rather than at once: these are large files on a phone's
+     * flash, and three copies racing each other is slower than three in a row
+     * as well as being impossible to report progress for.
+     */
+    fun importMusic(uris: List<Uri>) {
+        if (uris.isEmpty()) return
+        if (!engineStatus.value.ready) {
+            // The library folder is decided while the interpreter starts, so
+            // there is nowhere to copy to before that has happened.
+            showToast("The interpreter is still starting - try again in a moment.")
+            return
+        }
+        viewModelScope.launch {
+            _music.value = _music.value.copy(importing = true)
+            var added = 0
+            var failed = ""
+            for ((index, uri) in uris.withIndex()) {
+                musicBusy("Importing ${index + 1} of ${uris.size}...")
+                val copied = MusicImport.copy(getApplication<Application>(), uri, engine.musicFolder)
+                    .getOrElse { error ->
+                        failed = error.message ?: "that file could not be copied"
+                        DebugLog.warn(TAG_VIEW, "an import failed", failed)
+                        null
+                    } ?: continue
+
+                val reply = engine.adoptTrack(
+                    copied.file.absolutePath,
+                    copied.title,
+                    copied.artist,
+                    copied.duration,
+                )
+                if (reply.optBoolean("ok")) {
+                    added += 1
+                } else {
+                    // The library would not take it, so the copy is dead
+                    // weight: nothing can ever reach it again.
+                    copied.file.delete()
+                    failed = reply.optString("error", "that file was not taken")
+                }
+            }
+            musicBusy("")
+            _music.value = _music.value.copy(importing = false)
+            showToast(
+                when {
+                    added > 0 && failed.isEmpty() -> "Added $added"
+                    added > 0 -> "Added $added, and one did not: $failed"
+                    failed.isNotEmpty() -> failed.replaceFirstChar { it.uppercase() }
+                    else -> "Nothing was added."
+                },
+            )
+            refreshMusic()
+        }
+    }
+
+    /** Plays the list the screen is showing, starting at [track]. */
+    fun playTrack(track: MusicTrack) {
+        if (track.missing) {
+            showToast("That file is not on the phone any more.")
+            return
+        }
+        val visible = _music.value.visible
+        val index = visible.indexOfFirst { it.id == track.id }.coerceAtLeast(0)
+        hub.play(visible, index, _music.value.current?.name ?: "Everything")
+    }
+
+    /** Plays a playlist from the top, and opens it while it is at it. */
+    fun playPlaylist(playlist: MusicPlaylist) {
+        val byId = _music.value.tracks.associateBy { it.id }
+        val tracks = playlist.trackIds.mapNotNull { byId[it] }.filterNot { it.missing }
+        if (tracks.isEmpty()) {
+            showToast("There is nothing in ${playlist.name} to play.")
+            return
+        }
+        _music.value = _music.value.copy(openPlaylist = playlist.id)
+        hub.play(tracks, 0, playlist.name)
+    }
+
+    /**
+     * Plays the whole library, whatever the screen happens to be showing.
+     *
+     * The button is on the library card rather than the playlist one, so it
+     * means the library: a playlist has its own play button, and having both
+     * do the same thing would leave no way to say "all of it".
+     */
+    fun playEverything() {
+        val tracks = _music.value.tracks.filterNot { it.missing }
+        if (tracks.isEmpty()) {
+            showToast("Import something first.")
+            return
+        }
+        hub.play(tracks, 0, "Everything")
+    }
+
+    fun togglePlayback() = hub.toggle()
+
+    fun skipNext() = hub.next()
+
+    fun skipPrevious() = hub.previous()
+
+    fun seekMusic(millis: Long) = hub.seekTo(millis)
+
+    fun stopMusic() = hub.stop()
+
+    /** Off, then all, then one, then off again - one button, three states. */
+    fun cycleLoop() {
+        hub.setLoop(
+            when (playback.value.loop) {
+                "off" -> "all"
+                "all" -> "one"
+                else -> "off"
+            },
+        )
+    }
+
+    fun toggleShuffle() = hub.setShuffle(!playback.value.shuffle)
+
+    fun openPlaylist(id: String) {
+        _music.value = _music.value.copy(openPlaylist = id)
+    }
+
+    fun renameTrack(id: String, title: String) {
+        musicAction("Renaming...", { "Renamed to $title" }) { engine.renameTrack(id, title) }
+    }
+
+    fun removeTrack(track: MusicTrack) {
+        // Out of the player first: deleting the file under a playing track is
+        // how a music app ends up making a noise it cannot stop.
+        hub.forget(track.id)
+        musicAction("Deleting...", { reply ->
+            "${reply.optString("title", "It")} is gone"
+        }) { engine.removeTrack(track.id) }
+    }
+
+    fun createPlaylist(name: String) {
+        musicAction("Making $name...", { "$name is ready" }) { engine.createPlaylist(name) }
+    }
+
+    fun renamePlaylist(id: String, name: String) {
+        musicAction("Renaming...", { "Renamed to $name" }) { engine.renamePlaylist(id, name) }
+    }
+
+    fun removePlaylist(playlist: MusicPlaylist) {
+        if (_music.value.openPlaylist == playlist.id) {
+            _music.value = _music.value.copy(openPlaylist = "")
+        }
+        musicAction("Removing...", { "${playlist.name} is gone - the tracks stayed" }) {
+            engine.removePlaylist(playlist.id)
+        }
+    }
+
+    fun addToPlaylist(playlistId: String, trackId: String) {
+        musicAction("Adding...", { reply ->
+            if (reply.optInt("added") > 0) "Added" else "It is already in there"
+        }) { engine.addToPlaylist(playlistId, trackId) }
+    }
+
+    fun removeFromPlaylist(playlistId: String, trackId: String) {
+        musicAction("Removing...", { "Taken out" }) {
+            engine.removeFromPlaylist(playlistId, trackId)
+        }
+    }
+
+    fun moveInPlaylist(playlistId: String, trackId: String, delta: Int) {
+        musicAction("", { "" }) { engine.moveInPlaylist(playlistId, trackId, delta) }
+    }
+
+    /** Clears out rows with no file and files with no row. */
+    fun tidyMusic() {
+        musicAction("Tidying...", { reply ->
+            val dropped = reply.optInt("dropped")
+            val orphans = reply.optInt("orphans")
+            if (dropped == 0 && orphans == 0) {
+                "Nothing to tidy"
+            } else {
+                "Dropped $dropped, freed ${orphans} stray file(s)"
+            }
+        }) { engine.tidyMusic() }
     }
 
     // ---- Cloudflare --------------------------------------------------------

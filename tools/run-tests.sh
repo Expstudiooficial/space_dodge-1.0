@@ -34,6 +34,10 @@ echo "== Pages, the tunnel and Cloudflare =="
 "$PYTHON" tools/test_pages.py
 
 echo
+echo "== The music library =="
+"$PYTHON" tools/test_music.py
+
+echo
 echo "== Plugins, doctor, preview, cloud, bundled =="
 "$PYTHON" tools/test_plugins.py
 "$PYTHON" tools/test_doctor.py

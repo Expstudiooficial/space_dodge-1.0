@@ -12,7 +12,7 @@ already has. Another twenty file types are edited, highlighted, previewed and
 served, and music, video, images, PDFs, archives and fonts are brought in from
 the phone, kept, served and played.
 
-Version 2.5.1. Kotlin and Jetpack Compose for the app, JavaScript for the console
+Version 2.5.2. Kotlin and Jetpack Compose for the app, JavaScript for the console
 and editor.
 
 ---
@@ -77,6 +77,16 @@ puts a random public address in front of it through a tunnel, so anyone
 anywhere can open it while the app is running. And with a Cloudflare account
 connected, a page deploys to **Cloudflare Pages** instead - a real `pages.dev`
 address that stays up when the phone is off, and takes your own domain.
+
+**Music** — your own audio, kept in the app and playing while you work. Add
+anything on the phone, video files included: those are taken for their sound
+and their picture is never decoded. Playlists you name, rename, reorder and
+delete; loop off, all or one; shuffle. It keeps playing when you switch tabs,
+when you leave the app and when the phone is locked, and the notification, the
+lock screen and the quick-settings media chip all have the controls - Android
+draws those, because the player is a real media session rather than a sound
+this app is making. Everything is a copy in private storage, so it works with
+no signal and deleting a track never touches what you imported it from.
 
 **Servers** — a launch form that runs whatever you point it at: a Python
 script, a C, Go or Rust program, a JavaScript file, an HTML page (whose folder
@@ -173,7 +183,7 @@ signal, no answer - says nothing at all.
 ## Just want to try it
 
 A ready-to-install APK is in [`dist/`](dist/) - download
-[`PyCmd-2.5.1.apk`](dist/PyCmd-2.5.1.apk), open it on the phone, and allow the
+[`PyCmd-2.5.2.apk`](dist/PyCmd-2.5.2.apk), open it on the phone, and allow the
 install when Android asks. It is a release build: minified by R8, not
 debuggable, and about 18 MB rather than the 35 MB the debug builds were. It is
 signed with the key in [`keystore/`](keystore/) - the standard Android debug
@@ -248,9 +258,15 @@ tools/run-tests.sh
 That runs four things: the embedded Python modules against a stand-in for the
 Kotlin bridge (execution, error reporting, stdin, interrupt-and-recover,
 completions, a real install/import/uninstall round trip against PyPI and a real
-HTTP server, byte-range requests for the media player), the published update
-manifest against the APK actually sitting in `dist/`, the WebView JavaScript
-under Node against a stub document, and a debug build with Android Lint.
+HTTP server, byte-range requests for the media player, the pages registry and
+the music library), the published update manifest against the APK actually
+sitting in `dist/`, the WebView JavaScript under Node against a stub document,
+and both a debug and a release build with Android Lint.
+
+Playback is the part no suite here reaches: the media session, its notification
+and the lock-screen controls are Android's, and they need a phone. What is
+checkable off a device - what is in the library, what order it plays in, what
+survives a restart - is `tools/test_music.py`.
 
 The suites can also be run on their own:
 
@@ -386,6 +402,10 @@ app/src/main/
     python/
       PythonEngine.kt        the interpreter bridge and its threading
       ServerService.kt       foreground service that keeps servers alive
+    music/
+      MusicService.kt        the media session, and why sound outlives the app
+      MusicHub.kt            the controller the screens press play on
+      MusicImport.kt         copying a picked file into the library
     ui/                      Compose screens, theme, WebView hosting, icons
     util/Workspace.kt        file operations, all confined to the workspace
     util/DebugLog.kt         the process-wide record behind the debug console
@@ -394,6 +414,7 @@ app/src/main/
     pycmd_runtime.py         execution, streams, interrupt, completions
     pycmd_packages.py        on-device wheel installs
     pycmd_servers.py         background listeners
+    pycmd_music.py           the music library: tracks, playlists, order
   assets/
     web/                     console and editor pages, ANSI and highlighting
     examples/                scripts seeded into the workspace on first launch

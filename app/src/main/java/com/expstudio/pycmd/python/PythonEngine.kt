@@ -155,6 +155,7 @@ object PythonEngine {
     private lateinit var pages: PyObject
     private lateinit var tunnel: PyObject
     private lateinit var cloudflare: PyObject
+    private lateinit var music: PyObject
 
     private lateinit var appContext: Context
     private lateinit var workspaceDir: File
@@ -163,6 +164,11 @@ object PythonEngine {
 
     /** Where downloads land, for the UI to describe what is already there. */
     val downloadsFolder: File get() = downloadsDir
+
+    private lateinit var musicTracksDir: File
+
+    /** Where an imported track is copied to before the library adopts it. */
+    val musicFolder: File get() = musicTracksDir
     private lateinit var pluginsDir: File
 
     private fun queueFor(channel: String): LinkedBlockingQueue<String> =
@@ -299,6 +305,7 @@ object PythonEngine {
             pages = python.getModule("pycmd_pages")
             tunnel = python.getModule("pycmd_tunnel")
             cloudflare = python.getModule("pycmd_cloudflare")
+            music = python.getModule("pycmd_music")
 
             val version = runtime.callAttr(
                 "configure",
@@ -319,6 +326,11 @@ object PythonEngine {
             val pagesDir = File(appContext.filesDir, "pages").apply { mkdirs() }
             pages.callAttr("configure", pagesDir.absolutePath)
             cloudflare.callAttr("configure_storage", cloudDir.absolutePath)
+            // The music library is app storage too, and for a third reason:
+            // it is the one folder here holding files that are not the user's
+            // code, and nobody wants their album in a workspace export.
+            val musicDir = File(appContext.filesDir, "music").apply { mkdirs() }
+            musicTracksDir = File(music.callAttr("configure", musicDir.absolutePath).toString())
             pluginsDir = File(appContext.filesDir, "plugins").apply { mkdirs() }
             pluginRuntime.callAttr(
                 "configure", pluginsDir.absolutePath, workspaceDir.absolutePath, pluginHost,
@@ -652,6 +664,78 @@ object PythonEngine {
     /** Remembers where a page was last deployed, so its card can link to it. */
     suspend fun notePageDeployment(id: String, url: String, project: String): JSONObject =
         pageCall("note_deployment", id, url, project)
+
+    // ---- Music: the library, not the playing ------------------------------
+
+    /**
+     * Everything the Music tab draws: tracks, playlists and what was last on.
+     *
+     * Playback itself never comes through here - it is a media session in
+     * Kotlin, because only Kotlin can keep sound going with the app closed.
+     * This is the library that decides what there is to play.
+     */
+    suspend fun musicLibrary(): JSONObject = withContext(controlDispatcher) {
+        if (!_status.value.ready) return@withContext JSONObject()
+        runCatching { JSONObject(music.callAttr("library").toString()) }
+            .getOrDefault(JSONObject())
+    }
+
+    /** The tracks of one playlist in order, or the whole library for "". */
+    suspend fun musicQueue(playlistId: String): JSONObject =
+        musicCall("queue", playlistId)
+
+    private suspend fun musicCall(name: String, vararg args: Any?): JSONObject =
+        withContext(controlDispatcher) {
+            if (!_status.value.ready) {
+                return@withContext failed("The interpreter is not ready yet.")
+            }
+            runCatching {
+                JSONObject(
+                    when (args.size) {
+                        0 -> music.callAttr(name)
+                        1 -> music.callAttr(name, args[0])
+                        2 -> music.callAttr(name, args[0], args[1])
+                        3 -> music.callAttr(name, args[0], args[1], args[2])
+                        else -> music.callAttr(name, args[0], args[1], args[2], args[3])
+                    }.toString(),
+                )
+            }.getOrElse { failed(it.message.orEmpty()) }
+        }
+
+    suspend fun adoptTrack(path: String, title: String, artist: String, duration: Long):
+        JSONObject = musicCall("adopt", path, title, artist, duration)
+
+    suspend fun renameTrack(id: String, title: String): JSONObject =
+        musicCall("rename_track", id, title)
+
+    suspend fun removeTrack(id: String): JSONObject = musicCall("remove_track", id, true)
+
+    suspend fun createPlaylist(name: String): JSONObject = musicCall("create_playlist", name)
+
+    suspend fun renamePlaylist(id: String, name: String): JSONObject =
+        musicCall("rename_playlist", id, name)
+
+    suspend fun removePlaylist(id: String): JSONObject = musicCall("remove_playlist", id)
+
+    suspend fun addToPlaylist(playlistId: String, trackId: String): JSONObject =
+        musicCall("add_to_playlist", playlistId, trackId)
+
+    suspend fun removeFromPlaylist(playlistId: String, trackId: String): JSONObject =
+        musicCall("remove_from_playlist", playlistId, trackId)
+
+    suspend fun moveInPlaylist(playlistId: String, trackId: String, delta: Int): JSONObject =
+        musicCall("move_in_playlist", playlistId, trackId, delta)
+
+    /** Keeps the loop and shuffle choice, and what was playing. */
+    suspend fun rememberMusic(
+        loop: String,
+        shuffle: Boolean,
+        trackId: String,
+        playlistId: String,
+    ): JSONObject = musicCall("remember", loop, shuffle, trackId, playlistId)
+
+    /** Drops rows whose file has gone, and files no row points at. */
+    suspend fun tidyMusic(): JSONObject = musicCall("tidy")
 
     // ---- Cloudflare -------------------------------------------------------
 

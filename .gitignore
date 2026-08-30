@@ -1,6 +1,7 @@
 # Build output
 build/
 .gradle/
+.kotlin/
 *.apk
 
 # ...except the prebuilt debug APK that ships with the repo.

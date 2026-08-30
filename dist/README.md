@@ -1,17 +1,63 @@
 # Prebuilt APK
 
-`PyCmd-2.5.1.apk` — ready to install, nothing else needed.
+`PyCmd-2.5.2.apk` — ready to install, nothing else needed.
 
 | | |
 |---|---|
 | Package | `com.expstudio.pycmd.debug` |
-| Version | 2.5.1 |
-| Size | 17 MB |
+| Version | 2.5.2 |
+| Size | 18 MB |
 | Signed with | the key in [`keystore/`](../keystore/), committed so updates can install over it |
 | Works on | Android 7.0 (API 24) and newer, **arm64-v8a** (every phone since about 2016) |
 | SHA-256 | see [SHA256SUMS.txt](SHA256SUMS.txt) |
 
-## What is new in 2.5.1
+## What is new in 2.5.2
+
+**Music: your own audio, playing while you work.** A new tab in the app itself.
+Import anything on the phone - MP3, M4A, FLAC, OGG, WAV, and video files too -
+and it is copied into PyCmd, so the library works with no signal, no account and
+no permission to read the rest of your storage. Deleting a track deletes the
+copy; whatever you imported it from is never touched.
+
+A video file is taken for its sound. `.mp4`, `.mkv`, `.webm`: the audio plays
+and the picture is never decoded, because people have video files they want to
+hear and transcoding on a phone to get at the sound is not a thing worth doing.
+
+**Playlists, ordered by you.** Make one, name it, rename it, delete it; add and
+remove tracks; move a track up or down, because the order is the whole point of
+having made the playlist. Deleting a playlist keeps the tracks; deleting a track
+takes it out of every playlist it was in.
+
+**Loop off, all or one. Shuffle on or off.** Loop has three states rather than
+two, and next means next: with loop set to *one*, pressing next still goes to a
+different song rather than replaying this one, which is what the player would
+have done left to itself.
+
+**It keeps playing.** Switch tabs, leave the app, lock the phone - it keeps
+playing, and the notification, the lock screen and the quick-settings media chip
+all have play, pause, previous and next. None of that is drawn by PyCmd: the
+player is a real media session in a service, so Android draws the rest, a
+headset button reaches it, and a car head unit does too. A phone call pauses it
+and it comes back afterwards; unplugging the headphones pauses rather than
+playing it out loud to the room.
+
+**The fork guide's download button is where the guide says it is.** It said "the
+end of this guide in the app has a Download the source button" and there was no
+button there - the button was on the Guides list, one screen back. Now the guide
+ends with a real one, and the sentence describes what is actually on the screen.
+Links from one shipped guide to another work too: those used to be a 404,
+because a guide is rendered from memory and has no folder behind it to serve a
+sibling from.
+
+**Verified the way everything here is verified:** the Python suites, the
+JavaScript suites under Node, the published manifest check, and a release build
+with R8 and Lint. There is a new suite for the music library - importing,
+naming, playlists, ordering, deleting a track out from under a playlist, and a
+registry that survives being reloaded and being corrupted. Playback itself needs
+a phone: no emulator can run here, so the media session, the notification and
+the lock-screen controls are the parts a person has to look at.
+
+## What was new in 2.5.1
 
 **Pages: websites that live in the app.** A new tab in the app itself, not a
 plugin. Name one, pick what it starts as - a page, a Python site with Flask
@@ -646,7 +692,7 @@ every tab with things to paste in and try.
 ## Installing over USB
 
 ```bash
-adb install -r dist/PyCmd-2.5.1.apk
+adb install -r dist/PyCmd-2.5.2.apk
 ```
 
 ## Checking the download
@@ -667,7 +713,7 @@ python3 tools/make_latest.py            # checks the one that is there
 | Field | What it is |
 |---|---|
 | `versionCode` | The build number. The app offers an update only when this is higher than its own. |
-| `versionName` | What the card shows: `2.5.1`. |
+| `versionName` | What the card shows: `2.5.2`. |
 | `package` | Which app this is for. A mismatch is refused before the download starts. |
 | `url` | An `https://` address of the APK. Plain `http` is refused. |
 | `sha256` | The APK's fingerprint. The download is checked against it and thrown away if it differs. |

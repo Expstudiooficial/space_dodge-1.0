@@ -602,6 +602,53 @@ button.
 
 ---
 
+## 11d. Music — something to listen to while you work
+
+**More → Music.** Press **Add music** and pick anything on the phone: MP3,
+M4A, FLAC, OGG, WAV, and video files too. Everything is copied into the app, so
+the library works with no signal, no account and no permission to read the rest
+of your storage.
+
+A video file is taken for its sound. `.mp4`, `.mkv`, `.webm` - the audio plays
+and the picture is never decoded. It is a music player, not a video player.
+
+| What | Where |
+|---|---|
+| Play a track | Tap it, or its play button |
+| Play everything | **Play all**, top right of the library card |
+| Loop and shuffle | The two outer buttons under the controls |
+| Rename, delete, add to a playlist | The chevron on the right of a track |
+| Make a playlist | **New playlist**, then add tracks from their chevron |
+| Reorder a playlist | Open it, then the up and down arrows on a track |
+
+Loop has three states, not two: **off**, **all** (the queue repeats) and **one**
+(this track repeats). The icon changes; so does its description.
+
+### It keeps playing
+
+Switch to the Console and write code - it keeps playing. Press the home button
+- it keeps playing. Lock the phone - it keeps playing, and the lock screen has
+the controls. Pull down the shade and the quick-settings media chip is there
+with play, pause, previous and next. None of that is drawn by PyCmd: the player
+lives in a media session in a service, and Android draws the rest.
+
+Two things follow from that, both worth knowing:
+
+- **Stopping means stopping.** Pausing leaves the notification up so you can
+  start again. **Stop** clears the queue, and the notification goes with it.
+- **A call wins.** Playback pauses for a phone call or a navigation prompt and
+  comes back afterwards, and unplugging headphones pauses rather than playing
+  it out loud to the room.
+
+Deleting a track deletes the copy inside PyCmd. Whatever you imported it from
+is untouched. The library is not in the workspace and is not part of the backup
+PyCmd takes, so a workspace export never carries somebody's album. If a file
+goes missing another way - a delete that half worked, storage cleared under the
+app - the row says so, and **Tidy up** clears those rows and any stray files
+nothing points at.
+
+---
+
 ## 12. Updating without losing anything
 
 **More → System → Updates → Check for updates.**
@@ -665,8 +712,9 @@ key is refused with an explanation rather than a failed install.
 **More → Guides → Forking PyCmd** is the walkthrough: what the code is made of,
 how to build it, what not to change, and how to publish updates for a fork of
 your own - the update address in System is editable precisely so a fork can
-serve its own `latest.json`. At the end of that screen, **Download the source**
-pulls the whole repository onto the phone as a zip.
+serve its own `latest.json`. **Download the source** pulls the whole repository
+onto the phone as a zip - the button is at the end of the fork guide itself,
+and again at the bottom of the Guides screen.
 
 Forks are welcome. Keep PyCmd's name and credit where they are, and do not
 present the original as a copy of your fork. Beyond that, change what you like.

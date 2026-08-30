@@ -29,8 +29,8 @@ android {
         applicationId = "com.expstudio.pycmd"
         minSdk = 24
         targetSdk = 35
-        versionCode = 15
-        versionName = "2.5.1"
+        versionCode = 16
+        versionName = "2.5.2"
 
         ndk {
             abiFilters += targetAbis
@@ -196,6 +196,9 @@ dependencies {
     implementation(libs.androidx.datastore.preferences)
     implementation(libs.androidx.documentfile)
     implementation(libs.androidx.work.runtime.ktx)
+    // Playback, and the media session that puts it on the lock screen.
+    implementation(libs.androidx.media3.exoplayer)
+    implementation(libs.androidx.media3.session)
     implementation(libs.kotlinx.coroutines.android)
 
     debugImplementation(libs.androidx.ui.tooling)

@@ -67,6 +67,8 @@ fun PagesScreen(
     onDeploy: (PageProject) -> Unit,
     onSetHost: (PageProject, String) -> Unit,
     modifier: Modifier = Modifier,
+    /** Sections plugins have added to this screen; empty when none are on. */
+    pluginSections: @Composable () -> Unit = {},
 ) {
     var newName by remember { mutableStateOf("") }
     var template by remember(state.templates) {
@@ -218,6 +220,8 @@ fun PagesScreen(
                 )
             }
         }
+
+        item { pluginSections() }
 
         item { SectionTitle("Cloudflare") }
         item {
@@ -620,10 +624,4 @@ private fun RemovePageDialog(
             androidx.compose.material3.TextButton(onClick = onDismiss) { Text("Cancel") }
         },
     )
-}
-
-private fun readableSize(bytes: Long): String = when {
-    bytes >= 1024L * 1024 -> "%.1f MB".format(bytes / 1024.0 / 1024.0)
-    bytes >= 1024 -> "${bytes / 1024} KB"
-    else -> "$bytes B"
 }

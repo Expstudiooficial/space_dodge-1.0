@@ -155,7 +155,7 @@ server tool belongs in Servers, not next to it.
 
 | Field | What it is |
 |---|---|
-| `tab` | Which screen. One of `files`, `servers`, `packages`, `downloads`, `plugins`, `system`, `debug`, `guides`. A name that is not on the list is refused at install time rather than silently never rendering. |
+| `tab` | Which screen. One of `files`, `servers`, `packages`, `downloads`, `plugins`, `system`, `debug`, `guides`, `pages`, `music`. A name that is not on the list is refused at install time rather than silently never rendering. |
 | `panel` | The HTML file for this section. Defaults to the plugin's `panel`. |
 | `title`, `description` | The card's heading and its line of explanation. |
 | `height` | `short` (220dp), `medium` (400dp) or `tall` (620dp). |
@@ -782,7 +782,8 @@ plugin.json / PLUGIN keys:
   panel        optional HTML file; having one gives the plugin an Open button
   extends      optional, puts a card of yours inside one of the app's own
                screens. A list of:
-               {"tab": "files|servers|packages|downloads|plugins|system|debug|guides",
+               {"tab": "files|servers|packages|downloads|plugins|system|debug|
+                        guides|pages|music",
                 "title": "...", "description": "...", "panel": "section.html",
                 "height": "short|medium|tall", "icon": "icon.png", "open": false}
   settings     optional, controls the app draws in the plugin list. A list of
@@ -827,8 +828,9 @@ THE API
   ASKING THE APP (requests; they do not wait, and return whether delivered)
   api.open_file(path) | api.run_file(path) | api.preview(path)
   api.serve(path, port=0) | api.new_file(name, text) | api.open_panel(panel="")
-  api.go_to("console|editor|files|servers|packages|downloads|plugins|system|debug|guides|more")
-  api.refresh("files|servers|downloads|packages|plugins")
+  api.go_to("console|editor|files|servers|packages|downloads|plugins|system|
+             debug|guides|pages|music|more")
+  api.refresh("files|servers|downloads|packages|plugins|pages|music")
 
   @api.command("name", help="...")        -> console command; handler(argument: str)
                                              argument is everything after the

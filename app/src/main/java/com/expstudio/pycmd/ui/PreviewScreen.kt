@@ -32,6 +32,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -63,8 +64,12 @@ fun PreviewScreen(
     onClose: () -> Unit,
     onReload: () -> Unit,
     modifier: Modifier = Modifier,
+    onLinkOut: (String) -> Unit = {},
 ) {
     val context = LocalContext.current
+    // The clients below are built once, inside an effect, so they would hold
+    // whichever lambda was current then. This keeps them pointed at the live one.
+    val linkOut by rememberUpdatedState(onLinkOut)
     var progress by remember { mutableIntStateOf(0) }
     var currentUrl by remember(page.url) { mutableStateOf(page.url) }
     var problems by remember(page.url) { mutableIntStateOf(0) }
@@ -143,12 +148,22 @@ fun PreviewScreen(
                 val target = request?.url?.toString().orEmpty()
                 // Inside the previewed site, follow the link - that is what
                 // makes a multi-page site previewable at all. Anywhere else,
-                // refuse: this is a preview, not a browser.
+                // hand it back to the app: a `pycmd://` link is a button the
+                // app answers, and any other outside link is something the
+                // app decides about, not something a preview quietly loads.
                 if (page.origin.isNotEmpty() && target.startsWith(page.origin)) {
+                    // A shipped guide is rendered from memory, so there is no
+                    // folder behind it and a link to a sibling guide would be
+                    // a 404. Hand those back; the app has the guide in assets.
+                    val path = target.removePrefix(page.origin).substringBefore('?')
+                    if (page.baseDirectory.isEmpty() && path.endsWith(".md")) {
+                        linkOut(target)
+                        return true
+                    }
                     currentUrl = target
                     return false
                 }
-                DebugLog.info("preview", "blocked a link out of the preview", target)
+                if (target.isNotEmpty()) linkOut(target)
                 return true
             }
 
@@ -191,6 +206,14 @@ fun PreviewScreen(
                     )
                 }
             }
+        }
+    }
+
+    LaunchedEffect(webView) {
+        // A WebView does not download anything by itself: without this, a link
+        // the server answers with an attachment is a tap that does nothing.
+        webView.setDownloadListener { url, _, _, _, _ ->
+            if (url.isNotEmpty()) linkOut(url)
         }
     }
 

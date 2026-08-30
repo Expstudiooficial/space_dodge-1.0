@@ -1,0 +1,227 @@
+#!/usr/bin/env python3
+"""Checks the music library: tracks, playlists, order, and what survives.
+
+Playback is Kotlin and needs a phone, so none of it is here. Everything that
+decides *what* plays and *in what order* is Python, and all of that is
+checkable on a laptop: importing, naming, playlists, moving a track up,
+deleting one out from under a playlist, and a registry that survives being
+reloaded from disk.
+
+The audio is not real audio - a few bytes with the right extension. Nothing in
+this module opens a file to decode it, and a test that needed a real MP3 to
+check that a rename works would be testing the wrong thing.
+"""
+
+from __future__ import annotations
+
+import os
+import sys
+import tempfile
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.join(ROOT, "app", "src", "main", "python"))
+
+import pycmd_music  # noqa: E402
+
+FAILURES = []
+REAL = sys.__stdout__
+
+
+def say(text=""):
+    REAL.write(str(text) + "\n")
+    REAL.flush()
+
+
+def check(name, condition, detail=""):
+    if condition:
+        say(f"  PASS  {name}")
+    else:
+        FAILURES.append(name)
+        say(f"  FAIL  {name}  {detail}")
+
+
+root = tempfile.mkdtemp(prefix="pycmd-music-")
+tracks_folder = pycmd_music.configure(root)
+
+
+def put(name: str, size: int = 2048) -> str:
+    """Puts a file where the app would have copied one, and hands back a path."""
+    path = os.path.join(tracks_folder, name)
+    with open(path, "wb") as handle:
+        handle.write(b"\0" * size)
+    return path
+
+
+say("== importing ==")
+first = pycmd_music.adopt(put("one.mp3"), "First Song", "Somebody", 185000)
+check("a track is adopted", first.get("ok") and first.get("id"), first)
+
+again = pycmd_music.adopt(os.path.join(tracks_folder, "one.mp3"), "First Song")
+check("the same file twice is the same track", again.get("already") is True, again)
+check("and the library holds one row", len(pycmd_music.library()["tracks"]) == 1)
+
+second = pycmd_music.adopt(put("two.m4a"), "", "", 0)
+check("a track with no title is named after its file",
+      pycmd_music.library()["tracks"][1]["title"] == "two",
+      pycmd_music.library()["tracks"][1])
+
+video = pycmd_music.adopt(put("clip.mp4"), "A Video", "", 60000)
+check("a video file is taken", video.get("ok"), video)
+check("and is marked as one",
+      [t for t in pycmd_music.library()["tracks"] if t["id"] == video["id"]][0]["video"] is True)
+
+outside = os.path.join(root, "elsewhere.mp3")
+with open(outside, "wb") as handle:
+    handle.write(b"\0")
+refused = pycmd_music.adopt(outside, "Nope")
+check("a file outside the music folder is refused",
+      not refused.get("ok") and "music folder" in refused.get("error", ""), refused)
+check("and it is still on disk", os.path.isfile(outside))
+
+wrong = pycmd_music.adopt(put("notes.txt"), "Notes")
+check("a file that is not audio or video is refused",
+      not wrong.get("ok") and "not audio" in wrong.get("error", ""), wrong)
+
+missing = pycmd_music.adopt(os.path.join(tracks_folder, "ghost.mp3"), "Ghost")
+check("a file that is not there is refused", not missing.get("ok"), missing)
+
+say()
+say("== names ==")
+renamed = pycmd_music.rename_track(second["id"], "Second Song", "Someone Else")
+check("a track can be renamed", renamed.get("ok") and renamed["title"] == "Second Song", renamed)
+blank = pycmd_music.rename_track(second["id"], "   ")
+check("but not to nothing", not blank.get("ok"), blank)
+
+nasty = pycmd_music.rename_track(second["id"], "../../etc/passwd\n")
+check("and a name cannot carry a path or a newline",
+      nasty.get("ok") and "/" not in nasty["title"] and "\n" not in nasty["title"], nasty)
+
+say()
+say("== playlists ==")
+made = pycmd_music.create_playlist("Working")
+check("a playlist is made", made.get("ok") and made.get("id"), made)
+check("a playlist needs a name", not pycmd_music.create_playlist("  ").get("ok"))
+
+added = pycmd_music.add_to_playlist(made["id"], [first["id"], second["id"], video["id"]])
+check("tracks go into it", added.get("added") == 3, added)
+twice = pycmd_music.add_to_playlist(made["id"], [first["id"]])
+check("the same track does not go in twice", twice.get("added") == 0, twice)
+unknown = pycmd_music.add_to_playlist(made["id"], ["track-nope"])
+check("and neither does one that does not exist", unknown.get("added") == 0, unknown)
+
+ordered = pycmd_music.queue(made["id"])
+check("the queue is in the order they were added",
+      [t["id"] for t in ordered["tracks"]] == [first["id"], second["id"], video["id"]], ordered)
+
+moved = pycmd_music.move_in_playlist(made["id"], video["id"], -2)
+check("a track can be moved up", moved.get("moved") is True, moved)
+check("and the queue follows",
+      [t["id"] for t in pycmd_music.queue(made["id"])["tracks"]] ==
+      [video["id"], first["id"], second["id"]])
+
+edge = pycmd_music.move_in_playlist(made["id"], video["id"], -5)
+check("moving past the top does nothing", edge.get("moved") is False, edge)
+edge_down = pycmd_music.move_in_playlist(made["id"], second["id"], 9)
+check("and neither does moving past the end", edge_down.get("moved") is False, edge_down)
+
+taken_out = pycmd_music.remove_from_playlist(made["id"], first["id"])
+check("a track leaves a playlist", taken_out.get("removed") == 1, taken_out)
+check("without leaving the library", len(pycmd_music.library()["tracks"]) == 3)
+
+renamed_list = pycmd_music.rename_playlist(made["id"], "Deep Work")
+check("a playlist can be renamed", renamed_list.get("name") == "Deep Work", renamed_list)
+check("renaming one that is not there fails",
+      not pycmd_music.rename_playlist("list-nope", "x").get("ok"))
+
+say()
+say("== the whole library as a queue ==")
+everything = pycmd_music.queue("")
+check("no playlist means everything", len(everything["tracks"]) == 3, everything)
+check("and it is named", everything.get("name") == "Everything", everything)
+check("a playlist that is not there says so", not pycmd_music.queue("list-nope").get("ok"))
+
+say()
+say("== deleting ==")
+gone = pycmd_music.remove_track(video["id"])
+check("a track is deleted", gone.get("ok") and gone.get("deleted") is True, gone)
+check("its file is gone too", not os.path.isfile(os.path.join(tracks_folder, "clip.mp4")))
+check("and it left the playlist with it",
+      video["id"] not in [t["id"] for t in pycmd_music.queue(made["id"])["tracks"]])
+
+kept = pycmd_music.adopt(put("keep.mp3"), "Keep This")
+pycmd_music.remove_track(kept["id"], False)
+check("a track can be removed without deleting the file",
+      os.path.isfile(os.path.join(tracks_folder, "keep.mp3")))
+
+say()
+say("== tidying ==")
+in_flight = put("still-copying.mp3")
+still_there = pycmd_music.tidy()
+check("a file written seconds ago is left alone - it may be an import in flight",
+      os.path.isfile(in_flight), still_there)
+os.utime(in_flight, (0, 0))
+os.utime(os.path.join(tracks_folder, "keep.mp3"), (0, 0))
+
+orphaned = pycmd_music.tidy()
+check("the file nothing points at is swept up", orphaned.get("orphans") >= 1, orphaned)
+check("and the one still in the library is not",
+      os.path.isfile(os.path.join(tracks_folder, "one.mp3")))
+
+os.remove(os.path.join(tracks_folder, "two.m4a"))
+shown = pycmd_music.library()
+row = [t for t in shown["tracks"] if t["id"] == second["id"]][0]
+check("a file that vanished is shown as missing", row["missing"] is True, row)
+check("and it is left out of the queue",
+      second["id"] not in [t["id"] for t in pycmd_music.queue("")["tracks"]])
+swept = pycmd_music.tidy()
+check("tidying drops its row", swept.get("dropped") == 1, swept)
+
+say()
+say("== what is remembered ==")
+pycmd_music.remember("all", True, first["id"], made["id"])
+state = pycmd_music.library()["state"]
+check("loop and shuffle are kept",
+      state["loop"] == "all" and state["shuffle"] is True, state)
+check("so is what was playing", state["track"] == first["id"], state)
+pycmd_music.remember("nonsense", False)
+check("a loop mode that is not one of the three falls back to off",
+      pycmd_music.library()["state"]["loop"] == "off")
+
+check("and the playlist that held it lost it too",
+      pycmd_music.library()["playlists"][0]["count"] == 0,
+      pycmd_music.library()["playlists"])
+
+# Put something back in it, so the reload below is checking that a playlist
+# with tracks survives rather than that an empty one does.
+pycmd_music.add_to_playlist(made["id"], [first["id"]])
+
+say()
+say("== reloaded from disk ==")
+reopened = pycmd_music.configure(root)
+check("the folder is the same", reopened == tracks_folder)
+after = pycmd_music.library()
+check("the tracks came back", len(after["tracks"]) == 1, after["tracks"])
+check("the playlist came back", len(after["playlists"]) == 1, after["playlists"])
+check("and it knows what is in it", after["playlists"][0]["count"] == 1, after["playlists"])
+check("the library reports its size", after["bytes"] > 0, after["bytes"])
+
+say()
+say("== a broken registry ==")
+with open(os.path.join(root, "library.json"), "w", encoding="utf-8") as handle:
+    handle.write("{not json at all")
+broken = pycmd_music.library()
+check("a corrupt registry reads as an empty library, not a crash",
+      broken["ok"] and broken["tracks"] == [], broken)
+recovered = pycmd_music.create_playlist("After The Storm")
+check("and it can be written again", recovered.get("ok"), recovered)
+
+say()
+say("== limits ==")
+check("the ceilings are published",
+      pycmd_music.library()["limits"]["tracks"] == pycmd_music.MAX_TRACKS)
+
+say()
+if FAILURES:
+    say(f"{len(FAILURES)} music checks failed")
+    sys.exit(1)
+say("all music checks passed")

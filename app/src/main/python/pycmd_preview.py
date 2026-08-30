@@ -33,6 +33,22 @@ h2 { font-size: 1.35em; border-bottom: 1px solid #1B2532; padding-bottom: 0.25em
 h3 { font-size: 1.13em; }
 p, ul, ol, blockquote, pre, table { margin: 0.75em 0; }
 a { color: #6FB3FF; }
+
+/* A link the app itself answers - `pycmd://something`. The preview hands it
+   back to Kotlin instead of loading it, so it is a button in a document, and
+   it has to look like one or nobody will press it. */
+a[href^="pycmd:"] {
+  display: inline-block;
+  margin: 4px 0 6px;
+  padding: 11px 20px;
+  border-radius: 12px;
+  background: #2E7DD1;
+  border: 1px solid #4E9BE8;
+  color: #FFFFFF;
+  font-weight: 600;
+  text-decoration: none;
+}
+a[href^="pycmd:"]:active { background: #245F9F; }
 code {
   font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
   font-size: 0.9em;

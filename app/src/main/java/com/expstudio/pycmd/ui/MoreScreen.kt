@@ -47,6 +47,8 @@ fun MoreScreen(
     errorCount: Int,
     /** How many pages are running, so More can say so without being opened. */
     pageCount: Int,
+    /** True while something is playing, so More shows it without being opened. */
+    musicPlaying: Boolean,
     onSelect: (Tab) -> Unit,
     /** True when a newer build is waiting in System, so the row says so. */
     updateWaiting: Boolean,
@@ -68,6 +70,15 @@ fun MoreScreen(
                 subtitle = "Websites that live in the app, switched on and off",
                 badge = if (pageCount > 0) pageCount.toString() else null,
                 onClick = { onSelect(Tab.PAGES) },
+            )
+        }
+        item {
+            DestinationRow(
+                icon = PyIcons.MusicNote,
+                title = "Music",
+                subtitle = "Your own audio, playing while you work - and with the app closed",
+                badge = if (musicPlaying) "on" else null,
+                onClick = { onSelect(Tab.MUSIC) },
             )
         }
         item {
