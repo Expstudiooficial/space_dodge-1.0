@@ -45,6 +45,8 @@ fun MoreScreen(
     downloadCount: Int,
     pluginCount: Int,
     errorCount: Int,
+    /** How many pages are running, so More can say so without being opened. */
+    pageCount: Int,
     onSelect: (Tab) -> Unit,
     /** True when a newer build is waiting in System, so the row says so. */
     updateWaiting: Boolean,
@@ -59,6 +61,15 @@ fun MoreScreen(
     ) {
         item { SectionTitle("More") }
 
+        item {
+            DestinationRow(
+                icon = PyIcons.Dns,
+                title = "Pages",
+                subtitle = "Websites that live in the app, switched on and off",
+                badge = if (pageCount > 0) pageCount.toString() else null,
+                onClick = { onSelect(Tab.PAGES) },
+            )
+        }
         item {
             DestinationRow(
                 icon = PyIcons.Inventory2,

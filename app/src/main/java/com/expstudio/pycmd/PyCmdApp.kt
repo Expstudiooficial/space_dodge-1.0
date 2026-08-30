@@ -8,6 +8,7 @@ import com.expstudio.pycmd.python.ServerService
 import com.expstudio.pycmd.plugins.CustomPlugins
 import com.expstudio.pycmd.plugins.Plugins
 import com.expstudio.pycmd.util.Branding
+import com.expstudio.pycmd.util.UpdateWorker
 import com.expstudio.pycmd.util.DebugLog
 
 class PyCmdApp : Application() {
@@ -24,6 +25,9 @@ class PyCmdApp : Application() {
         Plugins.init(this)
         CustomPlugins.init(this)
         createNotificationChannel()
+        // Put back on every start, because a force-stop cancels scheduled work
+        // and nothing else would ever notice.
+        UpdateWorker.sync(this)
     }
 
     private fun createNotificationChannel() {
@@ -36,6 +40,20 @@ class PyCmdApp : Application() {
             description = getString(R.string.server_channel_desc)
             setShowBadge(false)
         }
-        getSystemService(NotificationManager::class.java)?.createNotificationChannel(channel)
+        val manager = getSystemService(NotificationManager::class.java) ?: return
+        manager.createNotificationChannel(channel)
+
+        // A second channel, so somebody who wants the server notification but
+        // not update notices can have exactly that.
+        manager.createNotificationChannel(
+            NotificationChannel(
+                UpdateWorker.CHANNEL_ID,
+                getString(R.string.update_channel_name),
+                NotificationManager.IMPORTANCE_LOW,
+            ).apply {
+                description = getString(R.string.update_channel_desc)
+                setShowBadge(false)
+            },
+        )
     }
 }

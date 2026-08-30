@@ -546,6 +546,62 @@ exists. There is a panel for all of it under **Packages**.
 
 ---
 
+## 11c. Pages — a website that lives in the app
+
+**More → Pages.** Name one, pick what it starts as, press **Create page**:
+
+| Starts as | What you get |
+|---|---|
+| A page | `index.html`, `style.css`, `app.js` |
+| A Python site | `app.py` with Flask, `templates/`, `static/` |
+| A JSON API | `app.py` answering `/api`, and a page that calls it |
+| Empty | a folder, and whatever you put in it |
+
+Then **Run**. It is a real server: the card shows an address like
+`http://192.168.1.42:8631/`, and anyone on the same wifi can open it in a
+browser. **Stop** takes it down, **Rename** and **Delete** do what they say, and
+**Files** opens its folder so you can edit it in the editor like anything else.
+
+You can keep **70 pages** and run **25 at once**. Both numbers are on the card,
+and both are refusals rather than surprises: past them it says so instead of
+slowing your phone to a crawl.
+
+Anything the app can run, a page can be. With the built-in kit on, that is
+Python, HTML, CSS, JavaScript, C, Go, Rust and the rest - a page is just a
+folder, and the Servers tab's rules decide what running it means: an `app.py`
+that imports Flask is started, an `index.html` is served, a single runnable
+file is run.
+
+### Share — an address anyone can open
+
+**Share** on a running page asks a free tunnel service for a public address and
+puts it in front of your page. Anyone, on any network, anywhere, can open it.
+
+Three honest caveats, which the app also states:
+
+- **The address is random and temporary.** A new one every time.
+- **It only works while PyCmd is running.** Close the app and it stops.
+- **It is not private.** Anyone with the URL is on your page.
+
+### Cloudflare — a real address that stays up
+
+With the **full kit** on (More → Plugins → Polyglot Files, Polyglot Runner and
+Power Pack), the Pages tab grows a Cloudflare section. Connect an account and a
+page can be deployed to **Cloudflare Pages** instead of served from the phone:
+a `pages.dev` address, up when your phone is off, and it takes your own domain.
+
+You need two things from Cloudflare's dashboard: your **account ID**, and an
+**API token** with *Cloudflare Pages: Edit* (add *Workers Scripts: Edit* if you
+want to publish Workers). Use a scoped token rather than the Global API Key -
+a token can be revoked on its own, and a phone is a thing that gets lost. The
+token is checked before it is kept, lives in the app's private storage, never
+goes in your workspace, and is never shown back to you.
+
+Once connected, each page card gets **This phone / Cloudflare** and a **Deploy**
+button.
+
+---
+
 ## 12. Updating without losing anything
 
 **More → System → Updates → Check for updates.**
@@ -583,6 +639,19 @@ save the old APK to the phone, back up the workspace (it writes the zip for
 you), uninstall, install the saved APK, bring the workspace back - and the
 backup step is the one that makes it safe, because uninstalling deletes
 everything the app owns.
+
+**It can look while the app is closed.** Two switches under the update card:
+one asks Android to check about once a day, and one lets it download the APK
+too. Both are off until you turn them on, and neither ever installs anything -
+Android would ask you anyway. What Android decides, and this cannot: exactly
+when the check runs (roughly daily, on wifi, when the battery is not low), and
+whether it runs at all after a force-stop, which cancels scheduled work until
+the app is opened again.
+
+Running pages and servers keep going with the app closed for a different
+reason: they are held up by the foreground service, the one that shows the
+"running servers" notification. That notification is not decoration - it is the
+thing keeping them alive.
 
 **Where updates come from** at the bottom of the card takes an https address of
 a `latest.json` - a fork, another branch, or a machine of your own. Whatever it

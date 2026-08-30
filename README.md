@@ -12,7 +12,7 @@ already has. Another twenty file types are edited, highlighted, previewed and
 served, and music, video, images, PDFs, archives and fonts are brought in from
 the phone, kept, served and played.
 
-Version 2.5. Kotlin and Jetpack Compose for the app, JavaScript for the console
+Version 2.5.1. Kotlin and Jetpack Compose for the app, JavaScript for the console
 and editor.
 
 ---
@@ -68,6 +68,15 @@ minute. `requests`, `flask` and `rich` are already built in. The **Packages
 Pro** plugin adds everything that is not Python: JavaScript and CSS libraries,
 web fonts and whole starter projects, vendored into the workspace so a page
 works with no connection.
+
+**Pages** — websites that live in the app. Make one (up to 70), switch it on
+(up to 25 at a time) and it is served from the phone for real: a static site, a
+Flask app with templates, a JSON API, or a folder you already had. Each page
+keeps its name, its port and its files, so running it again is a tap. **Share**
+puts a random public address in front of it through a tunnel, so anyone
+anywhere can open it while the app is running. And with a Cloudflare account
+connected, a page deploys to **Cloudflare Pages** instead - a real `pages.dev`
+address that stays up when the phone is off, and takes your own domain.
 
 **Servers** — a launch form that runs whatever you point it at: a Python
 script, a C, Go or Rust program, a JavaScript file, an HTML page (whose folder
@@ -131,6 +140,13 @@ its own builds, `tools/make_latest.py` writes the manifest, and
 they are, and do not present the original as a copy of your fork; the rest is
 yours to change.
 
+**It keeps working with the app closed** — running pages and servers are held
+up by a foreground service, so they answer while you are in another app, and
+update checks (and, if you say so, the download) run on Android's own schedule
+through WorkManager. What Android will not allow is stated rather than implied:
+work runs roughly daily on wifi rather than at a time you pick, a force-stopped
+app runs nothing until it is opened again, and nothing ever installs itself.
+
 **Old versions, kept** — every update it downloads is filed on external
 storage rather than thrown away, up to a ceiling you set (250 MB to 2 GB, or
 off). Each one can be reinstalled, saved out to the phone or deleted. Going
@@ -157,7 +173,7 @@ signal, no answer - says nothing at all.
 ## Just want to try it
 
 A ready-to-install APK is in [`dist/`](dist/) - download
-[`PyCmd-2.5.apk`](dist/PyCmd-2.5.apk), open it on the phone, and allow the
+[`PyCmd-2.5.1.apk`](dist/PyCmd-2.5.1.apk), open it on the phone, and allow the
 install when Android asks. It is a release build: minified by R8, not
 debuggable, and about 18 MB rather than the 35 MB the debug builds were. It is
 signed with the key in [`keystore/`](keystore/) - the standard Android debug

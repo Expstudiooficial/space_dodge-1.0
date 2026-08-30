@@ -1,17 +1,75 @@
 # Prebuilt APK
 
-`PyCmd-2.5.apk` — ready to install, nothing else needed.
+`PyCmd-2.5.1.apk` — ready to install, nothing else needed.
 
 | | |
 |---|---|
 | Package | `com.expstudio.pycmd.debug` |
-| Version | 2.5 |
+| Version | 2.5.1 |
 | Size | 17 MB |
 | Signed with | the key in [`keystore/`](../keystore/), committed so updates can install over it |
 | Works on | Android 7.0 (API 24) and newer, **arm64-v8a** (every phone since about 2016) |
 | SHA-256 | see [SHA256SUMS.txt](SHA256SUMS.txt) |
 
-## What is new in 2.5
+## What is new in 2.5.1
+
+**Pages: websites that live in the app.** A new tab in the app itself, not a
+plugin. Name one, pick what it starts as - a page, a Python site with Flask
+templates, a JSON API, or an empty folder - and press Create. Then **Run**, and
+it is a real server: anyone on the same wifi can open
+`http://192.168.1.42:8631/` in a browser and see what you built on a phone.
+
+**70 pages, 25 running at once.** Both numbers are on the card, and both are
+refusals rather than surprises: past them it says so instead of quietly turning
+the phone into a space heater. Every page keeps its name, its port and its
+files, so running it again is a tap rather than a launch form filled in from
+memory. Rename, delete (with the files, or without), open its folder in Files,
+or adopt a folder you already had.
+
+A page can be anything the app can run, because a page is a folder and the
+Servers tab's rules decide what running one means: an `app.py` that imports
+Flask is started, an `index.html` is served, a single runnable file is run. With
+the built-in kit on, that is Python, HTML, CSS, JavaScript, C, Go and Rust.
+
+**Share: an address anyone, anywhere can open.** A phone sits behind carrier
+NAT, so nothing on the internet can dial it - the only way to be reachable is
+for something with a public address to accept the connection and pass it down.
+That is a tunnel, and there is now a tunnel client here: **Share** on a running
+page asks a free service for an address and relays visitors to your page.
+
+Three things about it are said in the app rather than discovered later: the
+address is **random and new every time**, it works **only while PyCmd is
+running**, and it is **not private** - anyone with the URL is on your page. It
+also depends on a free service run by other people, which is down sometimes,
+and when it is, the app says so rather than pretending.
+
+**Cloudflare: a real address that stays up.** With the full kit on, the Pages
+tab grows a Cloudflare section. Connect an account - your account ID and an API
+token - and a page deploys to **Cloudflare Pages** instead of being served from
+the phone: a `pages.dev` address, up when your phone is off, and it takes your
+own domain. Workers can be published the same way.
+
+It uses the public REST API directly, because wrangler and Node do not exist on
+Android: an upload token, a check for which files Cloudflare is already
+holding, the upload of the rest, then a deployment built from a manifest. Each
+page card then chooses **This phone** or **Cloudflare**.
+
+Use a **scoped token** (Cloudflare Pages: Edit), not the Global API Key: a token
+can be revoked on its own, and a phone is a thing that gets lost. It is checked
+against the account before it is kept, lives in the app's private storage rather
+than your workspace, and is never shown back - only its last four characters.
+
+**It keeps working with the app closed.** Running pages and servers are held up
+by the foreground service, so they answer while you are in another app. And two
+new switches under the update card ask Android to look for updates on its own
+schedule, and to download them too.
+
+What Android decides, and no app can: the check runs roughly daily on wifi with
+the battery not low, rather than at a time you pick; a force-stopped app runs
+nothing at all until it is opened again; and nothing installs itself, ever - the
+notification says the wait is over, and the tap is still yours.
+
+## What was new in 2.5
 
 **`pip install flask` works, typed exactly like that.** The console now takes
 the line before Python does, so the thing everybody tries first is no longer a
@@ -492,12 +550,15 @@ on, its console command answered, and its panel called back into its own
 Python. The APK here is that source built for arm64 instead, which changes
 the CPython binaries and nothing else.
 
-984 checks run before any of this is committed, across thirteen suites:
+1070 checks run before any of this is committed, across fourteen suites - the
+new one, `test_pages.py`, drives real pages on real ports and puts a stand-in
+tunnel service and a stand-in Cloudflare on loopback to check what is sent to
+each:
 `test_runtime.py`, `test_plugins.py`, `test_shell.py` (the console's commands,
 and the lines it must *not* take), `test_go.py`, `test_rust.py`, `test_cloud.py`,
 `test_bundled.py` (every plugin that ships, driven for real), `test_c.py`,
-`test_preview.py`, `test_branding.py`, `test_doctor.py`, `test_editor.js` and
-`test_js.js`.
+`test_preview.py`, `test_pages.py`, `test_branding.py`, `test_doctor.py`,
+`test_editor.js` and `test_js.js`.
 Each language check is a real program paired with the output the real compiler
 produces. The rest go after the things that are
 awkward to be sure of by looking: a script wedged in `accept()` is started for
@@ -523,6 +584,14 @@ come back - plus a 416 past the end of the file and a nonsense `Range` falling
 back to the whole file. `tools/make_latest.py` runs in the suite too, and fails
 the build if `dist/latest.json` does not match the APK sitting beside it: a
 manifest whose hash is stale is a download every phone would refuse.
+
+What could not be checked here, and is worth knowing: the tunnel was proven
+against a stand-in service, not against localtunnel.me, and the Cloudflare
+deploy against a stand-in API rather than a real account. The shapes, the
+ordering, the headers and the error handling are checked; whether those two
+services accept it on the day can only be found out with an account and a
+connection. If either misbehaves, the app reports what it got back rather than
+guessing, and the address is at the bottom of System.
 
 The 2.5 work was verified by those suites and by Lint on the built APK, and by
 reading the shipped file: the APK declares versionCode 14, the same package and
@@ -577,7 +646,7 @@ every tab with things to paste in and try.
 ## Installing over USB
 
 ```bash
-adb install -r dist/PyCmd-2.5.apk
+adb install -r dist/PyCmd-2.5.1.apk
 ```
 
 ## Checking the download
@@ -598,7 +667,7 @@ python3 tools/make_latest.py            # checks the one that is there
 | Field | What it is |
 |---|---|
 | `versionCode` | The build number. The app offers an update only when this is higher than its own. |
-| `versionName` | What the card shows: `2.5`. |
+| `versionName` | What the card shows: `2.5.1`. |
 | `package` | Which app this is for. A mismatch is refused before the download starts. |
 | `url` | An `https://` address of the APK. Plain `http` is refused. |
 | `sha256` | The APK's fingerprint. The download is checked against it and thrown away if it differs. |

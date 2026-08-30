@@ -27,6 +27,7 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
+import org.json.JSONArray
 import org.json.JSONObject
 
 /** The main console's channel name. Servers use their own handle. */
@@ -151,6 +152,9 @@ object PythonEngine {
     private lateinit var preview: PyObject
     private lateinit var pluginRuntime: PyObject
     private lateinit var cloudRuntime: PyObject
+    private lateinit var pages: PyObject
+    private lateinit var tunnel: PyObject
+    private lateinit var cloudflare: PyObject
 
     private lateinit var appContext: Context
     private lateinit var workspaceDir: File
@@ -292,6 +296,9 @@ object PythonEngine {
             preview = python.getModule("pycmd_preview")
             pluginRuntime = python.getModule("pycmd_plugins")
             cloudRuntime = python.getModule("pycmd_cloud")
+            pages = python.getModule("pycmd_pages")
+            tunnel = python.getModule("pycmd_tunnel")
+            cloudflare = python.getModule("pycmd_cloudflare")
 
             val version = runtime.callAttr(
                 "configure",
@@ -306,6 +313,12 @@ object PythonEngine {
             // workspace: the workspace is the folder people export and share.
             val cloudDir = File(appContext.filesDir, "cloud").apply { mkdirs() }
             cloudRuntime.callAttr("configure_storage", cloudDir.absolutePath)
+            // The registry of pages, and the Cloudflare token, live beside the
+            // cloud keys for the same reason: neither belongs in the workspace,
+            // which is the folder people export and hand to other people.
+            val pagesDir = File(appContext.filesDir, "pages").apply { mkdirs() }
+            pages.callAttr("configure", pagesDir.absolutePath)
+            cloudflare.callAttr("configure_storage", cloudDir.absolutePath)
             pluginsDir = File(appContext.filesDir, "plugins").apply { mkdirs() }
             pluginRuntime.callAttr(
                 "configure", pluginsDir.absolutePath, workspaceDir.absolutePath, pluginHost,
@@ -569,7 +582,136 @@ object PythonEngine {
         }
 
     /** Every extension the preview can show, so the file list knows. */
+    // ---- Pages: projects that are websites --------------------------------
+
+    /** Every page, with whether it is up, where, and what it costs. */
+    suspend fun pages(): JSONArray = withContext(controlDispatcher) {
+        if (!_status.value.ready) return@withContext JSONArray()
+        runCatching { JSONArray(pages.callAttr("listing").toString()) }
+            .getOrDefault(JSONArray())
+    }
+
+    /** The two ceilings, and where this phone is against them. */
+    suspend fun pageCounts(): JSONObject = withContext(controlDispatcher) {
+        if (!_status.value.ready) return@withContext JSONObject()
+        runCatching { JSONObject(pages.callAttr("counts").toString()) }
+            .getOrDefault(JSONObject())
+    }
+
+    /** What a new page can start as. */
+    suspend fun pageTemplates(): JSONArray = withContext(controlDispatcher) {
+        if (!_status.value.ready) return@withContext JSONArray()
+        runCatching { JSONArray(pages.callAttr("templates").toString()) }
+            .getOrDefault(JSONArray())
+    }
+
+    private suspend fun pageCall(name: String, vararg args: Any?): JSONObject =
+        withContext(controlDispatcher) {
+            if (!_status.value.ready) {
+                return@withContext failed("The interpreter is not ready yet.")
+            }
+            runCatching {
+                JSONObject(
+                    when (args.size) {
+                        0 -> pages.callAttr(name)
+                        1 -> pages.callAttr(name, args[0])
+                        2 -> pages.callAttr(name, args[0], args[1])
+                        else -> pages.callAttr(name, args[0], args[1], args[2])
+                    }.toString(),
+                )
+            }.getOrElse { failed(it.message.orEmpty()) }
+        }
+
+    private fun failed(message: String) = JSONObject()
+        .put("ok", false)
+        .put("error", message.ifBlank { "That did not work." })
+
+    suspend fun createPage(name: String, template: String): JSONObject =
+        pageCall("create", name, template, workspaceDir.absolutePath)
+
+    suspend fun adoptPage(name: String, folder: String): JSONObject =
+        pageCall("adopt", name, folder)
+
+    suspend fun renamePage(id: String, name: String): JSONObject = pageCall("rename", id, name)
+
+    suspend fun removePage(id: String, deleteFiles: Boolean): JSONObject =
+        pageCall("remove", id, deleteFiles)
+
+    suspend fun startPage(id: String): JSONObject = pageCall("start", id, true)
+
+    suspend fun stopPage(id: String): JSONObject = pageCall("stop", id)
+
+    suspend fun stopAllPages(): JSONObject = pageCall("stop_all")
+
+    suspend fun sharePage(id: String): JSONObject = pageCall("share", id)
+
+    suspend fun unsharePage(id: String): JSONObject = pageCall("unshare", id)
+
+    suspend fun setPageHost(id: String, host: String): JSONObject = pageCall("set_host", id, host)
+
+    /** Remembers where a page was last deployed, so its card can link to it. */
+    suspend fun notePageDeployment(id: String, url: String, project: String): JSONObject =
+        pageCall("note_deployment", id, url, project)
+
+    // ---- Cloudflare -------------------------------------------------------
+
+    private suspend fun cloudflareCall(name: String, vararg args: Any?): JSONObject =
+        withContext(controlDispatcher) {
+            if (!_status.value.ready) {
+                return@withContext failed("The interpreter is not ready yet.")
+            }
+            runCatching {
+                JSONObject(
+                    when (args.size) {
+                        0 -> cloudflare.callAttr(name)
+                        1 -> cloudflare.callAttr(name, args[0])
+                        2 -> cloudflare.callAttr(name, args[0], args[1])
+                        else -> cloudflare.callAttr(name, args[0], args[1], args[2])
+                    }.toString(),
+                )
+            }.getOrElse { failed(it.message.orEmpty()) }
+        }
+
+    suspend fun cloudflareState(): JSONObject = cloudflareCall("state")
+
+    suspend fun connectCloudflare(account: String, token: String): JSONObject =
+        cloudflareCall("connect", account, token)
+
+    suspend fun forgetCloudflare(): JSONObject = cloudflareCall("forget")
+
+    suspend fun cloudflareProjects(): JSONObject = cloudflareCall("projects")
+
     /**
+     * Uploads a folder to Cloudflare Pages.
+     *
+     * On the control dispatcher rather than the Python one: a deploy is minutes
+     * of network, and the interpreter must stay free to run everything else
+     * while it happens.
+     */
+    suspend fun deployToCloudflare(
+        folder: String,
+        project: String,
+        onProgress: (String) -> Unit,
+    ): JSONObject = withContext(controlDispatcher) {
+        if (!_status.value.ready) return@withContext failed("The interpreter is not ready yet.")
+        runCatching {
+            JSONObject(
+                cloudflare.callAttr(
+                    "deploy_folder", folder, project, "main", ProgressSink(onProgress),
+                ).toString(),
+            )
+        }.getOrElse { failed(it.message.orEmpty()) }
+    }
+
+    suspend fun publishWorker(name: String, script: String): JSONObject =
+        cloudflareCall("put_worker", name, script)
+
+    /** The starter Worker, so the app never asks for a blank page. */
+    suspend fun workerTemplate(): String = withContext(controlDispatcher) {
+        runCatching { cloudflare["WORKER_TEMPLATE"]?.toString().orEmpty() }.getOrDefault("")
+    }
+
+        /**
      * What PyPI says about a package, before anything is downloaded.
      *
      * The Packages tab used to find out a package cannot work here by trying

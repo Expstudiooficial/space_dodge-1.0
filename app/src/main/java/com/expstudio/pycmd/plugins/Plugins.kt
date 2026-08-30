@@ -260,6 +260,15 @@ object Plugins {
     /** All three of the kit are on. */
     fun fullKit(): Boolean = PluginIds.CORE.all { it in _enabled.value }
 
+    /**
+     * Whether the whole built-in kit is on.
+     *
+     * The three core switches together are what the plugin list calls the kit,
+     * and a few things - deploying to somebody's own Cloudflare account, for
+     * one - are offered only to somebody who has turned the app all the way up.
+     */
+    val kitOn: Boolean get() = PluginIds.CORE.all { isOn(it) }
+
     fun enableAll() {
         ALL.forEach { setEnabled(it.id, true) }
     }

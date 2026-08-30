@@ -30,6 +30,10 @@ echo "== The console's commands =="
 "$PYTHON" tools/test_shell.py
 
 echo
+echo "== Pages, the tunnel and Cloudflare =="
+"$PYTHON" tools/test_pages.py
+
+echo
 echo "== Plugins, doctor, preview, cloud, bundled =="
 "$PYTHON" tools/test_plugins.py
 "$PYTHON" tools/test_doctor.py

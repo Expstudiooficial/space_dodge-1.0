@@ -15,6 +15,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -79,6 +80,10 @@ fun SystemScreen(
     onInstallUpdate: () -> Unit,
     onDismissUpdate: () -> Unit,
     onSetUpdateSource: (String) -> Unit,
+    backgroundChecks: Boolean,
+    backgroundDownload: Boolean,
+    onSetBackgroundChecks: (Boolean) -> Unit,
+    onSetBackgroundDownload: (Boolean) -> Unit,
     versions: List<KeptVersion>,
     versionsCap: Long,
     onSetVersionsCap: (Long) -> Unit,
@@ -116,6 +121,10 @@ fun SystemScreen(
             UpdateCard(
                 state = update,
                 source = updateSource,
+                backgroundChecks = backgroundChecks,
+                backgroundDownload = backgroundDownload,
+                onSetBackgroundChecks = onSetBackgroundChecks,
+                onSetBackgroundDownload = onSetBackgroundDownload,
                 onCheck = onCheckForUpdate,
                 onDownload = onDownloadUpdate,
                 onCancel = onCancelUpdate,
@@ -225,6 +234,10 @@ fun SystemScreen(
 private fun UpdateCard(
     state: UpdateState,
     source: String,
+    backgroundChecks: Boolean,
+    backgroundDownload: Boolean,
+    onSetBackgroundChecks: (Boolean) -> Unit,
+    onSetBackgroundDownload: (Boolean) -> Unit,
     onCheck: () -> Unit,
     onDownload: () -> Unit,
     onCancel: () -> Unit,
@@ -365,8 +378,61 @@ private fun UpdateCard(
             }
         }
 
+        Spacer(Modifier.height(12.dp))
+        Divider()
+        Spacer(Modifier.height(10.dp))
+        BackgroundRow(
+            backgroundChecks = backgroundChecks,
+            backgroundDownload = backgroundDownload,
+            onChecks = onSetBackgroundChecks,
+            onDownload = onSetBackgroundDownload,
+        )
+
         Spacer(Modifier.height(10.dp))
         UpdateSourceRow(source, onSetSource)
+    }
+}
+
+/**
+ * Looking for updates with the app closed.
+ *
+ * Worth saying what Android actually does here rather than implying a timer:
+ * work runs when the system is willing, which is roughly daily on wifi, and a
+ * force-stopped app does not run at all until it is opened again.
+ */
+@Composable
+private fun BackgroundRow(
+    backgroundChecks: Boolean,
+    backgroundDownload: Boolean,
+    onChecks: (Boolean) -> Unit,
+    onDownload: (Boolean) -> Unit,
+) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Column(Modifier.weight(1f)) {
+            Text("Look while the app is closed", style = MaterialTheme.typography.bodyMedium)
+            Text(
+                "About once a day, on wifi, when the phone is not low on battery. " +
+                    "Android decides exactly when.",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        Switch(checked = backgroundChecks, onCheckedChange = onChecks)
+    }
+    if (backgroundChecks) {
+        Spacer(Modifier.height(8.dp))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text("Download it too", style = MaterialTheme.typography.bodyMedium)
+                Text(
+                    "So installing is a tap rather than a wait. Wifi only, and it " +
+                        "still never installs by itself.",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Switch(checked = backgroundDownload, onCheckedChange = onDownload)
+        }
     }
 }
 

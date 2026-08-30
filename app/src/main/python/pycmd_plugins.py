@@ -382,7 +382,7 @@ def _is_image_name(value: str) -> bool:
 # and the file events.
 EXTENDABLE_TABS = (
     "files", "servers", "packages", "downloads",
-    "plugins", "system", "debug", "guides",
+    "plugins", "system", "debug", "guides", "pages",
 )
 
 EXTENSION_HEIGHTS = ("short", "medium", "tall")

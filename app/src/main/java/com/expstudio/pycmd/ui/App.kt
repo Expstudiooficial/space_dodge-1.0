@@ -104,6 +104,12 @@ fun PyCmdRoot(viewModel: MainViewModel = viewModel()) {
     val systemInfo by viewModel.system.collectAsState()
     val systemBusy by viewModel.systemBusy.collectAsState()
     val clearConsoleAt by viewModel.clearConsole.collectAsState()
+    val pagesState by viewModel.pages.collectAsState()
+    val backgroundChecks by viewModel.backgroundChecks.collectAsState()
+    val backgroundDownload by viewModel.backgroundDownload.collectAsState()
+    // Recomputed whenever a switch moves, because the Cloudflare half of the
+    // Pages tab appears and disappears with the kit.
+    val kitOn = remember(pluginsEnabled) { com.expstudio.pycmd.plugins.Plugins.kitOn }
     val sourceBusy by viewModel.sourceBusy.collectAsState()
     val keptVersions by viewModel.versions.collectAsState()
     val versionsCap by viewModel.versionsCap.collectAsState()
@@ -247,6 +253,7 @@ fun PyCmdRoot(viewModel: MainViewModel = viewModel()) {
         // A destination reached through More goes back to More first.
         val parent = if (tab in setOf(
                 Tab.PACKAGES, Tab.DOWNLOADS, Tab.PLUGINS, Tab.DOCS, Tab.SYSTEM,
+                Tab.PAGES,
             )
         ) {
             Tab.MORE
@@ -367,7 +374,7 @@ fun PyCmdRoot(viewModel: MainViewModel = viewModel()) {
                     // that one of them is the current screen.
                     forceSelected = tab in setOf(
                         Tab.PACKAGES, Tab.DOWNLOADS, Tab.PLUGINS, Tab.TOOL,
-                        Tab.PLUGIN_PANEL, Tab.DOCS, Tab.SYSTEM,
+                        Tab.PLUGIN_PANEL, Tab.DOCS, Tab.SYSTEM, Tab.PAGES,
                     ),
                 )
             }
@@ -528,6 +535,10 @@ fun PyCmdRoot(viewModel: MainViewModel = viewModel()) {
                     onInstallUpdate = viewModel::installUpdate,
                     onDismissUpdate = viewModel::dismissUpdate,
                     onSetUpdateSource = viewModel::setUpdateSource,
+                    backgroundChecks = backgroundChecks,
+                    backgroundDownload = backgroundDownload,
+                    onSetBackgroundChecks = viewModel::setBackgroundChecks,
+                    onSetBackgroundDownload = viewModel::setBackgroundDownload,
                     versions = keptVersions,
                     versionsCap = versionsCap,
                     onSetVersionsCap = viewModel::setVersionsCap,
@@ -565,11 +576,35 @@ fun PyCmdRoot(viewModel: MainViewModel = viewModel()) {
                     },
                 )
 
+                Tab.PAGES -> PagesScreen(
+                    state = pagesState,
+                    kitOn = kitOn,
+                    onCreate = viewModel::createPage,
+                    onStart = { viewModel.startPage(it.id) },
+                    onStop = { viewModel.stopPage(it.id) },
+                    onOpen = viewModel::openPage,
+                    onShare = { viewModel.sharePage(it.id) },
+                    onUnshare = { viewModel.unsharePage(it.id) },
+                    onRename = { project, name -> viewModel.renamePage(project.id, name) },
+                    onRemove = { project, files -> viewModel.removePage(project.id, files) },
+                    onOpenFolder = viewModel::openPageFolder,
+                    onCopy = { text ->
+                        copyToClipboard(context, text)
+                        viewModel.showToast("Copied")
+                    },
+                    onStopAll = viewModel::stopAllPages,
+                    onConnectCloudflare = viewModel::connectCloudflare,
+                    onForgetCloudflare = viewModel::forgetCloudflare,
+                    onDeploy = viewModel::deployPage,
+                    onSetHost = { project, host -> viewModel.setPageHost(project.id, host) },
+                )
+
                 Tab.MORE -> MoreScreen(
                     serverCount = serverCount,
                     downloadCount = downloadsState.files.size,
                     pluginCount = pluginsEnabled.size,
                     errorCount = debugErrors,
+                    pageCount = pagesState.active,
                     onSelect = viewModel::selectTab,
                     updateWaiting = updateWaiting,
                     // Only tabs from plugins that are switched on: a tab is a

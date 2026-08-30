@@ -3,4 +3,6 @@
     <string name="app_name">PyCmd</string>
     <string name="server_channel_name">Running servers</string>
     <string name="server_channel_desc">Keeps Python servers alive in the background</string>
+    <string name="update_channel_name">Updates</string>
+    <string name="update_channel_desc">Says when a newer PyCmd is out</string>
 </resources>

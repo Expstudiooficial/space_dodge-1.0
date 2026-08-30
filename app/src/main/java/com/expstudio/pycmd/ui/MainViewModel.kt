@@ -35,6 +35,7 @@ import com.expstudio.pycmd.util.Exports
 import com.expstudio.pycmd.util.Imports
 import com.expstudio.pycmd.util.KeptVersion
 import com.expstudio.pycmd.util.UpdateState
+import com.expstudio.pycmd.util.UpdateWorker
 import com.expstudio.pycmd.util.Updater
 import com.expstudio.pycmd.util.Workspace
 import com.expstudio.pycmd.util.WorkspaceEntry
@@ -75,6 +76,7 @@ enum class Tab(val label: String) {
     TOOL("Tool"),
     PLUGIN_PANEL("Plugin"),
     DOCS("Guides"),
+    PAGES("Pages"),
     SYSTEM("System");
 
     /**
@@ -92,6 +94,7 @@ enum class Tab(val label: String) {
             SYSTEM -> "system"
             DEBUG -> "debug"
             DOCS -> "guides"
+            PAGES -> "pages"
             // The console and the editor are a full-screen WebView each, with
             // nowhere to put a card that would not be in the way.
             CONSOLE, EDITOR, MORE, TOOL, PLUGIN_PANEL -> null
@@ -183,6 +186,52 @@ data class FilesState(
     val entries: List<WorkspaceEntry> = emptyList(),
     val loading: Boolean = true,
 )
+
+/** One project in the Pages tab. */
+data class PageProject(
+    val id: String,
+    val name: String,
+    val folder: String,
+    val template: String,
+    val port: Int,
+    val running: Boolean,
+    val url: String,
+    val publicUrl: String,
+    val requests: Int,
+    val files: Int,
+    val bytes: Long,
+    val host: String,
+    val deployedUrl: String,
+    val exists: Boolean,
+) {
+    /** Where it is hosted, said the way the card says it. */
+    val onCloudflare: Boolean get() = host == "cloudflare"
+}
+
+/** What a new page can start as. */
+data class PageTemplate(val id: String, val title: String, val about: String)
+
+/** Whether a Cloudflare account is connected, and which. */
+data class CloudflareState(
+    val connected: Boolean = false,
+    val account: String = "",
+    val tokenTail: String = "",
+    val busy: String = "",
+)
+
+data class PagesState(
+    val projects: List<PageProject> = emptyList(),
+    val templates: List<PageTemplate> = emptyList(),
+    val used: Int = 0,
+    val maxProjects: Int = 70,
+    val active: Int = 0,
+    val maxActive: Int = 25,
+    val busy: String = "",
+    val cloudflare: CloudflareState = CloudflareState(),
+) {
+    val full: Boolean get() = used >= maxProjects
+    val atRunningLimit: Boolean get() = active >= maxActive
+}
 
 data class PackagesState(
     val installed: List<InstalledPackage> = emptyList(),
@@ -284,6 +333,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private val _files = MutableStateFlow(FilesState())
     val files: StateFlow<FilesState> = _files.asStateFlow()
+
+    private val _pages = MutableStateFlow(PagesState())
+    val pages: StateFlow<PagesState> = _pages.asStateFlow()
 
     private val _packages = MutableStateFlow(PackagesState())
     val packages: StateFlow<PackagesState> = _packages.asStateFlow()
@@ -414,6 +466,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             installBundledPlugins()
             quietlyCheckForUpdate()
             refreshVersions()
+            refreshPages()
         }
     }
 
@@ -763,6 +816,38 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 }
             }
         }
+    }
+
+    private val _backgroundChecks = MutableStateFlow(
+        updatePreferences().getBoolean(UpdateWorker.KEY_BACKGROUND, false),
+    )
+
+    /** Whether Android is asked to look for updates while the app is closed. */
+    val backgroundChecks: StateFlow<Boolean> = _backgroundChecks.asStateFlow()
+
+    private val _backgroundDownload = MutableStateFlow(
+        updatePreferences().getBoolean(UpdateWorker.KEY_AUTO_DOWNLOAD, false),
+    )
+
+    /** And whether it may spend the download too, on wifi. */
+    val backgroundDownload: StateFlow<Boolean> = _backgroundDownload.asStateFlow()
+
+    fun setBackgroundChecks(on: Boolean) {
+        _backgroundChecks.value = on
+        updatePreferences().edit { putBoolean(UpdateWorker.KEY_BACKGROUND, on) }
+        UpdateWorker.sync(getApplication())
+        showToast(
+            if (on) {
+                "PyCmd will look about once a day, on wifi"
+            } else {
+                "Background checks are off"
+            },
+        )
+    }
+
+    fun setBackgroundDownload(on: Boolean) {
+        _backgroundDownload.value = on
+        updatePreferences().edit { putBoolean(UpdateWorker.KEY_AUTO_DOWNLOAD, on) }
     }
 
     /** Reads the manifest and says whether there is anything newer. */
@@ -1453,6 +1538,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             Tab.PACKAGES -> refreshPackages()
             Tab.SERVERS -> refreshServers()
             Tab.DOWNLOADS -> refreshDownloads()
+            // A page whose server died on its own is only noticed by looking,
+            // and opening the tab is when somebody is looking.
+            Tab.PAGES -> refreshPages()
             else -> Unit
         }
     }
@@ -2145,6 +2233,231 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             } else {
                 showToast(result.error.ifBlank { "Could not remove $name." })
             }
+        }
+    }
+
+    // ------------------------------------------------------------------- pages
+
+    private var pagesGeneration = 0L
+
+    /** Reads the registry and what is listening, and puts them together. */
+    fun refreshPages() {
+        val generation = ++pagesGeneration
+        viewModelScope.launch {
+            val rows = engine.pages()
+            val counts = engine.pageCounts()
+            val templates = engine.pageTemplates()
+            val cloud = engine.cloudflareState()
+            if (generation != pagesGeneration) return@launch
+            _pages.value = _pages.value.copy(
+                projects = (0 until rows.length()).mapNotNull { index ->
+                    rows.optJSONObject(index)?.let(::readPage)
+                },
+                templates = (0 until templates.length()).mapNotNull { index ->
+                    templates.optJSONObject(index)?.let { row ->
+                        PageTemplate(
+                            id = row.optString("id"),
+                            title = row.optString("title"),
+                            about = row.optString("about"),
+                        )
+                    }
+                },
+                used = counts.optInt("projects"),
+                maxProjects = counts.optInt("max_projects", 70),
+                active = counts.optInt("active"),
+                maxActive = counts.optInt("max_active", 25),
+                cloudflare = _pages.value.cloudflare.copy(
+                    connected = cloud.optBoolean("connected"),
+                    account = cloud.optString("account"),
+                    tokenTail = cloud.optString("token_tail"),
+                ),
+            )
+        }
+    }
+
+    private fun readPage(row: JSONObject) = PageProject(
+        id = row.optString("id"),
+        name = row.optString("name"),
+        folder = row.optString("folder"),
+        template = row.optString("template"),
+        port = row.optInt("port"),
+        running = row.optBoolean("running"),
+        url = row.optString("url"),
+        publicUrl = row.optString("public_url"),
+        requests = row.optInt("requests"),
+        files = row.optInt("files"),
+        bytes = row.optLong("bytes"),
+        host = row.optString("host", "local"),
+        deployedUrl = row.optString("deployed_url"),
+        exists = row.optBoolean("exists", true),
+    )
+
+    private fun pagesBusy(what: String) {
+        _pages.value = _pages.value.copy(busy = what)
+    }
+
+    /**
+     * Runs one page action, keeping the card honest while it happens.
+     *
+     * Every one of these ends the same way - say what happened, read the list
+     * back - so they share a body rather than repeating it eight times.
+     */
+    private fun pageAction(busy: String, success: (JSONObject) -> String,
+                           block: suspend () -> JSONObject) {
+        viewModelScope.launch {
+            pagesBusy(busy)
+            val reply = block()
+            pagesBusy("")
+            if (reply.optBoolean("ok")) {
+                val said = success(reply)
+                if (said.isNotEmpty()) showToast(said)
+            } else {
+                showToast(reply.optString("error", "That did not work."))
+            }
+            refreshPages()
+            refreshServers()
+        }
+    }
+
+    fun createPage(name: String, template: String) {
+        pageAction("Making $name...", { "$name is ready" }) {
+            engine.createPage(name, template)
+        }
+    }
+
+    fun adoptPageFromFolder(file: File) {
+        pageAction("Adding ${file.name}...", { "${file.name} is a page now" }) {
+            engine.adoptPage(file.name, file.absolutePath)
+        }
+    }
+
+    fun renamePage(id: String, name: String) {
+        pageAction("Renaming...", { "Renamed to $name" }) { engine.renamePage(id, name) }
+    }
+
+    fun removePage(id: String, deleteFiles: Boolean) {
+        pageAction("Removing...", { reply ->
+            val name = reply.optString("name", "the page")
+            if (reply.optBoolean("files_deleted")) "$name and its files are gone" else "$name removed"
+        }) { engine.removePage(id, deleteFiles) }
+    }
+
+    fun startPage(id: String) {
+        pageAction("Starting...", { reply ->
+            if (reply.optBoolean("already")) "" else "Running on ${reply.optString("url")}"
+        }) { engine.startPage(id) }
+    }
+
+    fun stopPage(id: String) {
+        pageAction("Stopping...", { "" }) { engine.stopPage(id) }
+    }
+
+    fun stopAllPages() {
+        pageAction("Stopping everything...", { reply ->
+            "Stopped ${reply.optInt("stopped")}"
+        }) { engine.stopAllPages() }
+    }
+
+    /** Opens a tunnel, so the page has an address off this network. */
+    fun sharePage(id: String) {
+        pageAction("Asking for a public address...", { reply ->
+            "Public at ${reply.optString("url")}"
+        }) { engine.sharePage(id) }
+    }
+
+    fun unsharePage(id: String) {
+        pageAction("Closing the tunnel...", { "It is off the internet again" }) {
+            engine.unsharePage(id)
+        }
+    }
+
+    fun setPageHost(id: String, host: String) {
+        pageAction("", { "" }) { engine.setPageHost(id, host) }
+    }
+
+    /** Shows a page's folder in the Files tab, where it can be edited. */
+    fun openPageFolder(page: PageProject) {
+        val folder = File(page.folder)
+        if (!folder.isDirectory) {
+            showToast("Its folder is not there any more.")
+            return
+        }
+        openDirectory(folder)
+        selectTab(Tab.FILES)
+    }
+
+    /**
+     * Opens a running page in the preview, at its own address.
+     *
+     * Its address rather than its files: a Flask page has no index.html to
+     * render, and the whole point of a page being *up* is that something is
+     * answering on a port.
+     */
+    fun openPage(page: PageProject) {
+        if (!page.running || page.url.isBlank()) {
+            showToast("Start it first.")
+            return
+        }
+        _preview.value = PreviewPage(
+            name = page.name,
+            html = "",
+            baseDirectory = "",
+            url = page.url,
+            served = true,
+        )
+    }
+
+    // ---- Cloudflare --------------------------------------------------------
+
+    private fun cloudflareBusy(what: String) {
+        _pages.value = _pages.value.copy(
+            cloudflare = _pages.value.cloudflare.copy(busy = what),
+        )
+    }
+
+    fun connectCloudflare(account: String, token: String) {
+        viewModelScope.launch {
+            cloudflareBusy("Checking the token...")
+            val reply = engine.connectCloudflare(account.trim(), token.trim())
+            cloudflareBusy("")
+            if (reply.optBoolean("ok")) {
+                showToast("Connected to Cloudflare")
+            } else {
+                showToast(reply.optString("error", "Cloudflare would not take that."))
+            }
+            refreshPages()
+        }
+    }
+
+    fun forgetCloudflare() {
+        viewModelScope.launch {
+            engine.forgetCloudflare()
+            showToast("The token is off this device")
+            refreshPages()
+        }
+    }
+
+    /**
+     * Uploads a page to Cloudflare Pages.
+     *
+     * Minutes of network on a phone connection, so the card carries the
+     * progress the deploy reports rather than a spinner that says nothing.
+     */
+    fun deployPage(page: PageProject) {
+        viewModelScope.launch {
+            cloudflareBusy("Deploying ${page.name}...")
+            val reply = engine.deployToCloudflare(page.folder, page.name) { message ->
+                cloudflareBusy(message)
+            }
+            cloudflareBusy("")
+            if (reply.optBoolean("ok")) {
+                val url = reply.optString("url")
+                engine.notePageDeployment(page.id, url, reply.optString("project"))
+                showToast("Live at $url")
+            } else {
+                showToast(reply.optString("error", "The deploy did not finish."))
+            }
+            refreshPages()
         }
     }
 
