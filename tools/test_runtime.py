@@ -517,11 +517,28 @@ plan = pycmd_servers.how_to_run(go_file)
 check("a Go file says which interpreter", plan["how"] == "language" and plan["language"] == "Go", plan)
 started = pycmd_servers.start_file(go_file, label="go")
 check("and it starts", started.get("ok") is True, started)
-time.sleep(0.8)
+
+
+def wait_for_log(handle, needle, seconds=8.0):
+    """Waits for a line to show up, rather than guessing how long it takes.
+
+    This used to be a flat `sleep(0.8)`, which is plenty on an idle machine
+    and not always enough on a busy one - so the suite would fail once in a
+    while for no reason anybody could act on. A test that is sometimes wrong
+    is worse than no test: it teaches you to re-run instead of to look.
+    """
+    deadline = time.time() + seconds
+    while time.time() < deadline:
+        rows = pycmd_servers.log_lines(handle)
+        if any(needle in row["text"] for row in rows):
+            return rows
+        time.sleep(0.05)
+    return pycmd_servers.log_lines(handle)
+
+
+lines = wait_for_log(started["handle"], "go server up")
 check("its output lands in its own log",
-      any("go server up" in text for _stream, text in
-          [(row["stream"], row["text"]) for row in pycmd_servers.log_lines(started["handle"])]),
-      pycmd_servers.log_lines(started["handle"]))
+      any("go server up" in row["text"] for row in lines), lines)
 pycmd_servers.kill_all()
 
 page_dir = os.path.join(workspace, "pages")

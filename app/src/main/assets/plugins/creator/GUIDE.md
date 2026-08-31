@@ -11,8 +11,11 @@ Turn it on in **More → Plugins → Creator**, and **Creator** appears in More.
 
 ## The two screens
 
-**The bar** at the top holds the project's name and a language chooser. Five
-to pick from, and the language decides which blocks exist:
+**The bar** at the top holds the project's name and a language chooser, and
+under it the three buttons - **+ Add a block**, **Code** and **Save**. They
+are at the top rather than the bottom so they are on screen the moment the tab
+opens, whatever your script is doing below. Five languages to pick from, and
+the language decides which blocks exist:
 
 | Language | Blocks | What it is for |
 |---|---|---|
@@ -42,7 +45,7 @@ Tap a block to select it. A selected block grows a row of buttons:
 | Duplicate | Another one just like it, underneath |
 | Delete | Remove it |
 
-**+ Add a block** at the bottom opens the second screen: everything you can
+**+ Add a block**, just under the bar, opens the second screen: everything you can
 add, each row showing the line it would write. Filter by category, or search -
 "print", "loop", "colour". It stays open while you tap, saying what went in and
 how many blocks you have now, so several can go on in a row; **Done** takes you

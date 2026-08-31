@@ -530,34 +530,33 @@ one. `poll` is for reads.
 
 ### A panel that is taller than the screen
 
-**It already scrolls, and you do not have to do anything.** The house
-stylesheet makes your panel's `body` exactly as tall as the panel and lets it
-scroll its own overflow, rather than leaving it to the document — which is the
-one thing that is not dependable in a WebView inside somebody else's layout,
-and how a long panel ends up with a bottom nobody can reach. Write an ordinary
-page and it will scroll.
+**Write an ordinary page and let the document scroll.** That is the whole
+advice, and it is worth saying because the obvious alternatives do not work
+here.
 
-Two things follow from that, worth knowing:
+**Never use a percentage height.** `html, body { height: 100% }` is the usual
+way to build a fixed header with a scrolling middle, and in this WebView it
+collapses the panel to nothing — a black screen with a sliver of content at
+the top. Whatever the percentage resolves against while the panel is first
+laid out is not the height it ends up with, and it does not recover. A whole
+release shipped that way. `vh` is the same bet; do not take it either.
 
-- **Do not set `overflow` or `height` on `body`** unless you mean to take the
-  scrolling over yourself.
-- **`window.scrollTo` does nothing**, because the document is not what moves.
-  Use `document.body.scrollTop`, or `element.scrollIntoView()`.
+**Be careful with `position: fixed` and `position: sticky` chrome.** The
+Creator tab spent three releases as the only panel that could not be scrolled,
+and it was the only one with a sticky bar and a footer fixed to the bottom.
+It is a plain page now, and its buttons sit above the content rather than
+being pinned below it — so they are on screen the moment it opens without
+anything having to scroll. That is a good pattern to copy: **put what must be
+reachable at the top**.
 
-**If you want a header or a button row that stays put**, take `body` over and
-make it a column:
+A fixed overlay that is `display: none` until you open it is fine — the block
+picker is one, and it has always worked. It is chrome that is *always* pinned
+that causes trouble.
 
-```css
-html, body { height: 100%; }
-body { margin: 0; display: flex; flex-direction: column; overflow: hidden; }
-.top, .bottom { flex: 0 0 auto; }             /* a header and a button row */
-.middle { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
-```
-
-That is what the Creator tab does. Either way, the app is told which parts of
-your page scroll — it watches where each touch lands — so a panel sitting
-inside one of the app's own screens keeps its own drags instead of losing them
-to the list around it. That comes with the bridge; there is nothing to call.
+The app is told which parts of your page scroll — it watches where each touch
+lands — so a panel sitting inside one of the app's own screens keeps its own
+drags instead of losing them to the list around it. That comes with the
+bridge; there is nothing to call.
 
 Your own CSS, images and scripts load from the plugin folder with relative
 paths (`<img src="assets/logo.png">`). The page cannot navigate anywhere else:

@@ -1,17 +1,60 @@
 # Prebuilt APK
 
-`PyCmd-2.5.8.apk` — ready to install, nothing else needed.
+`PyCmd-2.5.9.apk` — ready to install, nothing else needed.
 
 | | |
 |---|---|
 | Package | `com.expstudio.pycmd.debug` |
-| Version | 2.5.8 |
+| Version | 2.5.9 |
 | Size | 18 MB |
 | Signed with | the key in [`keystore/`](../keystore/), committed so updates can install over it |
 | Works on | Android 7.0 (API 24) and newer, **arm64-v8a** (every phone since about 2016) |
 | SHA-256 | see [SHA256SUMS.txt](SHA256SUMS.txt) |
 
-## What is new in 2.5.8
+## What is new in 2.5.9
+
+**2.5.8 broke every plugin tab, and this puts them back.** Opening one showed
+a black screen with a sliver of something at the top. That was my mistake and
+it is the first thing fixed here.
+
+**What went wrong.** 2.5.8 tried to fix the Creator tab's scrolling by making
+each panel's `body` its own scroller - `height: 100%` on the root and on the
+body, with the overflow moved down to it. That is a clean, ordinary app shell,
+it behaves correctly in a browser, and I checked it in one. In the app's own
+WebView it collapses the panel to no height at all: whatever those percentages
+resolve against while the page is first laid out is not the height the panel
+ends up with, and it never comes back. Every percentage height is gone from
+the panel stylesheet and from every panel that ships here, and both the suite
+and the browser test now refuse to let one back in.
+
+**Creator still had to stop being the panel that would not scroll**, and this
+time the fix is the boring one. It was the only panel with chrome pinned to
+the viewport - a sticky bar at the top, a button row fixed to the bottom - and
+the panels without any of that have always scrolled fine. So it is a plain
+page now, like them.
+
+**The buttons moved to the top.** **+ Add a block**, **Code** and **Save** sit
+just under the bar instead of being fixed at the bottom of the screen. They
+are on screen the moment the tab opens, so the thing you reach for most is
+never behind a scroll - which is worth more than having them pinned, and does
+not depend on anything the WebView has to agree with.
+
+The block picker is unchanged: still a full-screen sheet that scrolls itself,
+which is the one arrangement in this panel that has always worked.
+
+**Also here:** a test that could fail for no reason anybody could act on -
+it waited a flat eight tenths of a second for a Go server's first line and
+sometimes needed more - now waits for the line instead of guessing.
+
+The browser test added last release earned its place immediately: its dullest
+check is that a panel drew *anything*, and that is now the check standing
+between this and a repeat. What it cannot do is be an Android WebView, which
+is exactly the difference that caused this - so the rule learned from it is
+written down as a rule and checked directly, rather than trusted to a browser
+that disagrees. 1129 checks pass, 24 more with a browser present, and the
+release build lints clean.
+
+## What was new in 2.5.8
 
 **The Creator tab would not scroll**, so a script longer than the screen had a
 bottom nobody could reach. Same for the Cloud tab, which is nearly four screens

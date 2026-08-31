@@ -24,28 +24,22 @@
 -->
 <style>
   /*
-    The panel is a shell, not a long page.
+    Nothing here is pinned to the viewport, and that is the point.
 
-    It used to be an ordinary document: a sticky bar at the top, a fixed bar
-    at the bottom, and the script between them scrolled by scrolling the page
-    itself. On a phone that page would not scroll - which is why the palette
-    ended up in an overlay of its own, and why a script longer than the
-    screen had a bottom nobody could reach.
+    This panel spent three releases being the one that would not scroll. It
+    had a sticky bar at the top and a button row fixed to the bottom, and it
+    was the only panel that did - the others are plain pages and scroll fine.
+    Trying to fix it by making the body its own scroller was worse: percentage
+    heights collapse the whole panel to nothing in this WebView.
 
-    So nothing relies on the document scrolling any more. The body is a
-    full-height column, the bar and the buttons are rows in it that do not
-    move, and the middle is an element with `overflow-y: auto` - the same
-    thing the sheets have always used, which is the part that does work.
+    So it is a plain page now, like the panels that work. The bar scrolls away
+    with everything else, and the buttons that used to be fixed at the bottom
+    sit at the top instead - where they are on screen the moment the panel
+    opens, without anybody having to scroll to reach them.
   */
-  html, body { height: 100%; }
-  body {
-    margin: 0; padding: 0;
-    display: flex; flex-direction: column;
-    overflow: hidden;
-  }
+  body { margin: 0; padding: 0 0 32px; }
 
   .bar {
-    flex: 0 0 auto;
     background: #0B0F14; border-bottom: 1px solid #223041;
     padding: 10px 14px 10px;
   }
@@ -77,13 +71,7 @@
   button.small.danger { border-color: #5A2A2A; color: #F0A5A5; }
   button.small:disabled { opacity: .45; }
 
-  /* The one thing that scrolls. */
-  .pane {
-    flex: 1 1 auto; min-height: 0;
-    overflow-y: auto; -webkit-overflow-scrolling: touch;
-    overscroll-behavior: contain;
-    padding: 12px 14px 28px;
-  }
+  .pane { padding: 12px 14px 0; }
   .head {
     display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
     margin: 18px 0 6px; color: #F1F5FA; font-weight: 600; font-size: 15px;
@@ -137,9 +125,10 @@
 
   /* -- overlays ------------------------------------------------------ */
   /*
-    A sheet covers the whole panel and scrolls inside itself. `fixed` rather
-    than `absolute` so it is the viewport it covers, whatever the shell
-    underneath is doing.
+    A sheet covers the whole panel and scrolls inside itself - which is the
+    one arrangement in this panel that has always worked on a phone, and the
+    reason the block picker is a sheet rather than a section of the page.
+    Closed, it is `display: none` and costs the layout nothing.
   */
   .sheet {
     position: fixed; top: 0; right: 0; bottom: 0; left: 0;
@@ -155,13 +144,13 @@
   .field { margin: 12px 0; }
   .field label { display: block; font-size: 12px; color: #8FA0B4; margin-bottom: 5px; }
 
-  .foot {
-    flex: 0 0 auto;
-    background: #0B0F14; border-top: 1px solid #223041;
-    padding: 10px 14px 14px;
+  /* What used to be the fixed footer, now the first thing under the bar. */
+  .actions {
+    background: #0B0F14; border-bottom: 1px solid #223041;
+    padding: 10px 14px 12px;
     display: flex; gap: 8px;
   }
-  .foot button { flex: 1 1 0; padding: 13px 8px; font-size: 14px; }
+  .actions button { flex: 1 1 0; padding: 13px 8px; font-size: 14px; }
   .empty {
     color: #8FA0B4; font-size: 13px; padding: 16px 12px;
     border: 1px dashed #223041; border-radius: 10px; text-align: center;
@@ -181,6 +170,12 @@
   <div class="muted" id="count" style="margin-top:7px">&nbsp;</div>
 </div>
 
+<div class="actions">
+  <button class="small primary" id="openAdd" style="flex:2 1 0">+ Add a block</button>
+  <button class="small" id="build">Code</button>
+  <button class="small" id="save">Save</button>
+</div>
+
 <div class="pane">
   <div id="trouble"></div>
 
@@ -190,12 +185,6 @@
     empty one.
   </div>
   <div id="script"></div>
-</div>
-
-<div class="foot">
-  <button class="small primary" id="openAdd" style="flex:2 1 0">+ Add a block</button>
-  <button class="small" id="build">Code</button>
-  <button class="small" id="save">Save</button>
 </div>
 
 <!--

@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sys
 import tempfile
 import time
@@ -386,26 +387,53 @@ for name, verb in (("scheduler", "jobs"), ("server-pro", "board_now")):
     check(f"{name} does not ask for {verb} with a plain call",
           f"pycmd.call('{verb}'" not in text, panel)
 
-say("\n== Creator scrolls without the document scrolling ==")
-# The panel used to be an ordinary long page: sticky bar, fixed buttons, and
-# the script scrolled by scrolling the document. On a phone that page would
-# not scroll, which is why the palette had to move into an overlay and why a
-# script longer than the screen had a bottom nobody could reach. It is a shell
-# now - a column that fills the panel, with one element in the middle that
-# scrolls - and that is the arrangement the sheets have always used and that
-# has always worked.
+say("\n== A panel cannot ask for a height the WebView will not give it ==")
+# 2.5.8 made every panel's body its own scroller with `height: 100%`, which
+# is a clean app shell in a browser and a black screen in the app: whatever
+# those percentages resolve against while a panel is first laid out, it is
+# not the height the panel ends up with, and it does not come back. Every
+# plugin's tab went blank. So: no percentage heights, anywhere in a panel.
+percent = re.compile(r"(?:^|[;{\s])(?:min-|max-)?height:\s*\d+%")
+
+
+def strip_comments(text):
+    text = re.sub(r"/\*.*?\*/", "", text, flags=re.S)
+    return re.sub(r"<!--.*?-->", "", text, flags=re.S)
+
+
+check("the house stylesheet asks for no percentage height",
+      not percent.search(strip_comments(plugins.PANEL_CSS)), "")
+for name in sorted(os.listdir(ASSETS)):
+    folder = os.path.join(ASSETS, name)
+    for panel in sorted(f for f in os.listdir(folder) if f.endswith(".html")):
+        with open(os.path.join(folder, panel), encoding="utf-8") as handle:
+            found = percent.search(strip_comments(handle.read()))
+        check(f"{name}/{panel} asks for none either", not found,
+              found.group(0) if found else "")
+
+say("\n== Creator keeps its buttons where they can be reached ==")
+# This panel was the one that would not scroll, and it was the only one with
+# chrome pinned to the viewport - a sticky bar and a footer fixed to the
+# bottom. It is a plain page now like the panels that always worked, and the
+# buttons that used to be fixed sit above the script instead, so they are on
+# screen the moment it opens whether or not anything scrolls.
 creator_panel = os.path.join(ASSETS, "creator", "ui.html")
 with open(creator_panel, encoding="utf-8") as handle:
     panel = handle.read()
-check("the body is a full-height column",
-      "html, body { height: 100%; }" in panel
-      and "flex-direction: column" in panel, creator_panel)
-check("the document itself does not scroll",
-      "overflow: hidden;" in panel, creator_panel)
-check("and the middle does",
-      "overflow-y: auto" in panel.split(".pane {")[1].split("}")[0], creator_panel)
-check("the buttons are a row of the shell, not floated over it",
-      "position: fixed" not in panel.split(".foot {")[1].split("}")[0], creator_panel)
+without_sheets = strip_comments(panel)
+check("the footer that was fixed to the bottom is gone",
+      ".foot {" not in without_sheets, creator_panel)
+# The picker's own header is sticky, and that is fine: it is inside a sheet,
+# which scrolls itself and has always worked. It is the page's own chrome
+# that had to stop being pinned.
+bar_rule = without_sheets.split(".bar {")[1].split("}")[0]
+check("and the top bar scrolls with the page like everything else",
+      "sticky" not in bar_rule and "fixed" not in bar_rule, bar_rule)
+check("the buttons are above the script, not below it",
+      0 < without_sheets.index('<div class="actions">')
+      < without_sheets.index('<div class="pane">'), creator_panel)
+check("and the block picker is still a sheet, which is what does work",
+      'id="addSheet"' in panel and "position: fixed" in panel, creator_panel)
 
 say("\n== The bridge offers both verbs ==")
 check("pycmd.poll is part of the bridge every panel gets",
@@ -418,19 +446,7 @@ check("and plain call is still there for everything else",
 check("and it tells the app when the page scrolls something itself",
       "innerScroll" in plugins.BRIDGE and "touchstart" in plugins.BRIDGE, "")
 
-say("\n== Every panel scrolls itself, not the document ==")
-# Leaving a panel to be scrolled by its document is what did not work on a
-# phone: a page taller than the panel had a bottom nobody could reach. The
-# body is exactly as tall as the panel and scrolls its own overflow instead -
-# and the root has to be `overflow: hidden` for that, because otherwise the
-# browser hands the body's overflow up to the viewport and the scrolling goes
-# straight back to where it was broken. tools/test_panels.js measures this in
-# a real browser; these two say it is still written down.
-check("the root is a fixed box that does not scroll",
-      "html { height: 100%; overflow: hidden; }" in plugins.PANEL_CSS, "")
-check("and the body is the scroller",
-      "height: 100%;" in plugins.PANEL_CSS
-      and "overflow-y: auto; -webkit-overflow-scrolling: touch;" in plugins.PANEL_CSS, "")
+
 
 say()
 if FAILURES:

@@ -7,11 +7,13 @@
  * to catch the class of bug this exists for: a panel taller than the screen
  * whose bottom nobody can reach.
  *
- * It found two things worth keeping a test for. A panel is not scrolled by
- * the document but by its own `body`, because leaving it to the document is
- * what did not work on a phone; and that only works if the root element's
- * overflow is hidden, because otherwise the browser hands the body's overflow
- * up to the viewport and puts the scrolling back where it was broken.
+ * The check it exists for above all is the dullest one: **the panel drew
+ * something**. 2.5.8 made the body its own scroller with `height: 100%`,
+ * which is a clean app shell in a browser and collapsed every panel to a
+ * black screen in the app's WebView. A browser here cannot reproduce that -
+ * it is a WebView difference - but a panel with no height and no text is
+ * caught either way, and the rule learned from it is checked directly: no
+ * percentage heights in a panel's CSS.
  *
  * Needs `playwright-core` and the Chromium at PLAYWRIGHT_BROWSERS_PATH. It
  * says so and skips when they are not there, rather than failing a suite that
@@ -129,43 +131,42 @@ async function main() {
     await page.goto('file://' + file);
     await page.waitForTimeout(900);
 
-    const before = await page.evaluate(() => {
-      const scrollers = [document.body, ...document.querySelectorAll('*')]
-        .filter((el) => {
-          const style = getComputedStyle(el);
-          return /(auto|scroll)/.test(style.overflowY) && el.scrollHeight > el.clientHeight + 2;
-        });
-      return {
-        rootOverflow: getComputedStyle(document.documentElement).overflow,
-        documentScrolls:
-          document.documentElement.scrollHeight > document.documentElement.clientHeight + 2,
-        overflows: scrollers.length > 0,
-      };
-    });
+    const before = await page.evaluate(() => ({
+      bodyHeight: Math.round(document.body.getBoundingClientRect().height),
+      text: (document.body.innerText || '').trim().length,
+      documentScrolls:
+        document.documentElement.scrollHeight > document.documentElement.clientHeight + 2,
+    }));
 
-    check(`${name}: the document itself is not the scroller`, !before.documentScrolls, before);
+    // The one that matters. A panel that laid out to nothing is the black
+    // screen a whole release shipped with.
+    check(`${name}: it drew something`,
+          before.bodyHeight > 80 && before.text > 20, before);
 
-    if (!before.overflows) {
+    if (!before.documentScrolls) {
       check(`${name}: it fits, so there is nothing to reach`, true);
     } else {
       await dragUp(page, 460, 140);
-      const moved = await page.evaluate(() =>
-        [document.body, ...document.querySelectorAll('*')]
-          .some((el) => el.scrollTop > 0));
-      check(`${name}: a finger drag moves it`, moved);
+      const moved = await page.evaluate(() => window.scrollY);
+      check(`${name}: a finger drag moves it`, moved > 0, moved);
     }
 
     check(`${name}: nothing threw while it drew`, errors.length === 0, errors);
     await page.close();
   }
 
-  console.log('\n== the shared stylesheet keeps the arrangement that works ==');
-  const [, firstPanel] = panels[0];
-  const html = fs.readFileSync(firstPanel, 'utf8');
-  check('the root is a fixed-height box that does not scroll',
-        /html\s*\{[^}]*height:\s*100%[^}]*overflow:\s*hidden/.test(html), '');
-  check('and the body is what scrolls',
-        /body\s*\{[^}]*height:\s*100%[^}]*overflow-y:\s*auto/.test(html), '');
+  console.log('\n== nothing depends on a height the WebView will not give it ==');
+  // `height: 100%` resolves against something the app's WebView does not
+  // agree with while a panel is first laid out, and the panel ends up with
+  // no height at all. Whatever a panel wants, it cannot want that.
+  for (const [name, file] of panels) {
+    const css = fs.readFileSync(file, 'utf8')
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/<!--[\s\S]*?-->/g, '');
+    check(`${name}: no percentage heights`,
+          !/(?:^|[;{\s])(?:min-|max-)?height:\s*\d+%/.test(css),
+          (css.match(/(?:min-|max-)?height:\s*\d+%/) || [])[0]);
+  }
 
   await browser.close();
 

@@ -1427,29 +1427,19 @@ PANEL_CSS = """
 :root { color-scheme: dark; }
 * { box-sizing: border-box; }
 /*
-  The panel scrolls itself.
+  The panel is an ordinary page and the document is what scrolls.
 
-  A panel is a WebView inside the app's own layout, and leaving the scrolling
-  to the document is the one thing that is not dependable there: a page taller
-  than the panel could end up with a bottom nobody could reach, which is how
-  the Creator tab's palette came to be "below the fold" and unreachable. So
-  `body` is exactly as tall as the panel and scrolls its own overflow - the
-  same arrangement the overlays have always used, and the one that works.
+  2.5.8 tried to make `body` its own scroller - `height: 100%` on the root and
+  on the body, with the overflow moved down to it. In a browser that is a
+  clean app shell. In the app's WebView it collapsed every panel to nothing:
+  a black screen with a sliver of content at the top. Whatever the WebView
+  resolves those percentages against while the page is first laid out, it is
+  not the height the panel ends up with, and it does not come back.
 
-  A panel that wants a header or a button row that stays put overrides these
-  and makes `body` a flex column of its own; the Creator tab does.
+  So: no percentage heights here, and nothing that depends on one. A panel is
+  a page, and a page taller than the screen scrolls the way pages do.
 */
-/*
-  `overflow: hidden` on the root is not decoration. With the root left at
-  `visible`, the browser propagates the body's overflow up to the viewport -
-  which puts the scrolling back where it was not working. Hidden here means
-  the body keeps its own.
-*/
-html { height: 100%; overflow: hidden; }
 body {
-  height: 100%;
-  overflow-y: auto; -webkit-overflow-scrolling: touch;
-  overscroll-behavior: contain;
   margin: 0; padding: 16px 14px 32px;
   background: #0B0F14; color: #DCE3EC;
   font: 15px/1.55 -apple-system, "Segoe UI", Roboto, sans-serif;
