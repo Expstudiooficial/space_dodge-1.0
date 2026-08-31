@@ -131,6 +131,35 @@ check("the summary counts agree",
       summary["installed"] == sum(1 for r in found if r["installed"]), summary)
 say(f"        (this machine has {summary['installed']} of {summary['toolchains']})")
 
+say("\n== a probe that will not answer is abandoned, not waited for ==")
+# The exact shape that hung a CI run for ten minutes: a program that exits
+# immediately but leaves a child holding the output pipe. `subprocess.run`
+# with a timeout kills the program, then blocks for ever waiting for a pipe
+# that the grandchild still has open. On Windows every JVM-language toolchain
+# is a .bat wrapper that does this, so it is the normal case, not a corner.
+import time as _time  # noqa: E402
+
+_hanging = (
+    "import subprocess, sys; "
+    "subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(120)'], "
+    "stdout=sys.stdout); print('gone')"
+)
+_started = _time.monotonic()
+_said = toolchains._probe_version(sys.executable, ("-c", _hanging))
+_took = _time.monotonic() - _started
+check("it gives up near its deadline rather than hanging",
+      _took < toolchains.PROBE_TIMEOUT + 4, f"{_took:.1f}s")
+check("and still returns whatever it managed to read",
+      isinstance(_said, str), repr(_said)[:60])
+
+_started = _time.monotonic()
+toolchains.clear_cache()
+toolchains.detect_all(refresh=True)
+_took = _time.monotonic() - _started
+check("and detecting all of them is quick enough for a screen",
+      _took < 60, f"{_took:.1f}s for {len(toolchains.TOOLCHAINS)}")
+say(f"        (all {len(toolchains.TOOLCHAINS)} probed in {_took:.1f}s)")
+
 say("\n== planning a run ==")
 plan = toolchains.plan_for(os.path.join(_HOME, "x.py"), "python")
 check("a language with a toolchain gets a plan", plan["ok"] or plan["reason"] == "missing", plan)

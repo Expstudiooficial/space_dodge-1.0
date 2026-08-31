@@ -26,10 +26,12 @@ make it a bug.
 
 from __future__ import annotations
 
+import concurrent.futures
 import os
 import re
 import shutil
 import subprocess
+import threading
 import time
 
 __all__ = [
@@ -41,12 +43,18 @@ WINDOWS = os.name == "nt"
 
 # How long a version probe may take. A toolchain that has to warm a JVM is the
 # slow case; anything past this is not going to be useful interactively.
-PROBE_TIMEOUT = 12.0
+PROBE_TIMEOUT = 8.0
+
+# How many to ask at once. Fifty-one probes one after another is minutes on a
+# developer's machine, and this screen has to be usable. They are all waiting
+# on other processes rather than on the GIL, so threads are the right tool.
+PROBE_WORKERS = 8
 
 # Detection is cached for the life of the process, keyed by toolchain id. The
 # PATH does not usually change while an app is open, and probing forty
 # compilers on every visit to the Toolchains screen would make it useless.
 _found: dict[str, dict] = {}
+_found_lock = threading.Lock()
 
 
 class Toolchain:
@@ -543,23 +551,76 @@ def _which(program: str) -> str:
     return shutil.which(program) or ""
 
 
+def _kill_tree(process) -> None:
+    """Ends a probe and anything it started."""
+    try:
+        if WINDOWS:
+            subprocess.run(
+                ["taskkill", "/F", "/T", "/PID", str(process.pid)],
+                capture_output=True, timeout=5, creationflags=_no_window(),
+            )
+        else:
+            process.kill()
+    except Exception:  # noqa: BLE001 - it may already be gone
+        try:
+            process.kill()
+        except Exception:  # noqa: BLE001
+            pass
+
+
 def _probe_version(path: str, args) -> str:
-    """Asks a toolchain what version it is, and does not care much if it will not say.
+    """Asks a toolchain what version it is, and gives up rather than waiting.
 
     Several of these print their version to stderr rather than stdout - java
     and kotlinc both do - so both are read. A toolchain that answers nothing
     useful is still installed; the version is decoration.
+
+    **This must not use `subprocess.run(timeout=...)`,** which is the obvious
+    way to write it and hangs. On a timeout `run` kills the child and then
+    waits for the output pipe to close - and if a *grandchild* inherited that
+    pipe, it never does. On Windows `kotlinc`, `scala`, `groovy` and `clojure`
+    are all .bat wrappers that spawn java.exe, so that is not a corner case:
+    it is what happens on any machine with a JVM language installed, and it
+    hung a CI run for ten minutes before it hung anybody's Toolchains screen.
+
+    So the read happens on a daemon thread that is joined with a deadline. If
+    the deadline passes the process tree is killed and the thread is abandoned;
+    a stuck pipe costs one leaked thread rather than the whole app.
     """
     try:
-        finished = subprocess.run(
+        process = subprocess.Popen(
             [path, *args],
-            capture_output=True, text=True, timeout=PROBE_TIMEOUT,
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
             stdin=subprocess.DEVNULL,
+            text=True, encoding="utf-8", errors="replace",
             creationflags=_no_window(),
         )
-    except (OSError, subprocess.SubprocessError):
+    except (OSError, ValueError):
         return ""
-    return ((finished.stdout or "") + "\n" + (finished.stderr or "")).strip()
+
+    collected = []
+
+    def read():
+        try:
+            collected.append(process.stdout.read())
+        except Exception:  # noqa: BLE001 - the pipe may be torn out from under it
+            pass
+
+    reader = threading.Thread(target=read, name="pycmd-probe", daemon=True)
+    reader.start()
+    reader.join(PROBE_TIMEOUT)
+
+    if reader.is_alive():
+        _kill_tree(process)
+        # One second of grace for the kill to take effect, then leave it. The
+        # thread is a daemon and holds nothing that matters.
+        reader.join(1.0)
+
+    try:
+        process.wait(timeout=1)
+    except Exception:  # noqa: BLE001
+        pass
+    return "".join(collected).strip()
 
 
 def _no_window() -> int:
@@ -579,6 +640,9 @@ def detect(toolchain_id: str, refresh: bool = False) -> dict:
 
     path = _which(chain.program)
     found = {"path": path, "version": "", "checked_at": int(time.time())}
+    # Written from the pool in detect_all, so the assignment below is done
+    # under a lock. CPython would make it atomic anyway; saying so is cheaper
+    # than relying on it.
     if path:
         text = _probe_version(path, chain.version_args)
         match = re.search(chain.version_pattern, text) if chain.version_pattern else None
@@ -588,17 +652,25 @@ def detect(toolchain_id: str, refresh: bool = False) -> dict:
             # No pattern matched, so show the first line rather than nothing:
             # "it is here and it said something" beats a blank.
             found["version"] = text.splitlines()[0][:60]
-    _found[toolchain_id] = found
+    with _found_lock:
+        _found[toolchain_id] = found
     return dict(found)
 
 
 def detect_all(refresh: bool = False) -> list:
-    """Every toolchain, with what was found. This is the Toolchains screen."""
-    rows = []
-    for chain in TOOLCHAINS:
-        detect(chain.id, refresh=refresh)
-        rows.append(chain.as_dict())
-    return rows
+    """Every toolchain, with what was found. This is the Toolchains screen.
+
+    Probed in parallel: fifty-one one after another is minutes on a machine
+    with a lot installed, and every one of them is waiting on another process
+    rather than on the GIL.
+    """
+    wanted = [chain for chain in TOOLCHAINS if refresh or chain.id not in _found]
+    if wanted:
+        with concurrent.futures.ThreadPoolExecutor(
+            max_workers=PROBE_WORKERS, thread_name_prefix="pycmd-detect",
+        ) as pool:
+            list(pool.map(lambda chain: detect(chain.id, refresh=refresh), wanted))
+    return [chain.as_dict() for chain in TOOLCHAINS]
 
 
 def installed_ids(refresh: bool = False) -> list:
@@ -606,7 +678,8 @@ def installed_ids(refresh: bool = False) -> list:
 
 
 def clear_cache() -> None:
-    _found.clear()
+    with _found_lock:
+        _found.clear()
 
 
 def summary(refresh: bool = False) -> dict:
