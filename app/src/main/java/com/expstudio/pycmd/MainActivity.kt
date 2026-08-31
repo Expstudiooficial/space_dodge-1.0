@@ -9,6 +9,7 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
+import com.expstudio.pycmd.ui.PanelViews
 import com.expstudio.pycmd.ui.PyCmdRoot
 import com.expstudio.pycmd.ui.PyCmdTheme
 
@@ -31,6 +32,19 @@ class MainActivity : ComponentActivity() {
                 PyCmdRoot()
             }
         }
+    }
+
+    /**
+     * Lets go of the plugin panels kept warm between visits.
+     *
+     * They hold this activity's context, so they cannot outlive it. After
+     * `super`, deliberately: tearing the composition down is what parks them,
+     * and clearing before that would clear an empty pool and then fill it with
+     * views belonging to a screen that no longer exists.
+     */
+    override fun onDestroy() {
+        super.onDestroy()
+        PanelViews.clear()
     }
 
     private fun requestNotificationPermissionIfNeeded() {

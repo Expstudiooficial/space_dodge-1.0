@@ -22,6 +22,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
@@ -38,6 +39,8 @@ import com.expstudio.pycmd.plugins.InstalledPlugin
 import com.expstudio.pycmd.plugins.PluginExtension
 import com.expstudio.pycmd.plugins.PluginGuide
 import java.io.File
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 /**
  * The sections plugins have added to one of the app's own screens.
@@ -127,7 +130,7 @@ private fun PluginSectionCard(
                 .padding(14.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            val image = remember(extension.image) { loadPluginImage(extension.image) }
+            val image = pluginImage(extension.image)
             if (image != null) {
                 Image(
                     bitmap = image,
@@ -193,6 +196,35 @@ private fun PluginSectionCard(
 
 /** The icon is drawn at 24dp; decoding anything much larger is wasted work. */
 private const val ICON_TARGET_PIXELS = 128
+
+/** Decoded once per path, because these are drawn in lists that scroll. */
+private val decoded = mutableMapOf<String, ImageBitmap?>()
+
+/**
+ * A plugin's icon, decoded off the main thread and remembered.
+ *
+ * The decode used to happen inside `remember`, which is to say on the main
+ * thread, in the middle of laying out a row of a scrolling list - one file
+ * read and one bitmap decode per icon, every time the row came back on
+ * screen. That is a stutter you can feel, and the fix is the ordinary one:
+ * do it on a background thread, keep the answer, and draw nothing until it
+ * arrives.
+ */
+@Composable
+fun pluginImage(path: String): ImageBitmap? {
+    if (path.isBlank()) return null
+    val cached = synchronized(decoded) { decoded[path] }
+    if (cached != null || synchronized(decoded) { decoded.containsKey(path) }) return cached
+
+    val state = produceState<ImageBitmap?>(initialValue = null, path) {
+        value = withContext(Dispatchers.IO) {
+            val bitmap = loadPluginImage(path)
+            synchronized(decoded) { decoded[path] = bitmap }
+            bitmap
+        }
+    }
+    return state.value
+}
 
 /**
  * Decodes a picture a plugin ships, or gives up quietly.

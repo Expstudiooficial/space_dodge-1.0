@@ -57,6 +57,7 @@ echo
 echo "== WebView JavaScript =="
 node tools/test_js.js
 node tools/test_editor.js
+node tools/test_bridge.js
 node tools/test_creator_ui.js
 
 echo

@@ -1250,18 +1250,61 @@ BRIDGE = """
   var nextId = 1;
   var listeners = {};
 
+  // What is on its way right now, by name and arguments. Only used by
+  // pycmd.poll - see below for why call itself does not look at it.
+  var inFlight = {};
+
   function call(name, payload) {
+    var body = JSON.stringify(payload === undefined ? null : payload);
+    var signature = name + ':' + body;
     var id = nextId++;
-    return new Promise(function (resolve, reject) {
-      pending[id] = { resolve: resolve, reject: reject };
-      window.__pycmd_panel.call(String(id), name, JSON.stringify(payload === undefined ? null : payload));
+    var slot = { signature: signature };
+    var promise = new Promise(function (resolve, reject) {
+      slot.resolve = resolve;
+      slot.reject = reject;
+      pending[id] = slot;
+      // A plugin that never answers would otherwise leave the page waiting
+      // for ever, which looks exactly like a page that has stopped working.
+      slot.timer = setTimeout(function () {
+        if (!pending[id]) return;
+        delete pending[id];
+        if (inFlight[signature] === slot.promise) delete inFlight[signature];
+        reject(new Error(name + ' has not answered in two minutes'));
+      }, 120000);
     });
+    slot.promise = promise;
+    inFlight[signature] = promise;
+    window.__pycmd_panel.call(String(id), name, body);
+    return promise;
+  }
+
+  /**
+   * A refresh, which is not worth making twice at once.
+   *
+   * Panels poll, and a phone busy running somebody's script answers slowly:
+   * without this a panel left open starts a fresh call every tick while the
+   * last one is still out, and a hundred identical questions queue up behind
+   * each other. If the very same call is already on its way, this waits for
+   * that one instead of asking again.
+   *
+   * Deliberately not what plain `call` does. Two taps on "Add" with the same
+   * values are two jobs, not one, and a bridge that quietly turned them into
+   * one would be a bridge that loses work. This is the opt-in version, for
+   * reads that are asked over and over.
+   */
+  function poll(name, payload) {
+    var signature = name + ':' + JSON.stringify(payload === undefined ? null : payload);
+    return inFlight[signature] || call(name, payload);
   }
 
   window.__pycmd_resolve = function (id, ok, body) {
     var slot = pending[id];
     if (!slot) return;
     delete pending[id];
+    if (slot.timer) clearTimeout(slot.timer);
+    // Only if it is still this one: two plain calls with the same arguments
+    // both write here, and the first to come back must not clear the second.
+    if (inFlight[slot.signature] === slot.promise) delete inFlight[slot.signature];
     var parsed;
     try { parsed = JSON.parse(body); } catch (e) { parsed = body; }
     if (ok) slot.resolve(parsed && parsed.result !== undefined ? parsed.result : parsed);
@@ -1276,6 +1319,7 @@ BRIDGE = """
 
   window.pycmd = {
     call: call,
+    poll: poll,
     on: function (event, fn) { (listeners[event] = listeners[event] || []).push(fn); },
     toast: function (text) { window.__pycmd_panel.toast(String(text)); },
     log: function (text) { window.__pycmd_panel.log(String(text)); },

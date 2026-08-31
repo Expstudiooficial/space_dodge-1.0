@@ -1,17 +1,82 @@
 # Prebuilt APK
 
-`PyCmd-2.5.5.apk` — ready to install, nothing else needed.
+`PyCmd-2.5.6.apk` — ready to install, nothing else needed.
 
 | | |
 |---|---|
 | Package | `com.expstudio.pycmd.debug` |
-| Version | 2.5.5 |
+| Version | 2.5.6 |
 | Size | 18 MB |
 | Signed with | the key in [`keystore/`](../keystore/), committed so updates can install over it |
 | Works on | Android 7.0 (API 24) and newer, **arm64-v8a** (every phone since about 2016) |
 | SHA-256 | see [SHA256SUMS.txt](SHA256SUMS.txt) |
 
-## What is new in 2.5.5
+## What is new in 2.5.6
+
+**The app stopped for a moment, came back, stopped again.** Not one bug -
+four, all of them plugin-shaped, and all of them work being done on the one
+thread that also has to answer your finger. This release is that thread being
+given less to do.
+
+**A plugin's section was thrown away every time you scrolled past it.** The
+card a plugin adds to Servers or Files is an item in a scrolling list, and a
+list like that destroys items that go off screen and builds them again when
+they come back. Inside that item was a whole WebView: destroyed, rebuilt, its
+page loaded again, its JavaScript run again - a tenth of a second each way,
+and everything you had typed into it gone. Scroll up and down a screen with
+two sections open and that *is* the freezing.
+
+Panels are now kept alive between visits: same page, same scroll position,
+same half-filled form, no work at all to show one again. Five stay warm, the
+oldest is let go past that, and a panel that is not on screen has its timers
+stopped so a section you scrolled by is not still asking questions in the
+background. Switching a plugin off drops its panels straight away.
+
+**The debug log copied three thousand entries per line written.** Every
+message - and plugins, servers and pages write a lot of them - copied the
+whole buffer, counted the errors in it again, and told the screen to redraw.
+A busy second was hundreds of thousands of operations and hundreds of
+redraws. A line now costs one insertion, and the screen is told at most a few
+times a second.
+
+**Plugin panels could crowd out everything else.** Panels that refresh on a
+timer shared a pool of four threads with the Files listing, the Servers
+refresh and every other thing a tab needs - so four slow panel calls meant the
+tab you were actually looking at waited behind them. Panel calls now have a
+thread of their own and cannot take anybody else's.
+
+**And the smaller ones from the same sweep:**
+
+- A plugin's icon was read from disk and decoded on the main thread, in the
+  middle of laying out a scrolling row. It happens off it now, once per icon.
+- The Files tab asked the filesystem whether each row was a folder, for every
+  row, on every redraw, to work out which plugin actions applied - two hundred
+  files meant two hundred questions it already knew the answer to. With no
+  plugins on it does not ask at all.
+- Console output is turned into a script on a background thread rather than
+  between two frames, so a program that talks a lot no longer makes the app
+  slow to touch while it does.
+- The two panels that refresh on a timer stop while they are off screen, and
+  join a refresh that is already out rather than starting another one.
+
+**For plugin authors:** the bridge has a second verb. `pycmd.poll(name,
+payload)` is `pycmd.call` with one difference - if the very same question is
+already on its way, it waits for that answer instead of asking again. Use it
+for a refresh on a timer; keep `call` for anything that changes something,
+because two presses of *Add* are two jobs and `poll` would make them one. A
+call that is never answered now rejects on its own after two minutes rather
+than leaving the page waiting for ever. Both are in PLUGINS.md.
+
+**Creator's block picker** redraws its list in one write with one shared tap
+handler, instead of building and throwing away a hundred and fifty elements
+with a handler each on every letter typed into the search box.
+
+None of this can be shown working without a phone, and there is no emulator
+here: 1097 checks cover the logic - the bridge's two verbs, the panels that
+stop when hidden, what the picker draws - and the rest is a release build that
+compiles and lints clean.
+
+## What was new in 2.5.5
 
 **The blocks were on the screen and nowhere anybody could see them.** The
 palette sat at the bottom of the same scrolling page as your script - so on a

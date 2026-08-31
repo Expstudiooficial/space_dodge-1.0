@@ -506,7 +506,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         // copying both for every single line meant a server logging a request
         // per file did more work rebuilding lists than serving. Collecting a
         // burst first turns hundreds of copies into one.
-        viewModelScope.launch {
+        // On a background thread, deliberately. Rebuilding a fifteen-hundred
+        // line scrollback is real work, and a server printing steadily made
+        // the main thread do it sixty times a second - which is a phone that
+        // stops responding to a finger while something is logging.
+        viewModelScope.launch(Dispatchers.Default) {
             val queue = Channel<OutputChunk>(4096, BufferOverflow.DROP_OLDEST)
             launch {
                 engine.output.collect { chunk ->
@@ -573,6 +577,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
      */
     override fun onCleared() {
         hub.release()
+        PanelViews.clear()
         super.onCleared()
     }
 
@@ -695,6 +700,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun setCustomPluginEnabled(id: String, on: Boolean) {
         CustomPlugins.setEnabled(id, on)
+        // A panel kept warm for a plugin that has just been switched off is a
+        // page that can still call into it. It goes now, not when something
+        // else needs the room.
+        if (!on) PanelViews.forget(id)
         viewModelScope.launch {
             loadEnabledPlugins()
             val plugin = CustomPlugins.installed.value.firstOrNull { it.id == id }
@@ -753,6 +762,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             val reply = engine.removePlugin(plugin.id)
             if (reply.optBoolean("ok")) {
                 CustomPlugins.forget(plugin.id)
+                PanelViews.forget(plugin.id)
                 showToast("${plugin.name} removed")
                 refreshCustomPlugins()
             } else {
@@ -1341,13 +1351,26 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
      * Returned with the plugin, because acting on one means calling that
      * plugin's export - and two plugins can both want a line on the same file.
      */
-    fun actionsFor(file: File): List<Pair<InstalledPlugin, PluginFileAction>> {
+    /**
+     * What switched-on plugins offer to do with one file.
+     *
+     * Takes the name and whether it is a folder rather than the [File],
+     * because this is called for every row of the Files tab on every redraw
+     * and `File.isDirectory` is a trip to the filesystem each time. The list
+     * already knows; asking the disk two hundred times while a finger is
+     * moving is how scrolling a big folder came to stutter.
+     *
+     * The early return matters for the same reason: with no plugins on there
+     * is nothing to work out, and that is most people most of the time.
+     */
+    fun actionsFor(name: String, isDirectory: Boolean): List<Pair<InstalledPlugin, PluginFileAction>> {
         val on = CustomPlugins.enabled.value
+        if (on.isEmpty()) return emptyList()
         return CustomPlugins.installed.value
             .filter { it.id in on }
             .flatMap { plugin ->
                 plugin.actions
-                    .filter { it.appliesTo(file.name, file.isDirectory) }
+                    .filter { it.appliesTo(name, isDirectory) }
                     .map { plugin to it }
             }
     }

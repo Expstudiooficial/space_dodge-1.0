@@ -26,8 +26,8 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.RememberObserver
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -40,6 +40,8 @@ import com.expstudio.pycmd.python.PythonEngine
 import com.expstudio.pycmd.util.DebugLog
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
@@ -60,19 +62,102 @@ fun PluginPanelView(
     panelFile: String = "",
 ) {
     val context = LocalContext.current
-    val scope = rememberCoroutineScope()
     val key = "${plugin.id}:$panelFile"
 
-    val bridge = remember(key) { PanelBridge(plugin, viewModel, scope) }
+    // Taken once. A panel that has been shown before comes back whole - its
+    // page, its scroll position, and whatever was typed into it - and a panel
+    // that has not is built now.
+    val lease = remember(key) {
+        val kept = PanelViews.take(key)
+        val bridge = kept?.bridge ?: PanelBridge(plugin)
+        PanelLease(
+            key = key,
+            view = kept?.view ?: newPanelView(context, bridge, plugin),
+            bridge = bridge,
+            wasKept = kept != null,
+        )
+    }
+    val bridge = lease.bridge
+    val webView = lease.view
 
-    val webView = remember(key) {
+    DisposableEffect(webView, viewModel) {
+        bridge.bind(viewModel)
+        bridge.attach(webView)
+        onDispose {
+            bridge.detach()
+            // Out of the list, not out of existence: this item may be two
+            // scrolled rows away from being needed again.
+            PanelViews.keep(key, webView, bridge)
+        }
+    }
+
+    LaunchedEffect(key) {
+        // Only the first time. Loading the page again on every visit is what
+        // made scrolling past a section cost a page load - and it would throw
+        // away everything the panel had on screen.
+        if (lease.wasKept) return@LaunchedEffect
+        val html = viewModel.pluginPanelHtml(plugin.id, panelFile)
+        val base = "file://${PythonEngine.pluginDirectory(plugin.id).absolutePath}/"
+        webView.loadDataWithBaseURL(base, html, "text/html", "utf-8", null)
+    }
+
+    // A plugin can push to its panel while it is open.
+    LaunchedEffect(key) {
+        PythonEngine.pluginMessages.collect { (id, body) ->
+            if (id == plugin.id) bridge.deliver(body)
+        }
+    }
+
+    AndroidView(factory = { webView }, modifier = modifier)
+}
+
+/**
+ * The panel this composition has borrowed from [PanelViews].
+ *
+ * A `remember` that took something out of a shared pool has to be able to put
+ * it back, and there is one case where nothing else will: Compose builds an
+ * item, then throws the whole composition away before it is ever applied - a
+ * lazy list looking ahead and changing its mind. `onDispose` never runs for
+ * one of those, so without [onAbandoned] the panel would be gone from the
+ * pool and held by nobody, which is a WebView leaked per near-miss scroll.
+ */
+private class PanelLease(
+    val key: String,
+    val view: WebView,
+    val bridge: PanelBridge,
+    /** Whether it came back from the pool, and so is already loaded. */
+    val wasKept: Boolean,
+) : RememberObserver {
+    override fun onRemembered() = Unit
+
+    override fun onForgotten() = Unit
+
+    override fun onAbandoned() {
+        PanelViews.keep(key, view, bridge)
+    }
+}
+
+/**
+ * A WebView set up the way every plugin panel wants one.
+ *
+ * Built here rather than inside the composable because the view outlives the
+ * composition now - see [PanelViews] - and a factory that closes over
+ * composition state would be a factory that kept it alive.
+ */
+@SuppressLint("SetJavaScriptEnabled", "ClickableViewAccessibility")
+private fun newPanelView(
+    context: android.content.Context,
+    bridge: PanelBridge,
+    plugin: InstalledPlugin,
+): WebView {
+    run {
         // Where the finger was on the previous move, so the direction of a
         // drag is known before deciding who should own it. A one-element array
         // rather than a captured var: it belongs to this WebView, and there is
         // one of these per panel.
         val lastTouchY = floatArrayOf(0f)
 
-        WebView(context).apply {
+        return WebView(context).apply {
             settings.javaScriptEnabled = true
             settings.domStorageEnabled = true
             // A panel loads its own images and stylesheets from the plugin's
@@ -177,30 +262,6 @@ fun PluginPanelView(
             }
         }
     }
-
-    DisposableEffect(webView) {
-        bridge.attach(webView)
-        onDispose {
-            bridge.detach()
-            webView.stopLoading()
-            webView.destroy()
-        }
-    }
-
-    LaunchedEffect(key) {
-        val html = viewModel.pluginPanelHtml(plugin.id, panelFile)
-        val base = "file://${PythonEngine.pluginDirectory(plugin.id).absolutePath}/"
-        webView.loadDataWithBaseURL(base, html, "text/html", "utf-8", null)
-    }
-
-    // A plugin can push to its panel while it is open.
-    LaunchedEffect(key) {
-        PythonEngine.pluginMessages.collect { (id, body) ->
-            if (id == plugin.id) bridge.deliver(body)
-        }
-    }
-
-    AndroidView(factory = { webView }, modifier = modifier)
 }
 
 /**
@@ -269,14 +330,30 @@ fun PluginPanelScreen(
  * Every method arrives on the WebView's bridge thread, so none of them touch
  * the view directly: the reply is posted back on the main thread once Python
  * has answered.
+ *
+ * It has a scope of its own rather than the composition's. The view it serves
+ * outlives any one composition now - a section scrolled out of a list keeps
+ * its page - and a bridge holding a cancelled scope would be a panel whose
+ * buttons quietly stopped working the second time you looked at it.
  */
-private class PanelBridge(
-    private val plugin: InstalledPlugin,
-    private val viewModel: MainViewModel,
-    private val scope: CoroutineScope,
-) {
+class PanelBridge(private val plugin: InstalledPlugin) {
+
+    // Off the main thread. A reply can be large - the Creator plugin's block
+    // catalogue is three hundred odd entries - and turning that back into a
+    // string to hand to the page is real work that has no business happening
+    // between two frames.
+    private val scope = CoroutineScope(Dispatchers.Default + SupervisorJob())
+
     @Volatile
     private var view: WebView? = null
+
+    @Volatile
+    private var host: MainViewModel? = null
+
+    /** Points the bridge at the view model of whoever is showing it now. */
+    fun bind(viewModel: MainViewModel) {
+        host = viewModel
+    }
 
     fun attach(webView: WebView) {
         view = webView
@@ -286,24 +363,33 @@ private class PanelBridge(
         view = null
     }
 
+    /** The panel is gone for good; nothing it asked for matters any more. */
+    fun release() {
+        view = null
+        host = null
+        scope.cancel()
+    }
+
     @JavascriptInterface
     fun call(id: String, name: String, payload: String) {
+        val model = host ?: return
         scope.launch {
-            val reply = viewModel.callPluginExport(plugin.id, name, payload)
+            val reply = model.callPluginExport(plugin.id, name, payload)
             val ok = reply.optBoolean("ok")
+            // Built here, on a background thread; the main thread only gets
+            // handed the finished string.
+            val script = "__pycmd_resolve(${JSONObject.quote(id)}, $ok, " +
+                "${JSONObject.quote(reply.toString())})"
             withContext(Dispatchers.Main) {
-                view?.evaluateJavascript(
-                    "__pycmd_resolve(${JSONObject.quote(id)}, $ok, " +
-                        "${JSONObject.quote(reply.toString())})",
-                    null,
-                )
+                view?.evaluateJavascript(script, null)
             }
         }
     }
 
     @JavascriptInterface
     fun toast(message: String) {
-        scope.launch { viewModel.showToast(message.take(200)) }
+        val model = host ?: return
+        scope.launch { model.showToast(message.take(200)) }
     }
 
     @JavascriptInterface
@@ -313,7 +399,8 @@ private class PanelBridge(
 
     @JavascriptInterface
     fun close() {
-        scope.launch { withContext(Dispatchers.Main) { viewModel.closePluginPanel() } }
+        val model = host ?: return
+        scope.launch { withContext(Dispatchers.Main) { model.closePluginPanel() } }
     }
 
     @JavascriptInterface

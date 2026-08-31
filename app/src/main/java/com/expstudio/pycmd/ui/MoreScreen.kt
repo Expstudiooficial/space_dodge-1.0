@@ -184,7 +184,7 @@ fun MoreScreen(
  */
 @Composable
 private fun PluginTabRow(plugin: InstalledPlugin, onClick: () -> Unit) {
-    val image = remember(plugin.tabImage) { loadPluginImage(plugin.tabImage) }
+    val image = pluginImage(plugin.tabImage)
 
     PyCard(contentPadding = PaddingValues(0.dp)) {
         Row(

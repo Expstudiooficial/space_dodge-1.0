@@ -30,8 +30,20 @@
     catch (error) { return { ok: false, error: error.message }; }
   }
 
+  /** The same, but joins a refresh that is already out rather than adding one. */
+  async function reread(name, payload) {
+    try { return await pycmd.poll(name, payload || {}); }
+    catch (error) { return { ok: false, error: error.message }; }
+  }
+
   async function refresh() {
-    const data = await call('jobs');
+    // A panel that is not on screen has nobody to show anything to, and a
+    // call it makes anyway is a call the tab you *are* looking at waits behind.
+    if (document.hidden) return;
+    // reread, not call: on a busy phone the five-second tick can come round
+    // before the last answer has, and asking again would only add to the
+    // queue the first one is already waiting in.
+    const data = await reread('jobs');
     const rows = data.jobs || [];
     if (!rows.length) {
       $('jobs').innerHTML = '<div class="card"><p>Nothing is scheduled.</p></div>';

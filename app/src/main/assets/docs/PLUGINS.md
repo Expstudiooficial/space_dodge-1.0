@@ -493,6 +493,7 @@ Any HTML file works. PyCmd injects a stylesheet that matches the app and a
 
 ```js
 await pycmd.call('export_name', payload)   // runs your Python, resolves with its return
+await pycmd.poll('export_name', payload)   // the same, for a refresh on a timer
 pycmd.on('message', (data) => { ... })     // receives api.send(...)
 pycmd.toast('done')                        // the app's toast
 pycmd.log('something happened')            // the debug console
@@ -502,7 +503,30 @@ pycmd.plugin                               // { id, name, version, author }
 
 `pycmd.call` returns a promise. If your Python raises, the promise rejects
 with the error message — so `try { await … } catch (e) { … }` shows the user
-something better than nothing.
+something better than nothing. A call that is never answered rejects on its
+own after two minutes rather than leaving the page waiting for ever.
+
+### Refreshing on a timer
+
+If your panel re-reads something every few seconds, use `pycmd.poll` instead
+of `pycmd.call`, and stop while nobody is looking:
+
+```js
+async function refresh() {
+  if (document.hidden) return;          // the panel is behind another tab
+  draw(await pycmd.poll('board_now', {}));
+}
+setInterval(refresh, 2000);
+```
+
+`poll` is `call` with one difference: if the very same question is already on
+its way, it waits for that answer rather than asking again. On a busy phone
+the tick comes round before the reply does, and without this a panel left open
+builds a queue of identical questions that everything else waits behind.
+
+**Use `call` for anything that changes something.** Two presses of *Add* with
+the same values in the form are two jobs, and `poll` would quietly make them
+one. `poll` is for reads.
 
 Your own CSS, images and scripts load from the plugin folder with relative
 paths (`<img src="assets/logo.png">`). The page cannot navigate anywhere else:
@@ -862,6 +886,7 @@ EVENTS
 THE PANEL (optional HTML file)
 PyCmd injects a dark stylesheet and a bridge. Available in the page:
   await pycmd.call('export_name', payload)  -> resolves with the Python return
+  await pycmd.poll('export_name', payload)  -> the same, for a timer refresh
   pycmd.on('message', cb)                   -> receives api.send(...)
   pycmd.toast(text) | pycmd.log(text) | pycmd.close() | pycmd.plugin
 Relative paths load from the plugin folder. The page cannot navigate away.

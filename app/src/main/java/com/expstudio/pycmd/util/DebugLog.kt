@@ -4,6 +4,9 @@ import android.util.Log
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -63,17 +66,37 @@ data class LogEntry(
  * misbehaves and the console has nothing useful to say, this is the place that
  * does.
  *
- * Writes are cheap and safe from any thread: entries go into a capped list
- * behind a lock, and the flow is what the UI observes.
+ * Writes are cheap and safe from any thread, and *staying* cheap is the whole
+ * design. This used to copy the entire three-thousand-entry buffer and count
+ * its errors on every single line, then publish both - so one line cost two
+ * passes over three thousand entries, and a burst of a few hundred lines
+ * (a chatty server, a page throwing in a loop) cost hundreds of thousands of
+ * operations and hundreds of recompositions on the main thread. That is what
+ * "the app froze for a second" was made of.
+ *
+ * Now a write is O(1): the entry goes on the end, the error count moves by one
+ * if it has to, and a snapshot is published on a timer at most a few times a
+ * second. A hundred lines in one burst is one snapshot and one recomposition.
  */
 object DebugLog {
 
     private const val TAG = "PyCmd"
     private const val CAPACITY = 3000
 
+    /** How often a burst of writing turns into a redraw. */
+    private const val PUBLISH_EVERY_MS = 120L
+
     private val lock = Any()
     private val buffer = ArrayDeque<LogEntry>(CAPACITY)
     private val nextId = AtomicLong(0)
+
+    /** Kept as the buffer changes rather than counted on every write. */
+    private var errors = 0
+
+    private val publishPending = AtomicBoolean(false)
+    private val publisher = Executors.newSingleThreadScheduledExecutor { runnable ->
+        Thread(runnable, "pycmd-log").apply { isDaemon = true }
+    }
 
     private val _entries = MutableStateFlow<List<LogEntry>>(emptyList())
     val entries: StateFlow<List<LogEntry>> = _entries.asStateFlow()
@@ -107,16 +130,14 @@ object DebugLog {
             detail = detail?.let(::stripAnsiCodes)?.take(20000),
         )
 
-        val snapshot: List<LogEntry>
-        var errors = 0
         synchronized(lock) {
             buffer.addLast(entry)
-            while (buffer.size > CAPACITY) buffer.removeFirst()
-            snapshot = buffer.toList()
-            errors = buffer.count { it.level == LogLevel.ERROR }
+            if (entry.level == LogLevel.ERROR) errors += 1
+            while (buffer.size > CAPACITY) {
+                if (buffer.removeFirst().level == LogLevel.ERROR) errors -= 1
+            }
         }
-        _entries.value = snapshot
-        _errorCount.value = errors
+        publishSoon()
 
         // Mirror to logcat so `adb logcat` still shows everything.
         when (level) {
@@ -127,10 +148,51 @@ object DebugLog {
         }
     }
 
+    /**
+     * Publishes the buffer to whoever is watching, at most once every
+     * [PUBLISH_EVERY_MS].
+     *
+     * The first write after a quiet spell schedules the flush; every write
+     * until it runs joins it. So a line on its own still reaches the screen in
+     * a tenth of a second, and a thousand at once still cost one copy.
+     */
+    private fun publishSoon() {
+        if (!publishPending.compareAndSet(false, true)) return
+        runCatching {
+            publisher.schedule(::publishNow, PUBLISH_EVERY_MS, TimeUnit.MILLISECONDS)
+        }.onFailure {
+            // No scheduler (a shutting-down process): publish here instead of
+            // dropping the line.
+            publishPending.set(false)
+            publishNow()
+        }
+    }
+
+    private fun publishNow() {
+        publishPending.set(false)
+        val snapshot: List<LogEntry>
+        val count: Int
+        synchronized(lock) {
+            snapshot = buffer.toList()
+            count = errors
+        }
+        _entries.value = snapshot
+        _errorCount.value = count
+    }
+
     fun clear() {
-        synchronized(lock) { buffer.clear() }
+        synchronized(lock) {
+            buffer.clear()
+            errors = 0
+        }
         _entries.value = emptyList()
         _errorCount.value = 0
+    }
+
+    /** Everything written so far, flushed first so nothing is a beat behind. */
+    fun snapshot(): List<LogEntry> {
+        publishNow()
+        return _entries.value
     }
 
     /** The whole log as text, for copying to the clipboard or saving to a file. */
@@ -138,7 +200,7 @@ object DebugLog {
         append("PyCmd debug log\n")
         append(SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(Date()))
         append("\n\n")
-        entries.value.forEach { append(it.toPlainText()).append('\n') }
+        snapshot().forEach { append(it.toPlainText()).append('\n') }
     }
 
     /**
@@ -153,6 +215,8 @@ object DebugLog {
         Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
             runCatching {
                 error("crash", "Uncaught on ${thread.name}: ${throwable.javaClass.simpleName}", throwable)
+                // The process may not live long enough for the next flush.
+                publishNow()
             }
             previous?.uncaughtException(thread, throwable)
         }

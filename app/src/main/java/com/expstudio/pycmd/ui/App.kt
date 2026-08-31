@@ -62,11 +62,13 @@ import java.io.File
 import java.util.Locale
 import java.util.Date
 import java.text.SimpleDateFormat
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -219,7 +221,11 @@ fun PyCmdRoot(viewModel: MainViewModel = viewModel()) {
             while (batch.size < CONSOLE_BATCH) {
                 batch += queue.tryReceive().getOrNull() ?: break
             }
-            consoleHost.eval(consoleAppendScript(batch))
+            // Turning four hundred chunks into one script is string work, and
+            // string work between two frames is a console that stutters while
+            // a program is talking. The main thread only gets the result.
+            val script = withContext(Dispatchers.Default) { consoleAppendScript(batch) }
+            consoleHost.eval(script)
             // Let the next burst gather rather than returning immediately for
             // the line that arrived while this one was being sent.
             delay(16)

@@ -110,6 +110,22 @@ object PythonEngine {
     }
     private val rescueDispatcher = rescueExecutor.asCoroutineDispatcher()
 
+    /**
+     * Everything a plugin panel asks for, on one thread of its own.
+     *
+     * Panels poll: the ones that ship here refresh every two and five seconds,
+     * and every refresh is a Python call that wants the GIL. Sharing the
+     * control pool meant that while a script was running, four of those could
+     * take all four control threads - and then the Files tab's listing, the
+     * Servers tab's refresh and anything else the screen needed queued behind
+     * them, which reads as the app freezing and coming back. One thread means
+     * panels can be as chatty as they like and never crowd anything else out.
+     */
+    private val pluginExecutor = Executors.newSingleThreadExecutor { runnable ->
+        Thread(runnable, "python-plugins").apply { isDaemon = true }
+    }
+    private val pluginDispatcher = pluginExecutor.asCoroutineDispatcher()
+
     private val _output = MutableSharedFlow<OutputChunk>(
         replay = OUTPUT_BUFFER,
         extraBufferCapacity = OUTPUT_BUFFER,
@@ -1309,7 +1325,7 @@ object PythonEngine {
     }
 
     private suspend fun pluginCall(function: String, vararg arguments: String): JSONObject =
-        withContext(controlDispatcher) {
+        withContext(pluginDispatcher) {
             if (!_status.value.ready) {
                 return@withContext JSONObject()
                     .put("ok", false)

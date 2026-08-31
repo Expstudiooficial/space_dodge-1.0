@@ -368,6 +368,30 @@ failed = result(plugins.call_export("pycmd.cloud", "run_query", json.dumps({
 check("an empty table name is refused, not sent", not failed.get("ok"), failed)
 pycmd_cloud.forget()
 
+say("\n== A panel left open costs nothing while nobody is looking ==")
+# Two of the panels that ship here refresh on a timer, and a timer does not
+# know whether anybody can see it. A panel that carried on asking Python for
+# the server list every two seconds from behind another tab was work the tab
+# you were actually using had to wait behind, which is what "it freezes for a
+# second" is made of. Both guards are one line each and easy to lose in an
+# edit, so they are checked rather than trusted.
+for name, verb in (("scheduler", "jobs"), ("server-pro", "board_now")):
+    panel = os.path.join(ASSETS, name, "ui.html")
+    with open(panel, encoding="utf-8") as handle:
+        text = handle.read()
+    check(f"{name} stops refreshing when it is off screen",
+          "document.hidden" in text, panel)
+    check(f"{name} joins a refresh already out rather than adding one",
+          "pycmd.poll(" in text, panel)
+    check(f"{name} does not ask for {verb} with a plain call",
+          f"pycmd.call('{verb}'" not in text, panel)
+
+say("\n== The bridge offers both verbs ==")
+check("pycmd.poll is part of the bridge every panel gets",
+      "poll: poll," in plugins.BRIDGE, "")
+check("and plain call is still there for everything else",
+      "call: call," in plugins.BRIDGE, "")
+
 say()
 if FAILURES:
     say(f"{len(FAILURES)} bundled-plugin checks failed")

@@ -259,8 +259,42 @@ function el(sandbox, id) {
   return sandbox.document.getElementById(id);
 }
 
+/**
+ * The rows the palette has drawn.
+ *
+ * The panel writes them as one string of HTML rather than appending a hundred
+ * and fifty elements one at a time, so there are no child nodes to hand back;
+ * the rows are read out of the markup instead. Clicking one goes through the
+ * container's own listener with a target that only knows its block id, which
+ * is what a tap on the inner span looks like to that handler.
+ */
 function palette(sandbox) {
-  return el(sandbox, 'palette').children;
+  const host = el(sandbox, 'palette');
+  const html = host.innerHTML || '';
+  const pattern =
+    /<button class="pick" type="button" data-block="([^"]*)">([\s\S]*?)<\/button>/g;
+  const rows = [];
+  let match = pattern.exec(html);
+  while (match !== null) {
+    const id = match[1];
+    const inner = match[2];
+    rows.push({
+      block: id,
+      innerHTML: inner,
+      textContent: inner.replace(/<[^>]*>/g, ''),
+      dispatch(name) {
+        host.dispatch(name, {
+          target: {
+            getAttribute(what) { return what === 'data-block' ? id : null; },
+            parentNode: null,
+          },
+          stopPropagation() {},
+        });
+      },
+    });
+    match = pattern.exec(html);
+  }
+  return rows;
 }
 
 function scriptRows(sandbox) {

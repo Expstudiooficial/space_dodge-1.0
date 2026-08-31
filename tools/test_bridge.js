@@ -1,0 +1,225 @@
+/*
+ * Checks the bridge every plugin panel is given.
+ *
+ * `pycmd.call`, `pycmd.poll` and `__pycmd_resolve` are the only way a panel
+ * talks to the app, and they are defined once, in `BRIDGE` inside
+ * `pycmd_plugins.py`. The WebView is not available here, so this pulls that
+ * script out of the Python source and runs it in a V8 context with a stand-in
+ * for the Kotlin object it calls into - the same file the device loads, and
+ * the same call sequence.
+ *
+ * What it is really guarding is the difference between the two verbs: a
+ * refresh that repeats should join the one already out, and a button pressed
+ * twice should be two calls. Getting that backwards is how a panel silently
+ * loses somebody's work.
+ */
+'use strict';
+
+const fs = require('fs');
+const path = require('path');
+const vm = require('vm');
+
+const SOURCE = path.join(__dirname, '..', 'app', 'src', 'main', 'python', 'pycmd_plugins.py');
+
+let failures = 0;
+let checks = 0;
+
+function check(name, condition, detail) {
+  checks += 1;
+  if (condition) {
+    console.log(`  PASS  ${name}`);
+  } else {
+    failures += 1;
+    console.log(`  FAIL  ${name}${detail === undefined ? '' : `  (${JSON.stringify(detail)})`}`);
+  }
+}
+
+/** The bridge's JavaScript, taken out of the Python file that ships it. */
+function bridgeSource() {
+  const python = fs.readFileSync(SOURCE, 'utf8');
+  const start = python.indexOf('BRIDGE = """');
+  if (start < 0) throw new Error('BRIDGE is not in pycmd_plugins.py any more');
+  const body = python.slice(start + 'BRIDGE = """'.length);
+  const end = body.indexOf('"""');
+  if (end < 0) throw new Error('BRIDGE is not closed');
+  const html = body.slice(0, end);
+  const open = html.indexOf('<script>');
+  const close = html.lastIndexOf('</script>');
+  return html.slice(open + '<script>'.length, close);
+}
+
+/**
+ * A context with the bridge loaded and the Kotlin side written down.
+ *
+ * `sent` is every call that actually reached the app, which is the whole
+ * point: what the panel asked for and what crossed the bridge are different
+ * lists, and the difference is what these checks are about.
+ */
+function makeBridge() {
+  const sent = [];
+  const context = vm.createContext({ console, Promise, JSON, String, Error });
+  // Real timers, but not ones that keep node alive: the bridge arms a
+  // two-minute deadline per call, and a suite that waited for those would
+  // take two minutes to say it had passed.
+  const armed = new Map();
+  let nextTimer = 1;
+  context.setTimeout = (fn, ms) => {
+    const id = nextTimer++;
+    const handle = setTimeout(() => { armed.delete(id); fn(); }, ms || 0);
+    if (handle.unref) handle.unref();
+    armed.set(id, handle);
+    return id;
+  };
+  context.clearTimeout = (id) => {
+    if (armed.has(id)) { clearTimeout(armed.get(id)); armed.delete(id); }
+  };
+  vm.runInContext('globalThis.window = globalThis;', context);
+  context.addEventListener = () => {};
+  context.__pycmd_panel = {
+    call(id, name, body) { sent.push({ id, name, body }); },
+    toast() {},
+    log() {},
+    close() {},
+    manifest() { return JSON.stringify({ id: 'test.plugin', name: 'Test' }); },
+  };
+  vm.runInContext(bridgeSource(), context);
+  return {
+    context,
+    sent,
+    pycmd: context.window.pycmd,
+    /** Answers one outstanding call the way Kotlin does. */
+    answer(id, ok, payload) {
+      context.window.__pycmd_resolve(String(id), ok, JSON.stringify(payload));
+    },
+  };
+}
+
+const tick = () => new Promise((resolve) => setImmediate(resolve));
+
+async function main() {
+  console.log('== the bridge is there at all ==');
+  {
+    const bridge = makeBridge();
+    check('pycmd.call exists', typeof bridge.pycmd.call === 'function');
+    check('pycmd.poll exists', typeof bridge.pycmd.poll === 'function');
+    check('and the plugin it belongs to came through',
+          bridge.pycmd.plugin.id === 'test.plugin', bridge.pycmd.plugin);
+  }
+
+  console.log('\n== a call goes out and comes back ==');
+  {
+    const bridge = makeBridge();
+    const promise = bridge.pycmd.call('listing', { a: 1 });
+    check('it crossed the bridge once', bridge.sent.length === 1, bridge.sent);
+    check('with its arguments as JSON', bridge.sent[0].body === '{"a":1}', bridge.sent[0]);
+    bridge.answer(bridge.sent[0].id, true, { ok: true, result: { rows: 3 } });
+    const answer = await promise;
+    check('and the result is unwrapped', answer && answer.rows === 3, answer);
+  }
+
+  console.log('\n== a failure reaches the panel as one ==');
+  {
+    const bridge = makeBridge();
+    const promise = bridge.pycmd.call('boom', {});
+    bridge.answer(bridge.sent[0].id, false, { ok: false, error: 'no such export' });
+    let message = '';
+    try { await promise; } catch (error) { message = error.message; }
+    check('the panel is told why', message === 'no such export', message);
+  }
+
+  console.log('\n== two presses of the same button are two calls ==');
+  {
+    const bridge = makeBridge();
+    // This is the one that matters. A panel's "Add" with the same values in
+    // it twice is two jobs; a bridge that folded them into one would drop the
+    // second silently, and nothing on screen would say so.
+    const first = bridge.pycmd.call('add', { path: 'job.py' });
+    const second = bridge.pycmd.call('add', { path: 'job.py' });
+    check('both crossed', bridge.sent.length === 2, bridge.sent);
+    check('and they are separate promises', first !== second);
+    bridge.answer(bridge.sent[0].id, true, { ok: true, result: 'one' });
+    bridge.answer(bridge.sent[1].id, true, { ok: true, result: 'two' });
+    check('each got its own answer',
+          (await first) === 'one' && (await second) === 'two');
+  }
+
+  console.log('\n== a refresh that repeats joins the one already out ==');
+  {
+    const bridge = makeBridge();
+    const first = bridge.pycmd.poll('board_now', {});
+    const second = bridge.pycmd.poll('board_now', {});
+    const third = bridge.pycmd.poll('board_now', {});
+    check('only one question was asked', bridge.sent.length === 1, bridge.sent);
+    check('and all three are waiting on it', first === second && second === third);
+    bridge.answer(bridge.sent[0].id, true, { ok: true, result: ['a'] });
+    const all = await Promise.all([first, second, third]);
+    check('everybody got the answer',
+          all.every((row) => Array.isArray(row) && row[0] === 'a'), all);
+  }
+
+  console.log('\n== once it has answered, the next refresh really asks ==');
+  {
+    const bridge = makeBridge();
+    const first = bridge.pycmd.poll('board_now', {});
+    bridge.answer(bridge.sent[0].id, true, { ok: true, result: 1 });
+    await first;
+    await tick();
+    bridge.pycmd.poll('board_now', {});
+    check('a second round is a second call', bridge.sent.length === 2, bridge.sent);
+  }
+
+  console.log('\n== a poll of something else is not the same question ==');
+  {
+    const bridge = makeBridge();
+    bridge.pycmd.poll('board_now', {});
+    bridge.pycmd.poll('board_now', { verbose: true });
+    bridge.pycmd.poll('jobs', {});
+    check('different arguments and names go separately',
+          bridge.sent.length === 3, bridge.sent);
+  }
+
+  console.log('\n== a call that never comes back does not wedge the page ==');
+  {
+    // The real wait is two minutes, which is not a thing to sit through here;
+    // what is checked is that a timer was armed at all and that answering
+    // disarms it, because a timer left running would reject a promise that
+    // had already resolved.
+    const armed = [];
+    const context = vm.createContext({ console, Promise, JSON, String, Error });
+    vm.runInContext('globalThis.window = globalThis;', context);
+    context.addEventListener = () => {};
+    context.setTimeout = (fn, ms) => { armed.push({ fn, ms, live: true }); return armed.length; };
+    context.clearTimeout = (id) => { if (armed[id - 1]) armed[id - 1].live = false; };
+    const sent = [];
+    context.__pycmd_panel = {
+      call(id, name, body) { sent.push({ id, name, body }); },
+      toast() {}, log() {}, close() {},
+      manifest() { return JSON.stringify({ id: 'test.plugin' }); },
+    };
+    vm.runInContext(bridgeSource(), context);
+
+    const promise = context.window.pycmd.call('slow', {});
+    check('a deadline was set', armed.length === 1 && armed[0].ms === 120000, armed[0] && armed[0].ms);
+
+    let failed = '';
+    promise.catch((error) => { failed = error.message; });
+    armed[0].fn();
+    await tick();
+    check('and when it passes the panel is told',
+          failed.indexOf('has not answered') > 0, failed);
+
+    const second = context.window.pycmd.call('quick', {});
+    context.window.__pycmd_resolve(sent[1].id, true, JSON.stringify({ ok: true, result: 2 }));
+    check('answering disarms the deadline', armed[1].live === false);
+    check('and the answer still arrives', (await second) === 2);
+  }
+
+  console.log(`\n${checks} checks, ${failures} failed`);
+  if (failures) process.exit(1);
+  console.log('all bridge checks passed');
+}
+
+main().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});

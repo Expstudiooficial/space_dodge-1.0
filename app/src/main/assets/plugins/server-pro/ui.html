@@ -94,8 +94,13 @@
   }
 
   async function refresh() {
+    // Nothing to draw for a panel nobody is looking at, and the call would
+    // only be one more thing in front of whatever is on screen.
+    if (document.hidden) return;
     try {
-      draw(await pycmd.call('board_now', {}));
+      // poll, not call: two seconds is quicker than a busy phone answers,
+      // and a second identical question only makes the first one later.
+      draw(await pycmd.poll('board_now', {}));
     } catch (error) {
       $('summary').textContent = 'Could not read the servers: ' + error.message;
     }

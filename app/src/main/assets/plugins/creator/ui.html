@@ -293,6 +293,11 @@
       .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   }
 
+  /** The same, plus the quotes - this goes inside an attribute. */
+  function escapeAttr(text) {
+    return escapeHtml(text).replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  }
+
   /**
    * A name for a node that survives being moved.
    *
@@ -660,38 +665,43 @@
     });
   }
 
+  /**
+   * Redraws the block list for the current language, category and search.
+   *
+   * One string, one write, and one click listener on the container rather
+   * than a listener per block: a hundred and fifty separate `appendChild`
+   * calls each carrying a closure is a visible pause on a phone, and this
+   * runs on every letter typed into the search box.
+   */
   function drawPalette() {
     var host = $('palette');
-    host.innerHTML = '';
     var groups = (state.catalogues[state.language] || { categories: [] }).categories || [];
     var needle = state.search.trim().toLowerCase();
+    var parts = [];
     var shown = 0;
 
     groups.forEach(function (group) {
       if (state.category && group.name !== state.category) return;
       group.blocks.forEach(function (spec) {
-        var haystack = (spec.label + ' ' + spec.preview + ' ' + spec.cat).toLowerCase();
-        if (needle && haystack.indexOf(needle) < 0) return;
+        if (needle && (spec.hay || '').indexOf(needle) < 0) return;
         shown += 1;
-        var button = document.createElement('button');
-        button.className = 'pick';
-        button.innerHTML =
+        parts.push(
+          '<button class="pick" type="button" data-block="' +
+          escapeAttr(spec.id) + '">' +
           '<span class="what">' + escapeHtml(spec.label) + '</span>' +
           '<span class="code">' + escapeHtml(spec.preview || '(an empty line)') +
-          (spec.closing ? '  …  ' + escapeHtml(spec.closing) : '') + '</span>';
-        button.addEventListener('click', function () { add(spec); });
-        host.appendChild(button);
+          (spec.closing ? '  …  ' + escapeHtml(spec.closing) : '') + '</span>' +
+          '</button>'
+        );
       });
     });
 
     if (!shown) {
-      var none = document.createElement('div');
-      none.className = 'empty';
-      none.textContent = needle
+      parts.push('<div class="empty">' + escapeHtml(needle
         ? 'No block matches "' + needle + '".'
-        : 'No blocks loaded for this language yet.';
-      host.appendChild(none);
+        : 'No blocks loaded for this language yet.') + '</div>');
     }
+    host.innerHTML = parts.join('');
     var total = (state.catalogues[state.language] || {}).count || 0;
     $('palcount').textContent = shown + ' of ' + total;
   }
@@ -1026,7 +1036,15 @@
     var group = state.catalogues[language];
     if (!group) return;
     (group.categories || []).forEach(function (category) {
-      category.blocks.forEach(function (spec) { state.byId[spec.id] = spec; });
+      category.blocks.forEach(function (spec) {
+        state.byId[spec.id] = spec;
+        // Built once here rather than for every block on every keystroke.
+        // A hundred and fifty blocks joined and lower-cased between one
+        // letter and the next is how a search box comes to feel stuck.
+        if (spec.hay === undefined) {
+          spec.hay = (spec.label + ' ' + spec.preview + ' ' + spec.cat).toLowerCase();
+        }
+      });
     });
   }
 
@@ -1036,6 +1054,22 @@
   $('search').addEventListener('input', function () {
     state.search = $('search').value;
     drawPalette();
+  });
+  // One listener for every block in the list. The rows are rewritten on each
+  // keystroke, so a listener per row would be a hundred and fifty of them
+  // created and thrown away per letter.
+  $('palette').addEventListener('click', function (event) {
+    // The tap usually lands on one of the two spans inside the row, so walk
+    // up until something says which block it is.
+    var node = event.target;
+    var id = null;
+    while (node && node.getAttribute) {
+      id = node.getAttribute('data-block');
+      if (id) break;
+      node = node.parentNode;
+    }
+    var spec = id && state.byId[id];
+    if (spec) add(spec);
   });
   $('lang').addEventListener('change', function () { useLanguage($('lang').value); });
   $('openAdd').addEventListener('click', openAdd);

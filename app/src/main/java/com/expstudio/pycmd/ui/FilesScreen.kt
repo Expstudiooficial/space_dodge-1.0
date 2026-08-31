@@ -71,7 +71,8 @@ fun FilesScreen(
     onSaveToDevice: (File) -> Unit,
     modifier: Modifier = Modifier,
     /** Menu lines plugins want on this file or folder, and how to run one. */
-    pluginActionsFor: (File) -> List<Pair<InstalledPlugin, PluginFileAction>> = { emptyList() },
+    pluginActionsFor: (String, Boolean) -> List<Pair<InstalledPlugin, PluginFileAction>> =
+        { _, _ -> emptyList() },
     onPluginAction: (InstalledPlugin, PluginFileAction, File) -> Unit = { _, _, _ -> },
     pickingFor: ServerKind? = null,
     onUseAsTarget: (File) -> Unit = {},
@@ -245,7 +246,7 @@ fun FilesScreen(
                         onDelete = { dialog = FileDialog.ConfirmDelete(entry.file) },
                         onExportFolder = { onExportFolder(entry.file) },
                         onSaveToDevice = { onSaveToDevice(entry.file) },
-                        pluginActions = pluginActionsFor(entry.file),
+                        pluginActions = pluginActionsFor(entry.name, entry.isDirectory),
                         onPluginAction = { plugin, pluginAction ->
                             onPluginAction(plugin, pluginAction, entry.file)
                         },
