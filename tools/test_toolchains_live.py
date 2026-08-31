@@ -27,6 +27,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import threading
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, "windows"))
@@ -93,6 +94,74 @@ FAILURES = []
 SKIPPED = []
 RAN = []
 
+# Long, because a first kotlinc build really does start two JVMs and a first
+# dotnet run unpacks half an SDK.
+STEP_TIMEOUT = 300.0
+
+
+def _run_bounded(command, cwd):
+    """Runs one command and comes back, whatever it does.
+
+    Not `subprocess.run(timeout=...)`, for the same reason `toolchains.py` does
+    not use it: on a timeout that kills the child and then waits for the output
+    pipe to close, and a grandchild holding the pipe means it never does. On
+    Windows every JVM-language toolchain is a .bat that spawns java.exe, so a
+    test harness written the obvious way hangs on exactly the toolchains this
+    test exists to cover.
+
+    Returns (True, output), (False, output) or (None, why it could not start).
+    """
+    try:
+        process = subprocess.Popen(
+            command, cwd=cwd,
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            stdin=subprocess.DEVNULL,
+            text=True, encoding="utf-8", errors="replace",
+        )
+    except FileNotFoundError:
+        return None, f"{command[0]} vanished between finding it and running it"
+    except OSError as error:
+        return None, f"could not start {command[0]}: {error}"
+
+    collected = []
+
+    def read():
+        try:
+            collected.append(process.stdout.read())
+        except Exception:  # noqa: BLE001
+            pass
+
+    reader = threading.Thread(target=read, daemon=True)
+    reader.start()
+    reader.join(STEP_TIMEOUT)
+
+    if reader.is_alive():
+        _kill_tree(process)
+        reader.join(2.0)
+        return None, "it did not finish in five minutes"
+
+    try:
+        code = process.wait(timeout=10)
+    except Exception:  # noqa: BLE001
+        _kill_tree(process)
+        code = -1
+    text = "".join(collected)
+    return (code == 0), (text if code == 0 else f"exit {code}: {text}")
+
+
+def _kill_tree(process):
+    try:
+        if os.name == "nt":
+            subprocess.run(["taskkill", "/F", "/T", "/PID", str(process.pid)],
+                           capture_output=True, timeout=10)
+        else:
+            process.kill()
+    except Exception:  # noqa: BLE001
+        try:
+            process.kill()
+        except Exception:  # noqa: BLE001
+            pass
+
 
 def run_one(folder: str, language_id: str, chain) -> tuple:
     """Builds and runs one program. Returns (ok, what happened)."""
@@ -110,18 +179,12 @@ def run_one(folder: str, language_id: str, chain) -> tuple:
 
     output = ""
     for command in plan["commands"]:
-        try:
-            finished = subprocess.run(
-                command, cwd=plan["cwd"], capture_output=True, text=True,
-                timeout=300, stdin=subprocess.DEVNULL,
-            )
-        except FileNotFoundError:
-            return False, f"{command[0]} vanished between finding it and running it"
-        except subprocess.TimeoutExpired:
-            return False, "it did not finish in five minutes"
-        output += (finished.stdout or "") + (finished.stderr or "")
-        if finished.returncode != 0:
-            return False, f"exit {finished.returncode}: {output.strip()[:180]}"
+        ok, text = _run_bounded(command, plan["cwd"])
+        output += text
+        if ok is None:
+            return False, text
+        if not ok:
+            return False, f"{text.strip()[:180]}"
 
     if WORD not in output:
         return False, f"it ran but did not say so: {output.strip()[:180]}"

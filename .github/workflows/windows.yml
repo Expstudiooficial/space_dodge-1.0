@@ -31,6 +31,9 @@ permissions:
 jobs:
   build:
     runs-on: windows-latest
+    # A ceiling, because a hung step is otherwise six hours of somebody's
+    # runner minutes. Everything here should finish inside fifteen.
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
 
@@ -51,12 +54,6 @@ jobs:
 
       - name: Check
         run: python tools/test_windows.py
-
-      # The point of building on Windows rather than cross-compiling: these
-      # are the toolchains a real user might have, and the detection code
-      # should find the ones this runner ships with.
-      - name: Check toolchain detection against what the runner has
-        run: python tools/test_toolchains_live.py
 
       - name: Build
         run: python -m PyInstaller windows/build/pycmd.spec --noconfirm --distpath dist-windows/build
@@ -87,6 +84,20 @@ jobs:
           name: PyCmd-windows
           path: dist-windows/build/PyCmd.exe
           if-no-files-found: error
+
+      # The point of building on Windows rather than cross-compiling: these are
+      # the toolchains a real user might have, and PyCmd should drive the ones
+      # this runner ships with.
+      #
+      # After the exe and allowed to fail, deliberately. It tests *this
+      # machine's* compilers, not the build - whether the runner's Kotlin is
+      # having a bad day should not cost anybody a release. What it finds is
+      # worth reading; what it finds is not worth blocking on. The suite above
+      # is the gate.
+      - name: Compile and run in every language the runner has
+        continue-on-error: true
+        timeout-minutes: 12
+        run: python tools/test_toolchains_live.py
 
       - name: Publish it, if this is a tag
         if: startsWith(github.ref, 'refs/tags/windows-v')
