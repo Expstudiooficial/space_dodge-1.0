@@ -528,6 +528,37 @@ builds a queue of identical questions that everything else waits behind.
 the same values in the form are two jobs, and `poll` would quietly make them
 one. `poll` is for reads.
 
+### A panel that is taller than the screen
+
+**It already scrolls, and you do not have to do anything.** The house
+stylesheet makes your panel's `body` exactly as tall as the panel and lets it
+scroll its own overflow, rather than leaving it to the document — which is the
+one thing that is not dependable in a WebView inside somebody else's layout,
+and how a long panel ends up with a bottom nobody can reach. Write an ordinary
+page and it will scroll.
+
+Two things follow from that, worth knowing:
+
+- **Do not set `overflow` or `height` on `body`** unless you mean to take the
+  scrolling over yourself.
+- **`window.scrollTo` does nothing**, because the document is not what moves.
+  Use `document.body.scrollTop`, or `element.scrollIntoView()`.
+
+**If you want a header or a button row that stays put**, take `body` over and
+make it a column:
+
+```css
+html, body { height: 100%; }
+body { margin: 0; display: flex; flex-direction: column; overflow: hidden; }
+.top, .bottom { flex: 0 0 auto; }             /* a header and a button row */
+.middle { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
+```
+
+That is what the Creator tab does. Either way, the app is told which parts of
+your page scroll — it watches where each touch lands — so a panel sitting
+inside one of the app's own screens keeps its own drags instead of losing them
+to the list around it. That comes with the bridge; there is nothing to call.
+
 Your own CSS, images and scripts load from the plugin folder with relative
 paths (`<img src="assets/logo.png">`). The page cannot navigate anywhere else:
 links out are blocked, deliberately.

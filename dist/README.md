@@ -1,17 +1,66 @@
 # Prebuilt APK
 
-`PyCmd-2.5.7.apk` — ready to install, nothing else needed.
+`PyCmd-2.5.8.apk` — ready to install, nothing else needed.
 
 | | |
 |---|---|
 | Package | `com.expstudio.pycmd.debug` |
-| Version | 2.5.7 |
+| Version | 2.5.8 |
 | Size | 18 MB |
 | Signed with | the key in [`keystore/`](../keystore/), committed so updates can install over it |
 | Works on | Android 7.0 (API 24) and newer, **arm64-v8a** (every phone since about 2016) |
 | SHA-256 | see [SHA256SUMS.txt](SHA256SUMS.txt) |
 
-## What is new in 2.5.7
+## What is new in 2.5.8
+
+**The Creator tab would not scroll**, so a script longer than the screen had a
+bottom nobody could reach. Same for the Cloud tab, which is nearly four screens
+tall, and for Packages Pro and Server Pro opened full screen. Fixed for all of
+them, in one place.
+
+**A panel is a web page inside the app's own layout, and it was leaving the
+scrolling to the document.** That is the one thing that is not dependable
+there: the page is the right height, the content is all present, and a finger
+moves nothing. It is why the Creator palette had to be moved into an overlay
+back in 2.5.5 - the overlay scrolled, because an overlay scrolls *itself*
+rather than asking the document to.
+
+So every panel now scrolls itself. Its `body` is exactly as tall as the panel
+and scrolls its own overflow, which is the arrangement that has always worked
+here. One rule in the shared stylesheet, so it applies to every plugin at once
+- the ones that ship with the app and anything you write.
+
+**The Creator tab goes further**, because its top bar and its buttons should
+stay where they are: the bar, the script and the button row are a column, and
+the script in the middle is what moves. The bar stays at the top, **+ Add a
+block**, **Code** and **Save** stay at the bottom, and the script scrolls
+between them to its actual end.
+
+**A panel inside one of the app's own screens keeps its own drags.** The app
+decides who owns a drag - the panel or the list around it - by asking the
+WebView whether its document can still scroll, and a panel that scrolls an
+element instead always answers "no". So the page now says where each touch
+landed, and the app holds on when the touch was on something the panel scrolls
+itself.
+
+**This one was measured rather than reasoned about.** `tools/test_panels.js`
+lays every bundled panel out in a real browser at a phone's size, drags a
+finger down it and checks that something moved. It found two things in the
+writing of this release: that the Cloud tab is 2167 pixels tall in a 560 pixel
+panel, and that making the body the scroller does nothing unless the root
+element's overflow is hidden as well - otherwise the browser hands the body's
+overflow up to the viewport and puts the scrolling back where it was broken.
+That test needs a browser, so it says so and steps aside where there is not
+one; the rest of the suite checks the same rules by reading them. 1124 checks
+pass, 20 more with a browser present, and the release build lints clean.
+
+For plugin authors: nothing to do. Write an ordinary page and it scrolls. Do
+not set `height` or `overflow` on `body` unless you want to take the scrolling
+over yourself, and use `element.scrollIntoView()` rather than `window.scrollTo`,
+which no longer has anything to move. PLUGINS.md has the shape to copy if you
+want a header or a button row that stays put.
+
+## What was new in 2.5.7
 
 **Cloud sometimes failed to load, with a file that was definitely there:**
 

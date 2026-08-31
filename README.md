@@ -12,7 +12,7 @@ already has. Another twenty file types are edited, highlighted, previewed and
 served, and music, video, images, PDFs, archives and fonts are brought in from
 the phone, kept, served and played.
 
-Version 2.5.7. Kotlin and Jetpack Compose for the app, JavaScript for the console
+Version 2.5.8. Kotlin and Jetpack Compose for the app, JavaScript for the console
 and editor.
 
 ---
@@ -198,7 +198,7 @@ signal, no answer - says nothing at all.
 ## Just want to try it
 
 A ready-to-install APK is in [`dist/`](dist/) - download
-[`PyCmd-2.5.7.apk`](dist/PyCmd-2.5.7.apk), open it on the phone, and allow the
+[`PyCmd-2.5.8.apk`](dist/PyCmd-2.5.8.apk), open it on the phone, and allow the
 install when Android asks. It is a release build: minified by R8, not
 debuggable, and about 18 MB rather than the 35 MB the debug builds were. It is
 signed with the key in [`keystore/`](keystore/) - the standard Android debug

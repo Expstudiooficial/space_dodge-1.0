@@ -61,6 +61,12 @@ node tools/test_bridge.js
 node tools/test_creator_ui.js
 
 echo
+echo "== Panels, laid out at a phone's size =="
+# The only check here that measures rather than reads. Needs playwright-core
+# and a Chromium; says so and skips when they are not installed.
+node tools/test_panels.js
+
+echo
 echo "== Build and lint =="
 # The release build too, because that is what is published: R8 runs there and
 # nowhere else, and a keep rule that stopped being right would otherwise only

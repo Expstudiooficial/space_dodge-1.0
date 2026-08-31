@@ -186,8 +186,15 @@ private fun newPanelView(
                         val goingUp = event.y > lastTouchY[0]
                         val atTop = page.scrollY <= 0
                         val atBottom = !page.canScrollVertically(1)
+                        // A page that scrolls an element of its own rather
+                        // than the document answers "nowhere left to go" to
+                        // both of those, every time - so without this the
+                        // list would take the drag away on the first move and
+                        // the panel's own list could not be scrolled at all.
+                        // The page says which it is when the finger lands.
+                        val inner = bridge.pageScrollsItself
                         // At either end, the page has nothing more to give.
-                        if ((goingUp && atTop) || (!goingUp && atBottom)) {
+                        if (!inner && ((goingUp && atTop) || (!goingUp && atBottom))) {
                             view.parent?.requestDisallowInterceptTouchEvent(false)
                         }
                         lastTouchY[0] = event.y
@@ -390,6 +397,23 @@ class PanelBridge(private val plugin: InstalledPlugin) {
     fun toast(message: String) {
         val model = host ?: return
         scope.launch { model.showToast(message.take(200)) }
+    }
+
+    /**
+     * Whether the finger came down on something the page scrolls itself.
+     *
+     * Set by the bridge on every `touchstart`, and read by the touch listener
+     * a moment later on the same gesture. Volatile because those are two
+     * different threads: the bridge's methods arrive on the WebView's own
+     * bridge thread, the touch listener runs on the main one.
+     */
+    @Volatile
+    var pageScrollsItself: Boolean = false
+        private set
+
+    @JavascriptInterface
+    fun innerScroll(on: Boolean) {
+        pageScrollsItself = on
     }
 
     @JavascriptInterface

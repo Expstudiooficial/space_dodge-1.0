@@ -75,6 +75,10 @@ function makeBridge() {
   };
   vm.runInContext('globalThis.window = globalThis;', context);
   context.addEventListener = () => {};
+  // Enough of a document for the bridge to attach its touch hook to; the
+  // cases that care about that hook build a proper one of their own.
+  context.document = { body: null, addEventListener() {} };
+  context.window.getComputedStyle = () => ({ overflowY: 'visible' });
   context.__pycmd_panel = {
     call(id, name, body) { sent.push({ id, name, body }); },
     toast() {},
@@ -191,6 +195,8 @@ async function main() {
     context.setTimeout = (fn, ms) => { armed.push({ fn, ms, live: true }); return armed.length; };
     context.clearTimeout = (id) => { if (armed[id - 1]) armed[id - 1].live = false; };
     const sent = [];
+    context.document = { body: null, addEventListener() {} };
+    context.window.getComputedStyle = () => ({ overflowY: 'visible' });
     context.__pycmd_panel = {
       call(id, name, body) { sent.push({ id, name, body }); },
       toast() {}, log() {}, close() {},
@@ -212,6 +218,85 @@ async function main() {
     context.window.__pycmd_resolve(sent[1].id, true, JSON.stringify({ ok: true, result: 2 }));
     check('answering disarms the deadline', armed[1].live === false);
     check('and the answer still arrives', (await second) === 2);
+  }
+
+  console.log('\n== the page says when it scrolls something itself ==');
+  {
+    // A panel inside one of the app's own screens is a scrolling view in a
+    // scrolling list. The app decides who owns a drag by asking the WebView
+    // whether its *document* has anywhere left to go - and a panel that
+    // scrolls an element instead always answers "nowhere", so the list used
+    // to take the drag and the panel's own list could not be scrolled at
+    // all. The bridge answers that question properly on every touch.
+    const listeners = {};
+    const context = vm.createContext({ console, Promise, JSON, String, Error, RegExp });
+    vm.runInContext('globalThis.window = globalThis;', context);
+    context.setTimeout = () => 1;
+    context.clearTimeout = () => {};
+    context.addEventListener = () => {};
+
+    // Three nodes: a button inside a list that scrolls, inside a body.
+    const body = { nodeType: 1, parentNode: null, overflowY: 'hidden', scrollHeight: 0, clientHeight: 0 };
+    const scroller = { nodeType: 1, parentNode: body, overflowY: 'auto', scrollHeight: 900, clientHeight: 300 };
+    const row = { nodeType: 1, parentNode: scroller, overflowY: 'visible', scrollHeight: 0, clientHeight: 0 };
+    const fixedBar = { nodeType: 1, parentNode: body, overflowY: 'visible', scrollHeight: 0, clientHeight: 0 };
+    // A list with `overflow-y: auto` that has not overflowed yet is not
+    // something to hold the gesture for.
+    const empty = { nodeType: 1, parentNode: body, overflowY: 'auto', scrollHeight: 300, clientHeight: 300 };
+
+    context.document = {
+      body,
+      addEventListener(name, handler) { listeners[name] = handler; },
+    };
+    context.window.getComputedStyle = (node) => ({ overflowY: node.overflowY });
+
+    const said = [];
+    context.__pycmd_panel = {
+      call() {}, toast() {}, log() {}, close() {},
+      innerScroll(on) { said.push(on); },
+      manifest() { return JSON.stringify({ id: 'test.plugin' }); },
+    };
+    vm.runInContext(bridgeSource(), context);
+
+    check('the bridge listens for touches', typeof listeners.touchstart === 'function');
+
+    listeners.touchstart({ target: row });
+    check('a touch inside a list that scrolls says so', said[said.length - 1] === true, said);
+
+    listeners.touchstart({ target: fixedBar });
+    check('a touch on a bar that does not says so too',
+          said[said.length - 1] === false, said);
+
+    listeners.touchstart({ target: empty });
+    check('and a list with nothing to scroll yet does not claim the drag',
+          said[said.length - 1] === false, said);
+
+    listeners.touchstart({ target: body });
+    check('nor does the body itself', said[said.length - 1] === false, said);
+  }
+
+  console.log('\n== a host without that method is not a crash ==');
+  {
+    // The bridge ships inside the app, but a panel can be open across an
+    // update, and a page calling a method the host does not have would throw
+    // inside a touch handler - which is a page that stops responding.
+    const listeners = {};
+    const context = vm.createContext({ console, Promise, JSON, String, Error, RegExp });
+    vm.runInContext('globalThis.window = globalThis;', context);
+    context.setTimeout = () => 1;
+    context.clearTimeout = () => {};
+    context.addEventListener = () => {};
+    const body = { nodeType: 1, parentNode: null, overflowY: 'hidden', scrollHeight: 0, clientHeight: 0 };
+    context.document = { body, addEventListener(n, h) { listeners[n] = h; } };
+    context.window.getComputedStyle = (node) => ({ overflowY: node.overflowY });
+    context.__pycmd_panel = {
+      call() {}, toast() {}, log() {}, close() {},
+      manifest() { return JSON.stringify({ id: 'test.plugin' }); },
+    };
+    vm.runInContext(bridgeSource(), context);
+    let threw = false;
+    try { listeners.touchstart({ target: body }); } catch (error) { threw = true; }
+    check('an older host is walked past quietly', !threw);
   }
 
   console.log(`\n${checks} checks, ${failures} failed`);

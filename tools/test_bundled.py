@@ -386,11 +386,51 @@ for name, verb in (("scheduler", "jobs"), ("server-pro", "board_now")):
     check(f"{name} does not ask for {verb} with a plain call",
           f"pycmd.call('{verb}'" not in text, panel)
 
+say("\n== Creator scrolls without the document scrolling ==")
+# The panel used to be an ordinary long page: sticky bar, fixed buttons, and
+# the script scrolled by scrolling the document. On a phone that page would
+# not scroll, which is why the palette had to move into an overlay and why a
+# script longer than the screen had a bottom nobody could reach. It is a shell
+# now - a column that fills the panel, with one element in the middle that
+# scrolls - and that is the arrangement the sheets have always used and that
+# has always worked.
+creator_panel = os.path.join(ASSETS, "creator", "ui.html")
+with open(creator_panel, encoding="utf-8") as handle:
+    panel = handle.read()
+check("the body is a full-height column",
+      "html, body { height: 100%; }" in panel
+      and "flex-direction: column" in panel, creator_panel)
+check("the document itself does not scroll",
+      "overflow: hidden;" in panel, creator_panel)
+check("and the middle does",
+      "overflow-y: auto" in panel.split(".pane {")[1].split("}")[0], creator_panel)
+check("the buttons are a row of the shell, not floated over it",
+      "position: fixed" not in panel.split(".foot {")[1].split("}")[0], creator_panel)
+
 say("\n== The bridge offers both verbs ==")
 check("pycmd.poll is part of the bridge every panel gets",
       "poll: poll," in plugins.BRIDGE, "")
 check("and plain call is still there for everything else",
       "call: call," in plugins.BRIDGE, "")
+# A panel that scrolls an element of its own answers "nowhere left to go"
+# when the app asks whether its document can scroll, so a panel inside one of
+# the app's own screens would have its drags taken by the list around it.
+check("and it tells the app when the page scrolls something itself",
+      "innerScroll" in plugins.BRIDGE and "touchstart" in plugins.BRIDGE, "")
+
+say("\n== Every panel scrolls itself, not the document ==")
+# Leaving a panel to be scrolled by its document is what did not work on a
+# phone: a page taller than the panel had a bottom nobody could reach. The
+# body is exactly as tall as the panel and scrolls its own overflow instead -
+# and the root has to be `overflow: hidden` for that, because otherwise the
+# browser hands the body's overflow up to the viewport and the scrolling goes
+# straight back to where it was broken. tools/test_panels.js measures this in
+# a real browser; these two say it is still written down.
+check("the root is a fixed box that does not scroll",
+      "html { height: 100%; overflow: hidden; }" in plugins.PANEL_CSS, "")
+check("and the body is the scroller",
+      "height: 100%;" in plugins.PANEL_CSS
+      and "overflow-y: auto; -webkit-overflow-scrolling: touch;" in plugins.PANEL_CSS, "")
 
 say()
 if FAILURES:

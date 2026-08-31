@@ -1385,6 +1385,36 @@ BRIDGE = """
     plugin: JSON.parse(window.__pycmd_panel.manifest())
   };
 
+  // Whether the finger came down on something the page scrolls itself.
+  //
+  // A panel sitting inside one of the app's own screens is a scrolling view
+  // inside a scrolling list, and the app decides which of the two owns a drag
+  // by asking the WebView whether its document has anywhere left to go. A
+  // page that scrolls an element instead - a list with `overflow-y: auto`,
+  // which is the shape a panel wants - answers "nowhere", and the list takes
+  // the drag away. So the page says so, and the app holds on.
+  function scrollableUnder(node) {
+    while (node && node.nodeType === 1 && node !== document.body) {
+      var style = window.getComputedStyle(node);
+      if (/(auto|scroll)/.test(style.overflowY) && node.scrollHeight > node.clientHeight + 1) {
+        return true;
+      }
+      node = node.parentNode;
+    }
+    return false;
+  }
+
+  if (typeof document !== 'undefined' && document.addEventListener) {
+    document.addEventListener('touchstart', function (event) {
+      if (!window.__pycmd_panel || !window.__pycmd_panel.innerScroll) return;
+      try {
+        window.__pycmd_panel.innerScroll(scrollableUnder(event.target));
+      } catch (error) {
+        // An older host without this method; the app keeps its old guess.
+      }
+    }, { passive: true });
+  }
+
   window.addEventListener('error', function (event) {
     if (window.__pycmd_panel) window.__pycmd_panel.log('panel error: ' + event.message);
   });
@@ -1396,7 +1426,30 @@ PANEL_CSS = """
 <style>
 :root { color-scheme: dark; }
 * { box-sizing: border-box; }
+/*
+  The panel scrolls itself.
+
+  A panel is a WebView inside the app's own layout, and leaving the scrolling
+  to the document is the one thing that is not dependable there: a page taller
+  than the panel could end up with a bottom nobody could reach, which is how
+  the Creator tab's palette came to be "below the fold" and unreachable. So
+  `body` is exactly as tall as the panel and scrolls its own overflow - the
+  same arrangement the overlays have always used, and the one that works.
+
+  A panel that wants a header or a button row that stays put overrides these
+  and makes `body` a flex column of its own; the Creator tab does.
+*/
+/*
+  `overflow: hidden` on the root is not decoration. With the root left at
+  `visible`, the browser propagates the body's overflow up to the viewport -
+  which puts the scrolling back where it was not working. Hidden here means
+  the body keeps its own.
+*/
+html { height: 100%; overflow: hidden; }
 body {
+  height: 100%;
+  overflow-y: auto; -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
   margin: 0; padding: 16px 14px 32px;
   background: #0B0F14; color: #DCE3EC;
   font: 15px/1.55 -apple-system, "Segoe UI", Roboto, sans-serif;
