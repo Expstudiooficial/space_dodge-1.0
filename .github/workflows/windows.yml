@@ -58,17 +58,40 @@ jobs:
       - name: Build
         run: python -m PyInstaller windows/build/pycmd.spec --noconfirm --distpath dist-windows/build
 
-      - name: Prove it starts
+      - name: Prove it starts and the bundle is complete
         shell: pwsh
         run: |
           $exe = "dist-windows/build/PyCmd.exe"
           if (-not (Test-Path $exe)) { throw "no exe was produced" }
-          # --version does not open a window, so it is safe on a headless
-          # runner and still proves the bundle unpacks and imports.
-          $out = & $exe --version
-          Write-Host "it says: $out"
-          if ($LASTEXITCODE -ne 0) { throw "the exe would not run" }
-          if ($out -notmatch "PyCmd for Windows") { throw "that is not PyCmd" }
+
+          # Start-Process -Wait, not `& $exe`. This is a windowed build, and
+          # PowerShell does not wait for a GUI-subsystem process invoked with
+          # the call operator - it returns at once and $LASTEXITCODE means
+          # nothing. -Wait -PassThru gives a real exit code.
+          #
+          # --selftest boots the whole engine inside the packed exe: it
+          # imports the shared modules, installs the five bundled plugins,
+          # and checks the web assets and guides are in the bundle. A missing
+          # hidden import shows up here and nowhere else, because from a
+          # checkout every file is on the disk anyway.
+          $log = "selftest.txt"
+          $run = Start-Process -FilePath $exe -ArgumentList "--selftest" `
+                   -Wait -PassThru -NoNewWindow `
+                   -RedirectStandardOutput $log -RedirectStandardError "selftest-err.txt"
+          if (Test-Path $log) { Get-Content $log | Write-Host }
+          if (Test-Path "selftest-err.txt") { Get-Content "selftest-err.txt" | Write-Host }
+          if ($run.ExitCode -ne 0) {
+            throw "the exe ran but its bundle is not complete (exit $($run.ExitCode))"
+          }
+          Write-Host "the bundle is complete"
+
+          # Informational. A windowed build may have nowhere to print when its
+          # output is not redirected, so this is not something to fail on - the
+          # exit code above is the proof.
+          $v = Start-Process -FilePath $exe -ArgumentList "--version" `
+                 -Wait -PassThru -NoNewWindow -RedirectStandardOutput "version.txt"
+          if (Test-Path "version.txt") { Write-Host ("it says: " + (Get-Content "version.txt" -Raw)) }
+          if ($v.ExitCode -ne 0) { throw "--version exited $($v.ExitCode)" }
 
       - name: Report its size and hash
         shell: pwsh

@@ -23,6 +23,7 @@ still does not get an answer.
 from __future__ import annotations
 
 import argparse
+import io
 import json
 import mimetypes
 import os
@@ -266,17 +267,172 @@ def build_roots() -> dict:
     }
 
 
+class _Discard(io.TextIOBase):
+    """A stream that accepts everything and keeps none of it."""
+
+    def write(self, text):  # noqa: D102
+        return len(text)
+
+    def flush(self):  # noqa: D102
+        pass
+
+    def isatty(self):  # noqa: D102
+        return False
+
+
+def _usable(stream) -> bool:
+    """Whether something can actually be written to."""
+    if stream is None:
+        return False
+    try:
+        stream.write("")
+        stream.flush()
+        return True
+    except Exception:  # noqa: BLE001 - an invalid handle raises OSError, others may differ
+        return False
+
+
+def make_output_work() -> bool:
+    """Gives the app somewhere to write, and never lets writing raise.
+
+    A windowed build - `console=False`, which is what you want so no black box
+    flashes up behind the window - starts with no console at all, and its
+    stdout is an invalid handle rather than a missing one. So `print` does not
+    quietly do nothing: it raises OSError 22, and at interpreter exit the
+    flush raises again. `PyCmd.exe --version` printed nothing and exited 1
+    because of exactly that.
+
+    Three steps, in order:
+
+    1. If stdout already works, leave it alone. That is the ordinary case when
+       output is redirected, or when running from a checkout.
+    2. On Windows, borrow the console of whoever started us. That is what makes
+       `PyCmd.exe --version` in a terminal print into that terminal.
+    3. Failing both, swallow. A GUI with nowhere to write should not die of it,
+       and the debug log is a screen rather than a stream.
+
+    Returns whether anything can actually be read by a human.
+    """
+    if _usable(sys.stdout) and _usable(sys.stderr):
+        return True
+
+    attached = False
+    if os.name == "nt":
+        try:
+            import ctypes
+
+            # -1 is ATTACH_PARENT_PROCESS: use the console we were started
+            # from, if there was one.
+            attached = bool(ctypes.windll.kernel32.AttachConsole(-1))
+        except Exception:  # noqa: BLE001
+            attached = False
+
+        if attached:
+            for name, mode in (("stdout", "w"), ("stderr", "w")):
+                try:
+                    setattr(sys, name, open("CONOUT$", mode, encoding="utf-8",
+                                            errors="replace", buffering=1))
+                except OSError:
+                    attached = False
+
+    if not _usable(sys.stdout):
+        sys.stdout = _Discard()
+    if not _usable(sys.stderr):
+        sys.stderr = _Discard()
+    return attached
+
+
+def selftest() -> int:
+    """Starts everything once and says whether it worked.
+
+    This exists for the packed exe. `--version` proves the bootloader ran;
+    this proves the bundle is actually complete - that the engine unpacks and
+    imports, that the language table and the toolchains are there, and that
+    the plugins that ship inside can be installed. A missing hidden import
+    shows up here and nowhere else, because from a checkout everything is on
+    the disk anyway.
+
+    The answer is the exit code, which works whether or not anything can be
+    printed.
+    """
+    import tempfile
+
+    # Kept aside before anything boots. Starting the engine replaces
+    # sys.stdout with the sink that feeds the console screen, so a print after
+    # that goes into an event queue nobody is reading rather than to whoever
+    # ran the exe.
+    speaking = sys.stdout
+
+    def say(text):
+        try:
+            speaking.write(text + "\n")
+            speaking.flush()
+        except Exception:  # noqa: BLE001 - there may be nowhere to write
+            pass
+
+    problems = []
+    try:
+        store.use(tempfile.mkdtemp(prefix="pycmd-selftest-"))
+        instance = host_module.Host()
+        started = instance.start()
+        if not started.get("ok"):
+            problems.append(f"the engine would not start: {started}")
+
+        from . import langs, toolchains
+
+        if langs.stats()["total"] < 60:
+            problems.append(f"only {langs.stats()['total']} languages were packed")
+        if len(toolchains.TOOLCHAINS) < 40:
+            problems.append(f"only {len(toolchains.TOOLCHAINS)} toolchains were packed")
+
+        plugins = host_module.call(instance, "plugins")
+        if len(plugins.get("installed", [])) < 5:
+            problems.append(
+                f"only {len(plugins.get('installed', []))} bundled plugins installed")
+        if plugins.get("builtin", {}).get("count") != 13:
+            problems.append("the thirteen built-in plugins are not all there")
+
+        for name in ("languages", "toolchains", "system", "files"):
+            reply = host_module.call(instance, name)
+            if not reply.get("ok"):
+                problems.append(f"{name} answered {reply.get('error')}")
+
+        roots = build_roots()
+        for key in ("_ui", "web", "docs"):
+            if not os.path.isdir(str(roots.get(key, ""))):
+                problems.append(f"{key} is not in the bundle: {roots.get(key)}")
+    except Exception as error:  # noqa: BLE001 - anything at all is a failure
+        import traceback
+
+        problems.append(f"{type(error).__name__}: {error}\n{traceback.format_exc()}")
+
+    if problems:
+        for problem in problems:
+            say(f"FAIL  {problem}")
+        return 1
+    say(f"PyCmd for Windows {host_module.VERSION} - everything in the bundle is there")
+    return 0
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(prog="pycmd", description="PyCmd for Windows")
     parser.add_argument("--home", help="keep everything here instead of %LOCALAPPDATA%")
     parser.add_argument("--serve-only", action="store_true",
                         help="start the UI server and print its address, without a window")
     parser.add_argument("--version", action="store_true")
+    parser.add_argument("--selftest", action="store_true",
+                        help="start everything once, check the bundle, and exit")
     args = parser.parse_args(argv)
+
+    # Before anything writes a word. A windowed build has no usable stdout.
+    make_output_work()
 
     if args.version:
         print(f"PyCmd for Windows {host_module.VERSION}")
         return 0
+
+    if args.selftest:
+        return selftest()
 
     if args.home:
         store.use(args.home)
