@@ -56,10 +56,17 @@ real thing. The console says which one every time, because it matters: the
 built-in Go interpreter does not enforce types and the built-in Rust one has
 no borrow checker.
 
-**Everything else came across.** The console with its shell, the editor, the
-workspace, servers, pages, Cloudflare deploys, packages, the five bundled
-plugins — Cloud, Creator, Packages Pro, Scheduler, Server Pro — and all
-thirteen built-in ones, with the same ids the phone uses.
+**Everything else came across.** The console with its shell and its Stop,
+Clear and Reset; the editor; the workspace, browsed properly — walk into
+folders, make a file in any of the 65 languages from its template, rename,
+delete, open, edit and save, and bring a file in from anywhere on the disk.
+Servers that say what they will do before they do it and stay on loopback
+unless you tick the box. Pages pointed at folders you already have, where
+removing the page leaves the folder alone. Packages that ask PyPI what
+something is before downloading it. The five bundled plugins — Cloud, Creator,
+Packages Pro, Scheduler, Server Pro — with their panels opening in the app,
+their settings editable and their exports reachable. And all thirteen built-in
+plugins, with the same ids the phone uses.
 
 **Bring a plugin over from the phone.** A beta, and specifically so: PyCmd
 reads the plugin before installing it and names exactly what this machine
@@ -88,7 +95,7 @@ and in quick settings, and Windows has no equivalent worth imitating.
 
 ### Verification
 
-80 checks in `tools/test_windows.py`, which run anywhere. Sixteen languages —
+115 checks in `tools/test_windows.py`, which run anywhere. Sixteen languages —
 Python, JavaScript, TypeScript, C, C++, Go, Rust, Java, Ruby, PHP, Perl, Bash
 and more — compiled and ran through the real planner during development, and
 `tools/test_toolchains_live.py` repeats that on any machine for whatever it

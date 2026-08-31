@@ -265,12 +265,70 @@ check("the engine starts", booted["ok"], booted)
 check("and the bundled plugins went in",
       len(host_module.call(instance, "plugins")["installed"]) == 5)
 
+# These start work or change something rather than answering a question, so
+# calling them with an empty payload proves nothing and costs something.
+DOES_RATHER_THAN_ANSWERS = {
+    "console.run", "run.file", "toolchain.install", "console.stdin",
+    "console.stop", "console.reset", "builtin.reset", "file.write",
+    "file.create", "file.rename", "file.remove", "file.import",
+    "server.start", "server.stop", "package.install", "package.remove",
+    "page.create", "page.start", "page.stop", "page.rename", "page.remove",
+}
 for name in sorted(host_module.HANDLERS):
-    if name in ("console.run", "run.file", "toolchain.install", "console.stdin",
-                "console.stop", "console.reset", "builtin.reset"):
-        continue  # these start work rather than answering a question
+    if name in DOES_RATHER_THAN_ANSWERS:
+        continue
     reply = host_module.call(instance, name, {})
     check(f"{name} answers", isinstance(reply, dict) and "ok" in reply, reply)
+
+say("\n== the workspace ==")
+from pycmd_win import files  # noqa: E402
+
+check("it starts empty", files.listing()["ok"] and not files.listing()["entries"])
+
+made = files.create("hello.go", "go")
+check("a new file gets its language's template", made["ok"], made)
+read = files.read("hello.go")
+check("and reads back as Go",
+      read["ok"] and "package main" in read["text"], read.get("error"))
+check("with the language named", read["language"]["id"] == "go", read.get("language"))
+
+check("a folder can be made", files.create("site", folder=True)["ok"])
+listed = files.listing()
+check("both show up", len(listed["entries"]) == 2, listed["entries"])
+check("folders sort first", listed["entries"][0]["folder"], listed["entries"])
+check("and a runnable file says so",
+      any(row["runnable"] for row in listed["entries"]), listed["entries"])
+
+check("writing sticks", files.write("hello.go", "// changed\n")["ok"])
+check("and reading gives back what was written",
+      files.read("hello.go")["text"] == "// changed\n")
+
+check("renaming works", files.rename("hello.go", "renamed.go")["ok"])
+check("the old name is gone", not files.read("hello.go")["ok"])
+check("renaming onto something that exists is refused",
+      not files.rename("renamed.go", "site")["ok"])
+
+check("a name that is already taken is refused",
+      not files.create("renamed.go", "go")["ok"])
+check("an empty media file is refused rather than written",
+      not files.create("song.mp3")["ok"])
+
+# The direction that matters. A plugin panel can reach this bridge, so the
+# app's own file API must not be a way round the workspace boundary.
+for escape in ("../../../etc/passwd", "..\\..\\windows\\system32", "/etc/passwd",
+               "site/../../outside.txt"):
+    check(f"{escape!r} is refused", not files.read(escape)["ok"], escape)
+    check(f"and cannot be written to", not files.write(escape, "x")["ok"], escape)
+check("the workspace itself cannot be deleted", not files.remove("")["ok"])
+
+brought = files.bring_in(os.path.join(ROOT, "README.md"))
+check("a file can be brought in from anywhere", brought["ok"], brought)
+again = files.bring_in(os.path.join(ROOT, "README.md"))
+check("and a second copy does not overwrite the first",
+      again["ok"] and again["name"] != brought["name"], again)
+
+check("deleting works", files.remove("renamed.go")["ok"])
+check("a folder deletes with what is in it", files.remove("site")["ok"])
 
 say("\n== running something ==")
 from pycmd_win import runner  # noqa: E402
@@ -288,6 +346,18 @@ check("with the toolchain named", "PyCmd]" in text, text[:120])
 missing = os.path.join(_HOME, "workspace", "nothing.py")
 check("a file that is not there is an answer, not an exception",
       not runner.run_file(missing, lines.append).get("ok"))
+
+say("\n== every handler the UI calls exists ==")
+import re as _re  # noqa: E402
+
+_ui = (open(os.path.join(ROOT, "windows", "ui", "app.js")).read()
+       + open(os.path.join(ROOT, "windows", "ui", "screens.js")).read())
+_called = set(_re.findall(r"PyCmd\.call\(\s*'([a-z.]+)'", _ui))
+_called |= {name for pair in _re.findall(r"PyCmd\.call\(live \? '([a-z.]+)' : '([a-z.]+)'", _ui)
+            for name in pair}
+_missing = sorted(_called - set(host_module.HANDLERS))
+check("the page never calls something that is not there", not _missing, _missing)
+check("and there is more than one screen's worth of them", len(_called) >= 40, len(_called))
 
 say("\n== the update manifest ==")
 manifest = subprocess.run(

@@ -57,7 +57,13 @@ a dozen more; everything else is Python. Output streams as it is produced,
 auto-indent that follows *that* language's rules, bracket matching, a snippet
 bar that changes with the file type, go-to-line and autosave.
 
-**Files** — your workspace. Create, rename, delete, and open anything in it.
+**Files** — your workspace, browsed. Folders you can walk into with a
+breadcrumb back out, a new-file menu covering all 65 languages with their
+starter templates, new folders, rename, delete, and a **Bring a file in**
+that copies anything from anywhere on the disk. Click a file to open it in an
+editor pane with **Save** and, for anything runnable, **Save and run**. Every
+row says what language it is and how big it is, and a runnable one gets a Run
+button.
 
 **Run** — point at a file and press Run. PyCmd works out what it is, finds the
 best toolchain installed for it, builds if it needs building, and streams the
@@ -72,17 +78,28 @@ what version, and for the rest gives you the exact `winget`, `scoop` or
 **Languages** — all 65 file types, searchable, each saying whether this
 machine is ready to run it.
 
-**Servers** — run a script, a folder or a page and reach it over HTTP. Pick
-the port, name it, choose whether it is reachable on your network or loopback
-only. Each server gets its own console and a Kill switch.
+**Servers** — run a script, a program, a folder or a page and reach it over
+HTTP. Type a path and it tells you *before* you press Start what that would
+be — run as a program, serve that folder, open on that page — because a folder
+with an `app.py` in it and one with an `index.html` are different things. Pick
+the port or let it choose a free one, name it, and decide whether the rest of
+your network may reach it: **loopback unless you tick the box**, because a
+server the network can see is a decision somebody should make on purpose. Each
+one has its own log, a Stop and a Kill.
 
-**Pages** — point at a folder in your workspace and serve it as a real site.
-With a Cloudflare account connected, deploy it to a `pages.dev` address that
-stays up when the machine is off.
+**Pages** — point at a folder you already have in the workspace, or start a
+new one from a template. Up to 70 pages, 25 running at once. Start, stop,
+rename and remove — and **removing a page leaves your folder alone**, because
+a page is a pointer at your files and deleting the pointer should not delete
+what it pointed at. With a Cloudflare account connected, deploy to a
+`pages.dev` address that stays up when the machine is off.
 
 **Packages** — Python libraries from PyPI, installed into PyCmd's own
-`site-packages` rather than your system Python. Nothing PyCmd installs can
-break anything else on the machine.
+`site-packages` rather than your system Python, so nothing PyCmd installs can
+break anything else on the machine. **Look it up first** asks PyPI what a
+package is and whether it ships compiled parts *before* the download — and on
+Windows that is no longer a refusal, because with a C compiler installed a
+package with an extension will build rather than give up.
 
 **Plugins** — thirteen built into the app, plus any you install. Includes a
 button to bring a plugin over from the phone; see [MOBILE.md](MOBILE.md).

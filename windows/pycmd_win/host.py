@@ -33,7 +33,7 @@ import threading
 import time
 import traceback
 
-from . import builtins, bundle, langs, runner, store, toolchains
+from . import builtins, bundle, files, langs, runner, store, toolchains
 
 VERSION = "1.0.0"
 BUILD = 1
@@ -468,20 +468,231 @@ def _h_plugin_guide(host, payload):
                       str(payload.get("id", "")), str(payload.get("file", "")))
 
 
-def _h_servers(host, payload):
-    return _json_call(host.engine["servers"], "listing")
+# -- files -----------------------------------------------------------------
 
+def _h_files(host, payload):
+    return files.listing(str(payload.get("path", "")))
+
+
+def _h_file_read(host, payload):
+    return files.read(str(payload.get("path", "")))
+
+
+def _h_file_write(host, payload):
+    return files.write(str(payload.get("path", "")), str(payload.get("text", "")))
+
+
+def _h_file_create(host, payload):
+    return files.create(
+        str(payload.get("path", "")),
+        str(payload.get("language", "")),
+        bool(payload.get("folder")),
+    )
+
+
+def _h_file_rename(host, payload):
+    return files.rename(str(payload.get("path", "")), str(payload.get("name", "")))
+
+
+def _h_file_remove(host, payload):
+    return files.remove(str(payload.get("path", "")))
+
+
+def _h_file_import(host, payload):
+    return files.bring_in(str(payload.get("source", "")), str(payload.get("into", "")))
+
+
+def _h_folders(host, payload):
+    return files.tree(str(payload.get("path", "")), int(payload.get("depth", 3)))
+
+
+# -- servers ---------------------------------------------------------------
+
+def _h_servers(host, payload):
+    module = host.engine["servers"]
+    rows = module.listing()
+    return {
+        "servers": rows,
+        "count": len(rows),
+        "ip": _quiet(module, "local_ip", default=""),
+        "suggested": _quiet(module, "suggest_port", default=0),
+    }
+
+
+def _quiet(module, name, default=None, *args):
+    """Asks for something optional. A build without it is not an error."""
+    function = getattr(module, name, None)
+    if function is None:
+        return default
+    try:
+        return function(*args)
+    except Exception:  # noqa: BLE001
+        return default
+
+
+def _h_server_start(host, payload):
+    """Serves or runs whatever the path turns out to be."""
+    try:
+        path = files.resolve(str(payload.get("path", "")))
+    except files.Refused as error:
+        return {"ok": False, "error": str(error)}
+    if not os.path.exists(path):
+        return {"ok": False, "error": "there is nothing at that path"}
+
+    port = int(payload.get("port", 0) or 0)
+    label = str(payload.get("label", "")) or os.path.basename(path)
+    # Loopback unless asked otherwise. A server reachable from the network is
+    # a decision somebody should make on purpose, not a default.
+    listen = "0.0.0.0" if payload.get("network") else "127.0.0.1"
+    return _json_call(host.engine["servers"], "start_file", path, port, listen, label)
+
+
+def _h_server_plan(host, payload):
+    """What pressing Start on this would do, before doing it.
+
+    The engine works out the shape - script, program, folder, page - but its
+    note about *what runs it* is the phone's, and says things like "runs on the
+    built-in Go interpreter" on a machine with the real Go installed. So the
+    shape comes from the engine and the toolchain comes from ours, which is the
+    half that differs here.
+    """
+    try:
+        path = files.resolve(str(payload.get("path", "")))
+    except files.Refused as error:
+        return {"ok": False, "error": str(error)}
+
+    plan = dict(_quiet(host.engine["servers"], "how_to_run", {}, path) or {})
+    if os.path.isfile(path):
+        language = langs.for_path(path)
+        chosen = toolchains.plan_for(path, language["id"])
+        if chosen.get("ok"):
+            plan["toolchain"] = chosen["name"]
+            plan["note"] = (f"{language['name']} through {chosen['name']}"
+                            + (f" {chosen['version']}" if chosen.get("version") else ""))
+        elif language["id"] in runner.BUILT_IN:
+            plan["toolchain"] = "built-in"
+            plan["note"] = (f"No {language['name']} toolchain here, so PyCmd's own "
+                            f"{language['name']} interpreter would run it.")
+        elif chosen.get("reason") == "missing":
+            plan["toolchain"] = ""
+            plan["note"] = chosen.get("error", "")
+    return {"plan": plan}
+
+
+def _h_server_stop(host, payload):
+    module = host.engine["servers"]
+    handle = str(payload.get("handle", ""))
+    if not handle:
+        return _json_call(module, "stop_all")
+    name = "kill" if payload.get("force") else "stop"
+    return _json_call(module, name, handle)
+
+
+def _h_server_log(host, payload):
+    return {"lines": _quiet(host.engine["servers"], "log_lines", [],
+                            str(payload.get("handle", "")))}
+
+
+# -- packages --------------------------------------------------------------
 
 def _h_packages(host, payload):
-    return _json_call(host.engine["packages"], "listing")
+    module = host.engine["packages"]
+    return {
+        "packages": _quiet(module, "installed", []),
+        "bundled": _quiet(module, "bundled", []),
+    }
 
+
+def _h_package_info(host, payload):
+    """Asks PyPI what something is before downloading it."""
+    return _json_call(host.engine["packages"], "info", str(payload.get("name", "")))
+
+
+def _h_package_install(host, payload):
+    name = str(payload.get("name", "")).strip()
+    if not name:
+        return {"ok": False, "error": "which package?"}
+    version = str(payload.get("version", "")) or None
+
+    def work():
+        module = host.engine["packages"]
+        host.onOutput("system", f"[PyCmd] installing {name}...\n", "console")
+
+        def progress(text, *rest):
+            host.onOutput("stdout", f"{text}\n", "console")
+
+        try:
+            reply = module.install(name, version, progress)
+        except Exception as error:  # noqa: BLE001 - PyPI can do anything
+            host.onOutput("stderr", f"[PyCmd] {type(error).__name__}: {error}\n", "console")
+            host.emit("packages-changed")
+            return
+        if reply.get("ok"):
+            host.onOutput("system", f"[PyCmd] {name} installed.\n", "console")
+        else:
+            host.onOutput("stderr", f"[PyCmd] {reply.get('error', 'that failed')}\n", "console")
+        host.emit("packages-changed")
+
+    threading.Thread(target=work, name="pycmd-pip", daemon=True).start()
+    return {"queued": True}
+
+
+def _h_package_remove(host, payload):
+    return _json_call(host.engine["packages"], "uninstall", str(payload.get("name", "")))
+
+
+# -- pages -----------------------------------------------------------------
 
 def _h_pages(host, payload):
-    return _json_call(host.engine["pages"], "listing")
+    module = host.engine["pages"]
+    rows = module.listing()
+    return {
+        "pages": rows,
+        "count": len(rows),
+        "active": sum(1 for row in rows if row.get("active") or row.get("running")),
+        "max": getattr(module, "MAX_PROJECTS", 70),
+        "max_active": getattr(module, "MAX_ACTIVE", 25),
+        "templates": _quiet(module, "templates", []),
+        "folders": files.tree("", 2).get("folders", []),
+    }
 
 
-def _h_music(host, payload):
-    return _json_call(host.engine["music"], "library")
+def _h_page_create(host, payload):
+    """A page from a template, or one pointed at a folder you already have."""
+    module = host.engine["pages"]
+    name = str(payload.get("name", "")).strip()
+    if not name:
+        return {"ok": False, "error": "a name is needed"}
+    folder = str(payload.get("folder", "")).strip()
+    if folder:
+        try:
+            resolved = files.resolve(folder)
+        except files.Refused as error:
+            return {"ok": False, "error": str(error)}
+        return _json_call(module, "adopt", name, resolved)
+    return _json_call(module, "create", name, str(payload.get("template", "static")),
+                      files.root())
+
+
+def _h_page_start(host, payload):
+    return _json_call(host.engine["pages"], "start", str(payload.get("id", "")))
+
+
+def _h_page_stop(host, payload):
+    page_id = str(payload.get("id", ""))
+    if not page_id:
+        return _json_call(host.engine["pages"], "stop_all")
+    return _json_call(host.engine["pages"], "stop", page_id)
+
+
+def _h_page_rename(host, payload):
+    return _json_call(host.engine["pages"], "rename",
+                      str(payload.get("id", "")), str(payload.get("name", "")))
+
+
+def _h_page_remove(host, payload):
+    return _json_call(host.engine["pages"], "remove", str(payload.get("id", "")),
+                      bool(payload.get("delete_files")))
 
 
 def _h_system(host, payload):
@@ -529,10 +740,29 @@ HANDLERS = {
     "plugin.settings": _h_plugin_settings,
     "plugin.setting.set": _h_plugin_set_setting,
     "plugin.guide": _h_plugin_guide,
+    "files": _h_files,
+    "file.read": _h_file_read,
+    "file.write": _h_file_write,
+    "file.create": _h_file_create,
+    "file.rename": _h_file_rename,
+    "file.remove": _h_file_remove,
+    "file.import": _h_file_import,
+    "folders": _h_folders,
     "servers": _h_servers,
+    "server.start": _h_server_start,
+    "server.plan": _h_server_plan,
+    "server.stop": _h_server_stop,
+    "server.log": _h_server_log,
     "packages": _h_packages,
+    "package.info": _h_package_info,
+    "package.install": _h_package_install,
+    "package.remove": _h_package_remove,
     "pages": _h_pages,
-    "music": _h_music,
+    "page.create": _h_page_create,
+    "page.start": _h_page_start,
+    "page.stop": _h_page_stop,
+    "page.rename": _h_page_rename,
+    "page.remove": _h_page_remove,
     "system": _h_system,
     "log": _h_log,
     "drain": _h_drain,

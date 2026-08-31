@@ -118,6 +118,14 @@ function Console(screen) {
       class: 'small', text: 'Clear',
       onclick: () => { if (consoleReady()) consoleFrame.contentWindow.PyConsole.clear(); },
     }),
+    el('button', {
+      class: 'small', title: 'Throw away every variable you have defined',
+      text: 'Reset',
+      onclick: async () => {
+        await PyCmd.call('console.reset');
+        consoleWrite('system', '[PyCmd] variables cleared.\n');
+      },
+    }),
   );
 
   wrap.appendChild(frame);
@@ -139,19 +147,223 @@ function Editor(screen) {
 // Files
 // ---------------------------------------------------------------------------
 
+let filesAt = '';
+
 async function Files(screen) {
-  screen.appendChild(head('Files', 'Your workspace. Everything PyCmd writes lives here.'));
-  const reply = await PyCmd.call('shell', { line: 'ls' });
-  const body = card();
-  if (reply.ok && reply.output) {
-    body.appendChild(el('pre', { class: 'out', text: reply.output }));
-  } else {
-    body.appendChild(el('div', { class: 'empty', text: 'Nothing here yet. Make something in the console.' }));
+  const reply = await PyCmd.call('files', { path: filesAt });
+  if (!reply.ok) {
+    filesAt = '';
+    screen.appendChild(el('div', { class: 'empty', text: reply.error }));
+    return;
   }
-  screen.appendChild(body);
-  screen.appendChild(el('p', { class: 'muted' },
-    'The workspace is at ', el('code', { text: PyCmd.state.root || '…' }), '\\workspace — ',
-    'an ordinary Windows folder you can open in Explorer, back up, or put in git.'));
+
+  screen.appendChild(head('Files',
+    'Your workspace is an ordinary Windows folder. Open it in Explorer, back it ' +
+    'up, put it in git — PyCmd will not mind.'));
+
+  const crumbs = el('div', { class: 'row wrap', style: 'margin-bottom:8px' },
+    el('button', {
+      class: 'small' + (filesAt ? '' : ' primary'), text: 'workspace',
+      onclick: () => { filesAt = ''; go('files'); },
+    }));
+  let walked = '';
+  (reply.path ? reply.path.split('/') : []).forEach((part, index, all) => {
+    walked = walked ? walked + '/' + part : part;
+    const here = walked;
+    crumbs.appendChild(el('span', { class: 'muted', text: '›' }));
+    crumbs.appendChild(el('button', {
+      class: 'small' + (index === all.length - 1 ? ' primary' : ''), text: part,
+      onclick: () => { filesAt = here; go('files'); },
+    }));
+  });
+  screen.appendChild(crumbs);
+
+  screen.appendChild(el('div', { class: 'row wrap', style: 'margin-bottom:10px' },
+    el('button', { class: 'small primary', text: '+ New file', onclick: () => newFile(reply.path) }),
+    el('button', { class: 'small', text: '+ New folder', onclick: () => newFolder(reply.path) }),
+    el('button', { class: 'small', text: 'Bring a file in', onclick: () => bringIn(reply.path) }),
+    el('span', { class: 'muted', text: reply.folders + ' folders · ' + reply.files + ' files' }),
+  ));
+
+  if (!reply.entries.length) {
+    screen.appendChild(el('div', { class: 'empty', text: 'Nothing here yet.' }));
+  }
+
+  const list = el('div', { class: 'card', style: 'padding:4px 6px' });
+  reply.entries.forEach((entry) => {
+    const open = () => {
+      if (entry.folder) { filesAt = entry.path; go('files'); return; }
+      openFile(entry);
+    };
+    list.appendChild(el('div', {
+      class: 'row',
+      style: 'padding:7px 9px;border-bottom:1px solid #182231',
+    },
+      el('span', { style: 'width:20px;text-align:center', text: entry.folder ? '▸' : '·' }),
+      el('button', {
+        class: 'small', style: 'flex:1 1 auto;text-align:left;border-color:transparent;background:none',
+        text: entry.name, onclick: open,
+      }),
+      entry.language ? el('span', { class: 'pill', text: entry.language }) : null,
+      entry.folder ? null : el('span', { class: 'muted', text: PyCmd.bytes(entry.bytes) }),
+      entry.runnable ? el('button', {
+        class: 'small primary', text: 'Run',
+        onclick: async () => {
+          PyCmd.toast('Running ' + entry.name + ' — output is on the Console.');
+          await PyCmd.call('run.file', { path: reply.root + '\\' + entry.name });
+        },
+      }) : null,
+      el('button', {
+        class: 'small', text: 'Rename',
+        onclick: () => renameEntry(entry),
+      }),
+      el('button', {
+        class: 'small danger', text: 'Delete',
+        onclick: () => confirmDelete(entry),
+      }),
+    ));
+  });
+  screen.appendChild(list);
+  screen.appendChild(el('p', { class: 'muted mono', style: 'font-size:11px', text: reply.root }));
+}
+
+async function openFile(entry) {
+  const reply = await PyCmd.call('file.read', { path: entry.path });
+  if (!reply.ok) {
+    PyCmd.sheet(entry.name, el('p', { class: 'muted', text: reply.error }));
+    return;
+  }
+  const box = el('textarea', {
+    spellcheck: 'false',
+    style: 'width:100%;height:52vh;font-family:Consolas,ui-monospace,monospace;font-size:12.5px',
+  });
+  box.value = reply.text;
+  PyCmd.sheet(entry.name, el('div', {},
+    el('div', { class: 'row', style: 'margin-bottom:8px' },
+      el('span', { class: 'pill', text: (reply.language || {}).name || 'text' }),
+      el('span', { class: 'muted', text: PyCmd.bytes(reply.bytes) })),
+    box,
+    el('div', { class: 'row', style: 'margin-top:10px' },
+      el('button', {
+        class: 'small primary', text: 'Save',
+        onclick: async () => {
+          const done = await PyCmd.call('file.write', { path: entry.path, text: box.value });
+          PyCmd.toast(done.ok ? 'Saved.' : (done.error || 'that would not save'));
+          if (done.ok) PyCmd.closeSheet();
+        },
+      }),
+      entry.runnable ? el('button', {
+        class: 'small', text: 'Save and run',
+        onclick: async () => {
+          await PyCmd.call('file.write', { path: entry.path, text: box.value });
+          PyCmd.closeSheet();
+          go('console');
+          await PyCmd.call('run.file', { path: (PyCmd.state.root || '') + '\\workspace\\' + entry.path.replace(/\//g, '\\') });
+        },
+      }) : null,
+      el('button', { class: 'small', text: 'Cancel', onclick: PyCmd.closeSheet }),
+    )));
+}
+
+function newFile(where) {
+  const name = el('input', { placeholder: 'hello.go', spellcheck: 'false' });
+  const pick = el('select', {});
+  pick.appendChild(el('option', { value: '', text: 'From the file name' }));
+  (PyCmd.state.languages || [])
+    .filter((row) => row.creatable !== false && row.mode !== 'media')
+    .forEach((row) => pick.appendChild(
+      el('option', { value: row.id, text: row.name + '  (' + row.extension + ')' })));
+
+  pick.addEventListener('change', () => {
+    const row = (PyCmd.state.languages || []).find((l) => l.id === pick.value);
+    if (row && !name.value.includes('.')) {
+      name.value = (name.value || 'untitled') + row.extension;
+    }
+  });
+
+  PyCmd.sheet('A new file', el('div', {},
+    el('p', { class: 'muted' },
+      String((PyCmd.state.languageStats || {}).total || 0),
+      ' file types, each with a starter template.'),
+    el('label', { class: 'field' }, el('span', { text: 'Name' }), name),
+    el('label', { class: 'field' }, el('span', { text: 'Language' }), pick),
+    el('button', {
+      class: 'small primary', text: 'Create',
+      onclick: async () => {
+        const path = (where ? where + '/' : '') + name.value.trim();
+        const done = await PyCmd.call('file.create', { path, language: pick.value });
+        if (done.ok) { PyCmd.closeSheet(); go('files'); }
+        else PyCmd.toast(done.error || 'that would not work');
+      },
+    })));
+  setTimeout(() => name.focus(), 60);
+}
+
+function newFolder(where) {
+  const name = el('input', { placeholder: 'my-project', spellcheck: 'false' });
+  PyCmd.sheet('A new folder', el('div', {},
+    el('label', { class: 'field' }, el('span', { text: 'Name' }), name),
+    el('button', {
+      class: 'small primary', text: 'Create',
+      onclick: async () => {
+        const path = (where ? where + '/' : '') + name.value.trim();
+        const done = await PyCmd.call('file.create', { path, folder: true });
+        if (done.ok) { PyCmd.closeSheet(); go('files'); }
+        else PyCmd.toast(done.error || 'that would not work');
+      },
+    })));
+  setTimeout(() => name.focus(), 60);
+}
+
+function bringIn(where) {
+  const source = el('input', {
+    placeholder: 'C:\\Users\\you\\Documents\\notes.md', spellcheck: 'false',
+  });
+  PyCmd.sheet('Bring a file in', el('div', {},
+    el('p', { class: 'muted' },
+      'Anywhere on the disk. It is copied in, so the original is left alone.'),
+    el('label', { class: 'field' }, el('span', { text: 'Full path' }), source),
+    el('button', {
+      class: 'small primary', text: 'Copy it in',
+      onclick: async () => {
+        const done = await PyCmd.call('file.import', { source: source.value.trim(), into: where });
+        if (done.ok) { PyCmd.closeSheet(); PyCmd.toast(done.name + ' copied in'); go('files'); }
+        else PyCmd.toast(done.error || 'that would not copy');
+      },
+    })));
+  setTimeout(() => source.focus(), 60);
+}
+
+function renameEntry(entry) {
+  const name = el('input', { spellcheck: 'false' });
+  name.value = entry.name;
+  PyCmd.sheet('Rename', el('div', {},
+    el('label', { class: 'field' }, el('span', { text: 'New name' }), name),
+    el('button', {
+      class: 'small primary', text: 'Rename',
+      onclick: async () => {
+        const done = await PyCmd.call('file.rename', { path: entry.path, name: name.value.trim() });
+        if (done.ok) { PyCmd.closeSheet(); go('files'); }
+        else PyCmd.toast(done.error || 'that would not rename');
+      },
+    })));
+}
+
+function confirmDelete(entry) {
+  PyCmd.sheet('Delete ' + entry.name + '?', el('div', {},
+    el('p', { class: 'muted', text: entry.folder
+      ? 'The folder and everything in it. There is no undo.'
+      : 'There is no undo.' }),
+    el('div', { class: 'row', style: 'margin-top:12px' },
+      el('button', {
+        class: 'small danger', text: 'Delete it',
+        onclick: async () => {
+          const done = await PyCmd.call('file.remove', { path: entry.path });
+          if (done.ok) { PyCmd.closeSheet(); go('files'); }
+          else PyCmd.toast(done.error || 'that would not delete');
+        },
+      }),
+      el('button', { class: 'small', text: 'Keep it', onclick: PyCmd.closeSheet }))));
 }
 
 // ---------------------------------------------------------------------------
@@ -615,53 +827,300 @@ PyCmd.on('plugin-message', (event) => {
 // ---------------------------------------------------------------------------
 
 async function Servers(screen) {
-  screen.appendChild(head('Servers', 'Run a script, a folder or a page and reach it over HTTP.'));
   const reply = await PyCmd.call('servers');
-  const rows = (reply && reply.servers) || [];
+  screen.appendChild(head('Servers',
+    'Run a script, a program or a folder and reach it over HTTP. Loopback by ' +
+    'default; tick the box to let the rest of your network in.'));
+
+  const path = el('input', { placeholder: 'site  ·  app.py  ·  server.go', spellcheck: 'false' });
+  const port = el('input', { type: 'number', placeholder: String(reply.suggested || 8000) });
+  const label = el('input', { placeholder: 'What to call it' });
+  const network = el('input', { type: 'checkbox' });
+  const plan = el('div', { class: 'muted' });
+
+  // Say what Run will do before it does it - a folder with an app.py in it is
+  // run, one with an index.html is served, and those are different things.
+  let planTimer = 0;
+  path.addEventListener('input', () => {
+    clearTimeout(planTimer);
+    planTimer = setTimeout(async () => {
+      if (!path.value.trim()) { plan.textContent = ''; return; }
+      const answer = await PyCmd.call('server.plan', { path: path.value.trim() });
+      const how = (answer.plan || {});
+      // The engine's own words are short labels for its own use - "script",
+      // "language", "serve", "folder". Saying them out loud reads as
+      // "That would be language (Go)", so they get a sentence each.
+      const said = {
+        script: 'Run as a Python script',
+        language: 'Run as a program',
+        serve: 'Serve that folder as a site',
+        folder: 'Serve that folder',
+        page: 'Serve that page, opening on it',
+        none: 'Nothing here can run that',
+      }[how.how] || (how.how ? 'Run it as ' + how.how : '');
+      plan.textContent = said
+        ? said + (how.entry ? ' · entry point ' + how.entry : '') +
+          (how.note ? ' — ' + how.note : '')
+        : (answer.error || '');
+    }, 350);
+  });
+
+  screen.appendChild(card(
+    el('label', { class: 'field' },
+      el('span', { text: 'File or folder, relative to the workspace' }), path),
+    plan,
+    el('div', { class: 'row' },
+      el('label', { class: 'field', style: 'flex:1 1 0' },
+        el('span', { text: 'Port (blank picks a free one)' }), port),
+      el('label', { class: 'field', style: 'flex:1 1 0' },
+        el('span', { text: 'Name' }), label)),
+    el('label', { class: 'row', style: 'gap:8px' }, network,
+      el('span', { class: 'muted',
+        text: 'Reachable from the rest of the network' +
+              (reply.ip ? ' (this machine is ' + reply.ip + ')' : '') })),
+    el('div', { class: 'row', style: 'margin-top:10px' },
+      el('button', {
+        class: 'small primary', text: 'Start',
+        onclick: async () => {
+          if (!path.value.trim()) return PyCmd.toast('Point it at something first.');
+          const done = await PyCmd.call('server.start', {
+            path: path.value.trim(),
+            port: Number(port.value) || 0,
+            label: label.value.trim(),
+            network: network.checked,
+          });
+          PyCmd.toast(done.ok ? ('Started on ' + (done.url || 'it')) : (done.error || 'that would not start'));
+          if (done.ok) go('servers');
+        },
+      }),
+      reply.count ? el('button', {
+        class: 'small danger', text: 'Stop all',
+        onclick: async () => { await PyCmd.call('server.stop', {}); go('servers'); },
+      }) : null),
+  ));
+
+  screen.appendChild(el('h2', { text: 'Running' }));
+  const rows = reply.servers || [];
   if (!rows.length) {
     screen.appendChild(el('div', { class: 'empty', text: 'Nothing running.' }));
-  } else {
-    rows.forEach((row) => screen.appendChild(card(
+    return;
+  }
+  rows.forEach((row) => {
+    const handle = row.handle || row.id || '';
+    screen.appendChild(card(
       el('div', { class: 'row spread' },
         el('b', { text: row.label || row.path || 'server' }),
-        el('span', { class: 'pill on', text: ':' + row.port })),
-      el('div', { class: 'muted mono', text: row.url || '' }),
-    )));
-  }
+        el('span', { class: 'pill on', text: ':' + (row.port || '?') })),
+      row.url ? el('div', { class: 'mono muted', text: row.url }) : null,
+      row.path ? el('div', { class: 'muted', style: 'font-size:11px', text: row.path }) : null,
+      el('div', { class: 'row', style: 'margin-top:8px' },
+        el('button', {
+          class: 'small', text: 'Log',
+          onclick: async () => {
+            const log = await PyCmd.call('server.log', { handle });
+            const lines = (log.lines || []).map((line) =>
+              typeof line === 'string' ? line : (line.text || '')).join('');
+            PyCmd.sheet(row.label || 'Server log',
+              el('pre', { class: 'out', style: 'max-height:60vh',
+                          text: lines || 'It has not said anything yet.' }));
+          },
+        }),
+        el('button', {
+          class: 'small', text: 'Stop',
+          onclick: async () => {
+            await PyCmd.call('server.stop', { handle });
+            go('servers');
+          },
+        }),
+        el('button', {
+          class: 'small danger', text: 'Kill',
+          onclick: async () => {
+            await PyCmd.call('server.stop', { handle, force: true });
+            go('servers');
+          },
+        }),
+      )));
+  });
 }
 
 async function Packages(screen) {
-  screen.appendChild(head('Packages',
-    'Python libraries, installed into PyCmd’s own site-packages rather than the ' +
-    'system Python — so nothing here can break anything else on the machine.'));
   const reply = await PyCmd.call('packages');
-  const rows = (reply && reply.packages) || [];
-  screen.appendChild(card(
-    el('p', { class: 'muted', text: 'Install with  pip install <name>  on the Console.' })));
-  if (!rows.length) {
-    screen.appendChild(el('div', { class: 'empty', text: 'None installed yet.' }));
-    return;
+  screen.appendChild(head('Packages',
+    'Python libraries from PyPI, installed into PyCmd’s own site-packages. ' +
+    'Nothing here can break your system Python, and with a C compiler installed ' +
+    'a package with an extension will build rather than refuse.'));
+
+  const name = el('input', { placeholder: 'requests', spellcheck: 'false' });
+  const found = el('div', {});
+
+  async function look() {
+    const asked = name.value.trim();
+    if (!asked) return;
+    clear(found).appendChild(el('p', { class: 'muted', text: 'Asking PyPI…' }));
+    const info = await PyCmd.call('package.info', { name: asked });
+    clear(found);
+    if (!info.ok) {
+      found.appendChild(el('p', { class: 'muted', text: info.error || 'PyPI has not heard of it' }));
+      return;
+    }
+    found.appendChild(el('div', { class: 'row spread' },
+      el('b', { text: (info.name || asked) + ' ' + (info.version || '') }),
+      info.pure === false
+        ? el('span', { class: 'pill', text: 'has compiled parts' })
+        : el('span', { class: 'pill on', text: 'pure Python' })));
+    if (info.summary) found.appendChild(el('p', { class: 'muted', text: info.summary }));
+    if (info.pure === false) {
+      found.appendChild(el('p', { class: 'muted' },
+        'This one ships compiled code. On Windows that usually installs fine as ' +
+        'long as there is a wheel for your Python; if there is not, it needs a ' +
+        'C compiler — the Toolchains screen has one.'));
+    }
   }
-  const grid = el('div', { class: 'grid' });
-  rows.forEach((row) => grid.appendChild(card(
-    el('div', { class: 'row spread' },
-      el('b', { text: row.name }), el('span', { class: 'pill', text: row.version || '' })))));
-  screen.appendChild(grid);
+
+  screen.appendChild(card(
+    el('label', { class: 'field' }, el('span', { text: 'Package name' }), name),
+    el('div', { class: 'row' },
+      el('button', { class: 'small', text: 'Look it up first', onclick: look }),
+      el('button', {
+        class: 'small primary', text: 'Install',
+        onclick: async () => {
+          const asked = name.value.trim();
+          if (!asked) return;
+          PyCmd.toast('Installing ' + asked + ' — watch the Console.');
+          await PyCmd.call('package.install', { name: asked });
+        },
+      })),
+    found,
+  ));
+
+  const rows = reply.packages || [];
+  screen.appendChild(el('h2', { text: 'Installed  ·  ' + rows.length }));
+  if (!rows.length) {
+    screen.appendChild(el('div', { class: 'empty',
+      text: 'None yet. Install one above, or type  pip install requests  on the Console.' }));
+  } else {
+    const grid = el('div', { class: 'grid' });
+    rows.forEach((row) => grid.appendChild(card(
+      el('div', { class: 'row spread' },
+        el('b', { text: row.name || row }),
+        el('span', { class: 'pill', text: row.version || '' })),
+      el('button', {
+        class: 'small danger', style: 'margin-top:8px', text: 'Remove',
+        onclick: async () => {
+          const done = await PyCmd.call('package.remove', { name: row.name || row });
+          PyCmd.toast(done.ok ? 'Removed.' : (done.error || 'that would not remove'));
+          go('packages');
+        },
+      }))));
+    screen.appendChild(grid);
+  }
+
+  const bundled = reply.bundled || [];
+  if (bundled.length) {
+    screen.appendChild(el('h2', { text: 'Already inside PyCmd' }));
+    screen.appendChild(el('div', {},
+      bundled.map((row) => el('span', { class: 'pill on', text: row.name || row }))));
+  }
 }
 
 async function Pages(screen) {
-  screen.appendChild(head('Pages', 'Point at a folder in the workspace and serve it for real.'));
   const reply = await PyCmd.call('pages');
-  const rows = (reply && reply.pages) || [];
+  screen.appendChild(head('Pages',
+    'A site that lives in your workspace and is served from this machine. ' +
+    'Point one at a folder you already have, or start from a template.'));
+
+  const name = el('input', { placeholder: 'my-site', spellcheck: 'false' });
+  const folder = el('select', {});
+  folder.appendChild(el('option', { value: '', text: 'Make a new folder from a template' }));
+  (reply.folders || []).forEach((row) => folder.appendChild(
+    el('option', { value: row.path, text: '  '.repeat(row.depth) + row.path })));
+  const template = el('select', {});
+  (reply.templates || []).forEach((row) => template.appendChild(
+    el('option', { value: row.id, text: (row.name || row.id) + (row.summary ? ' — ' + row.summary : '') })));
+
+  folder.addEventListener('change', () => {
+    template.disabled = !!folder.value;
+  });
+
+  screen.appendChild(card(
+    el('label', { class: 'field' }, el('span', { text: 'Name' }), name),
+    el('label', { class: 'field' },
+      el('span', { text: 'Folder in the workspace' }), folder),
+    el('label', { class: 'field' },
+      el('span', { text: 'Or a template, if you are making a new folder' }), template),
+    el('div', { class: 'row' },
+      el('button', {
+        class: 'small primary', text: 'Add it',
+        onclick: async () => {
+          if (!name.value.trim()) return PyCmd.toast('It needs a name.');
+          const done = await PyCmd.call('page.create', {
+            name: name.value.trim(),
+            folder: folder.value,
+            template: template.value,
+          });
+          PyCmd.toast(done.ok ? 'Added.' : (done.error || 'that would not work'));
+          if (done.ok) go('pages');
+        },
+      }),
+      el('span', { class: 'muted',
+        text: reply.count + ' of ' + reply.max + ' pages · ' +
+              reply.active + ' of ' + reply.max_active + ' can run at once' })),
+  ));
+
+  const rows = reply.pages || [];
   if (!rows.length) {
     screen.appendChild(el('div', { class: 'empty', text: 'No pages yet.' }));
     return;
   }
-  rows.forEach((row) => screen.appendChild(card(
-    el('div', { class: 'row spread' },
-      el('b', { text: row.name || row.id }),
-      el('span', { class: 'pill' + (row.active ? ' on' : ''), text: row.active ? 'live' : 'off' })),
-    el('div', { class: 'muted mono', text: row.url || row.folder || '' }))));
+  const grid = el('div', { class: 'grid' });
+  rows.forEach((row) => {
+    const live = !!(row.active || row.running);
+    grid.appendChild(card(
+      el('div', { class: 'row spread' },
+        el('b', { text: row.name || row.id }),
+        el('span', { class: 'pill' + (live ? ' on' : ' off'), text: live ? 'live' : 'off' })),
+      row.url ? el('div', { class: 'mono muted', text: row.url }) : null,
+      row.folder ? el('div', { class: 'muted', style: 'font-size:11px', text: row.folder }) : null,
+      el('div', { class: 'row', style: 'margin-top:8px' },
+        el('button', {
+          class: 'small' + (live ? '' : ' primary'), text: live ? 'Stop' : 'Start',
+          onclick: async () => {
+            const done = await PyCmd.call(live ? 'page.stop' : 'page.start', { id: row.id });
+            PyCmd.toast(done.ok ? (live ? 'Stopped.' : ('Serving on ' + (done.url || 'it')))
+                                : (done.error || 'that would not work'));
+            go('pages');
+          },
+        }),
+        el('button', {
+          class: 'small', text: 'Rename',
+          onclick: () => {
+            const box = el('input', {});
+            box.value = row.name || '';
+            PyCmd.sheet('Rename', el('div', {},
+              el('label', { class: 'field' }, el('span', { text: 'New name' }), box),
+              el('button', {
+                class: 'small primary', text: 'Rename',
+                onclick: async () => {
+                  await PyCmd.call('page.rename', { id: row.id, name: box.value.trim() });
+                  PyCmd.closeSheet(); go('pages');
+                },
+              })));
+          },
+        }),
+        el('button', {
+          class: 'small danger', text: 'Remove',
+          onclick: async () => {
+            // The folder stays. A page is a pointer at your files, and
+            // deleting the pointer should not delete what it pointed at.
+            const done = await PyCmd.call('page.remove', { id: row.id, delete_files: false });
+            PyCmd.toast(done.ok ? 'Removed. Your folder is untouched.'
+                                : (done.error || 'that would not remove'));
+            go('pages');
+          },
+        }),
+      )));
+  });
+  screen.appendChild(grid);
 }
 
 async function Docs(screen) {

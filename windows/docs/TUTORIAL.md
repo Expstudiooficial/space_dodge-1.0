@@ -52,11 +52,17 @@ requests.get("https://example.com").status_code
 
 ## 4. Write a file
 
-Go to **Editor**. Make a new file, choose **Python**, and you get a starter
-template with highlighting, auto-indent and a snippet bar for that language.
+Go to **Files** and press **+ New file**. Name it `hello.py`, pick **Python**
+from the list of 65, and press Create — you get a starter template, not an
+empty file.
 
-Save it as `hello.py`. It lands in `%LOCALAPPDATA%\PyCmd\workspace` — an
-ordinary Windows folder. Open it in Explorer if you like; PyCmd will not mind.
+Click it to open it. Edit, press **Save**, or **Save and run** to do both and
+watch the output on the Console.
+
+It lands in `%LOCALAPPDATA%\PyCmd\workspace` — an ordinary Windows folder.
+Open it in Explorer if you like; PyCmd will not mind. **Bring a file in**
+copies one from anywhere on the disk if you would rather start from something
+you already have.
 
 ## 5. Run something that is not Python
 
