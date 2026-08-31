@@ -1,5 +1,12 @@
-# Build output
-build/
+# Build output.
+#
+# Anchored, because a bare `build/` matches a directory called build at *any*
+# depth. Unanchored, it silently swallowed the whole of windows/build/ - the
+# PyInstaller recipe, which belongs in the repository - and the first thing
+# anybody heard about it was CI failing on a requirements.txt that was right
+# there locally.
+/build/
+app/build/
 .gradle/
 .kotlin/
 *.apk
@@ -27,6 +34,10 @@ Thumbs.db
 # Python
 __pycache__/
 *.py[cod]
+
+# What PyInstaller writes. The recipe beside it, windows/build/, is kept.
+/dist-windows/build/
+.build-venv/
 
 # Personal permission rules, not part of the project
 .claude/settings.local.json

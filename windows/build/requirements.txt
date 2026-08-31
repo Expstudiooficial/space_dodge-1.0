@@ -1,0 +1,4 @@
+# What building PyCmd.exe needs. Nothing here ships inside the exe except
+# pywebview - PyInstaller is the oven, not the cake.
+pywebview>=5.0,<6
+pyinstaller>=6.6,<7
