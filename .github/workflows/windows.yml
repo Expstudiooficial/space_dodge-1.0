@@ -38,6 +38,11 @@ jobs:
         with:
           python-version: "3.13"
           cache: pip
+          # Without this, setup-python looks for a requirements.txt at the
+          # repository root, finds none, and fails the whole job in one
+          # second - every step after it skipped. The build's requirements
+          # live with the build.
+          cache-dependency-path: windows/build/requirements.txt
 
       - name: Install what the build needs
         run: |
