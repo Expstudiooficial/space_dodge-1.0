@@ -12,7 +12,7 @@ already has. Another twenty file types are edited, highlighted, previewed and
 served, and music, video, images, PDFs, archives and fonts are brought in from
 the phone, kept, served and played.
 
-Version 2.5.3. Kotlin and Jetpack Compose for the app, JavaScript for the console
+Version 2.5.4. Kotlin and Jetpack Compose for the app, JavaScript for the console
 and editor.
 
 ---
@@ -198,7 +198,7 @@ signal, no answer - says nothing at all.
 ## Just want to try it
 
 A ready-to-install APK is in [`dist/`](dist/) - download
-[`PyCmd-2.5.3.apk`](dist/PyCmd-2.5.3.apk), open it on the phone, and allow the
+[`PyCmd-2.5.4.apk`](dist/PyCmd-2.5.4.apk), open it on the phone, and allow the
 install when Android asks. It is a release build: minified by R8, not
 debuggable, and about 18 MB rather than the 35 MB the debug builds were. It is
 signed with the key in [`keystore/`](keystore/) - the standard Android debug
@@ -276,8 +276,9 @@ completions, a real install/import/uninstall round trip against PyPI and a real
 HTTP server, byte-range requests for the media player, the pages registry, the
 music library, and every one of Creator's blocks compiled and handed to
 Python's own parser), the published update manifest against the APK actually
-sitting in `dist/`, the WebView JavaScript under Node against a stub document,
-and both a debug and a release build with Android Lint.
+sitting in `dist/`, the WebView JavaScript under Node against a stub document -
+the console, the editor, and the Creator panel driven the way a finger drives
+it - and both a debug and a release build with Android Lint.
 
 Playback is the part no suite here reaches: the media session, its notification
 and the lock-screen controls are Android's, and they need a phone. What is

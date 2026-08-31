@@ -1,17 +1,54 @@
 # Prebuilt APK
 
-`PyCmd-2.5.3.apk` — ready to install, nothing else needed.
+`PyCmd-2.5.4.apk` — ready to install, nothing else needed.
 
 | | |
 |---|---|
 | Package | `com.expstudio.pycmd.debug` |
-| Version | 2.5.3 |
+| Version | 2.5.4 |
 | Size | 18 MB |
 | Signed with | the key in [`keystore/`](../keystore/), committed so updates can install over it |
 | Works on | Android 7.0 (API 24) and newer, **arm64-v8a** (every phone since about 2016) |
 | SHA-256 | see [SHA256SUMS.txt](SHA256SUMS.txt) |
 
-## What is new in 2.5.3
+## What is new in 2.5.4
+
+**The Creator tab was confusing, and one of the reasons was a bug.** Both are
+fixed, and the panel has been rebuilt round one rule: everything on screen is
+the code.
+
+**The palette showed templates.** A row said `print(@text@)`, which reads as
+placeholder text rather than as a block that does something - so a list of 154
+blocks looked like a list of holes. Every row now shows the line that block
+actually writes, filled in: `print("Hello")`. So does every row of your script,
+and those come from the compiler itself rather than being drawn separately and
+left free to drift.
+
+**Switching language did nothing.** The chooser asked `confirm()` first, and a
+WebView with no chrome client answers `confirm()` by ignoring it - which the
+page reads as "no". So picking JavaScript, HTML, CSS or Markdown silently kept
+you where you were, with the Python palette still on screen. There is no
+question now, because there is nothing to ask about: **Creator keeps one script
+per language**, and the chooser moves between five drafts instead of throwing
+one away. Nothing in the panel calls `alert`, `confirm` or `prompt` any more,
+and a test fails the build if one comes back.
+
+**The rest of the panel, made plainer.** The tools on a selected block are
+words - Fill in, Up, Down, Move inside, Move out, Duplicate, Delete - instead
+of arrows. A line above the search box always says where the next block will
+land: at the end, after the selected one, or inside it. A block that holds
+other blocks says so, its contents sit inside a rail, and its closing line is
+greyed out beneath them. The starter script is labelled as an example. Anything
+that goes wrong now appears **on the page**, not only as a toast that has
+already gone.
+
+**And the panel is tested now.** `tools/test_creator_ui.js` runs the real panel
+against a stand-in DOM and the real catalogue - taps blocks, switches
+languages, moves things, deletes things - and asserts what ends up on screen.
+Both bugs above would have failed it. Playing the panel in a WebView is still
+the one thing no suite here can do.
+
+## What was new in 2.5.3
 
 **Creator: a tab where code is built out of blocks.** Switch on the Creator
 plugin and More grows a tab of its own, in the app's own colours, where you
@@ -755,7 +792,7 @@ every tab with things to paste in and try.
 ## Installing over USB
 
 ```bash
-adb install -r dist/PyCmd-2.5.3.apk
+adb install -r dist/PyCmd-2.5.4.apk
 ```
 
 ## Checking the download
@@ -776,7 +813,7 @@ python3 tools/make_latest.py            # checks the one that is there
 | Field | What it is |
 |---|---|
 | `versionCode` | The build number. The app offers an update only when this is higher than its own. |
-| `versionName` | What the card shows: `2.5.3`. |
+| `versionName` | What the card shows: `2.5.4`. |
 | `package` | Which app this is for. A mismatch is refused before the download starts. |
 | `url` | An `https://` address of the APK. Plain `http` is refused. |
 | `sha256` | The APK's fingerprint. The download is checked against it and thrown away if it differs. |

@@ -180,11 +180,14 @@ then saved as an ordinary file.
 
 Three hundred and sixty-three blocks across five languages: **Python** (154),
 **JavaScript** (98), **HTML** (49), **CSS** (42) and **Markdown** (20). Pick
-one, fill in its holes, stack it, nest it inside a loop. **Build** shows the
-source it writes before anything is saved; **Save to Files** puts a real
-`.py`, `.js`, `.html`, `.css` or `.md` in your workspace, and from there the
-editor opens it, the Servers tab runs it and the Pages tab serves it like
-anything else.
+one, fill in its holes, stack it, nest it inside a loop. Every row - in the
+palette and in your script - is the line that block actually writes, so the
+screen is the code rather than a description of it. **See the code** shows the
+whole file before anything is saved; **Save as a file** puts a real `.py`,
+`.js`, `.html`, `.css` or `.md` in your workspace, and from there the editor
+opens it, the Servers tab runs it and the Pages tab serves it like anything
+else. Each language keeps its own script, so the chooser never throws work
+away.
 
 | Command | What it does |
 |---|---|

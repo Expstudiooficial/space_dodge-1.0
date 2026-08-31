@@ -1,9 +1,9 @@
 {
   "id": "pycmd.creator",
   "name": "Creator",
-  "version": "2.5.3",
+  "version": "2.5.4",
   "author": "PyCmd",
-  "description": "A tab of its own where code is built out of blocks instead of typed. Over three hundred and sixty blocks across Python, JavaScript, HTML, CSS and Markdown: pick one, fill in its holes, stack it, nest it. Press Build to see the source it writes, and Save to put a real file in your workspace - which the editor opens, the Servers tab runs and the Pages tab serves like anything else you wrote by hand.",
+  "description": "A tab of its own where code is built out of blocks instead of typed. Over three hundred and sixty blocks across Python, JavaScript, HTML, CSS and Markdown, and every row - in the palette and in your script - is the line that block actually writes, so the screen is the code rather than a description of it. Each language keeps its own script. Press See the code for the whole file, and Save as a file to put it in your workspace, where the editor opens it, the Servers tab runs it and the Pages tab serves it.",
   "entry": "main.py",
   "panel": "ui.html",
   "tab": {

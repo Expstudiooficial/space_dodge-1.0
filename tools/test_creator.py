@@ -211,6 +211,52 @@ for row in blocks.BLOCKS["python"]:
 check(f"all {len(blocks.BLOCKS['python'])} of them", not broken, broken[:6])
 
 say()
+say("== the palette is told what each block writes ==")
+shelf = blocks.catalogue("python")
+rows = [row for group in shelf["groups"][0]["categories"] for row in group["blocks"]]
+check("every block carries a filled-in preview",
+      all(row.get("preview") is not None for row in rows))
+first_row = next(row for row in rows if row["id"] == "py.print")
+check("and it is code, not a template",
+      first_row["preview"] == 'print("Hello")' and "@" not in first_row["preview"],
+      first_row["preview"])
+container = next(row for row in rows if row["id"] == "py.if")
+check("a container's preview is its opening line",
+      container["preview"] == "if score > 10:", container["preview"])
+js_container = next(row for row in blocks.catalogue("javascript")["groups"][0]["categories"]
+                    for row in [r for r in row["blocks"] if r["id"] == "js.function"])
+check("and a language that closes its blocks says what with",
+      js_container["closing"] == "}", js_container.get("closing"))
+
+say()
+say("== every line says which block wrote it ==")
+outlined = blocks.compile_project({
+    "language": "python",
+    "blocks": [
+        {"block": "py.print", "uid": "a", "values": {"text": "one"}},
+        {"block": "py.if", "uid": "b", "values": {"condition": "x"}, "children": [
+            {"block": "py.print", "uid": "c", "values": {"text": "two"}},
+        ]},
+    ],
+})
+outline = outlined["outline"]
+check("one entry per line", len(outline) == 3, outline)
+check("each carries the block's own name",
+      [row["uid"] for row in outline] == ["a", "b", "c"], [row["uid"] for row in outline])
+check("with the line it wrote",
+      outline[2]["text"] == 'print("two")', outline[2])
+check("and how deep it sits", outline[2]["depth"] == 1, outline[2])
+check("the paths are right too", outline[2]["path"] == [1, 0], outline[2])
+
+empty_body = blocks.compile_project({
+    "language": "python",
+    "blocks": [{"block": "py.if", "uid": "b", "values": {"condition": "x"}}],
+})
+check("a filled-in empty body is marked as one",
+      [row["role"] for row in empty_body["outline"]] == ["open", "empty"],
+      empty_body["outline"])
+
+say()
 say("== the other four languages ==")
 html = blocks.compile_project({
     "language": "html",

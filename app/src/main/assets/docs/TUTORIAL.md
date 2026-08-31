@@ -675,11 +675,19 @@ nothing points at.
 
 **More → Plugins → Creator** to switch it on, then **More → Creator**.
 
-Pick a block, and it lands in your script. Tap a block to select it, and a row
-of buttons appears: move it up or down, put it **inside** the block above,
-take it back out, fill in its holes, copy it, delete it. Select a container -
-a loop, an `if`, a `<div>`, a CSS rule - and the next block you pick goes
-*inside* it. That is the whole trick to building a loop.
+Every row in your script is **the line that block writes** - real code, from
+the same compiler that writes the file - with the block's plain-English name
+underneath. The palette shows the same thing: what each block would write,
+filled in, rather than a template full of holes.
+
+Pick a block and it lands in your script. Tap one to select it, and a row of
+buttons appears: Fill in, Up, Down, Move inside, Move out, Duplicate, Delete.
+Select a container - a loop, an `if`, a `<div>`, a CSS rule - and the next
+block you pick goes *inside* it. That is the whole trick to building a loop,
+and the line above the search box always says where the next one will land.
+
+Switching language does not throw anything away: Creator keeps one script per
+language, so the chooser moves between five drafts.
 
 Three hundred and sixty-three blocks, in five languages:
 
@@ -691,8 +699,8 @@ Three hundred and sixty-three blocks, in five languages:
 | CSS | 42 | rules, flexbox, grid, colours, transitions, media queries |
 | Markdown | 20 | headings, lists, tables, code fences |
 
-**Build** shows the source your blocks write, before anything is saved. **Save
-to Files** asks for a name and a folder and writes a real file into the
+**See the code** shows the whole file, before anything is saved. **Save as a
+file** asks for a name and a folder and writes a real file into the
 workspace - and then it is an ordinary file: the editor opens it, `run
 thing.py` runs it, a folder of them is a page the Pages tab can serve.
 

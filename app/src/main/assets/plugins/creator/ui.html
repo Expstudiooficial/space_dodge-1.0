@@ -10,127 +10,171 @@
   The panel's own styles come after the app's, so they win where they overlap.
   Every colour here is one of the app's: this is a tab, and a tab that looked
   like somebody else's app would be a worse tab.
+
+  Two rules this panel keeps to, both learned the hard way:
+
+  * **Everything on screen is the real code.** The palette shows the line a
+    block writes, filled in; the script shows the line each block wrote, from
+    the compiler itself. Showing templates - `print(@text@)` - made a list of
+    blocks read as a list of placeholders.
+  * **No `alert`, `confirm` or `prompt`.** A WebView with no chrome client
+    answers those by ignoring them, and `confirm` then reads as "no" - which
+    turns a button into a button that does nothing. Every question this panel
+    asks is a sheet of its own.
 -->
 <style>
-  body { padding: 0 0 96px; }
+  body { padding: 0 0 104px; }
+
   .bar {
     position: sticky; top: 0; z-index: 5;
     background: #0B0F14; border-bottom: 1px solid #223041;
-    padding: 10px 14px 8px;
+    padding: 10px 14px 10px;
   }
   .row { display: flex; align-items: center; gap: 8px; }
-  .row.wrap { flex-wrap: wrap; }
   .grow { flex: 1 1 auto; min-width: 0; }
-  .name {
-    font: inherit; font-weight: 600; padding: 8px 10px; border-radius: 10px;
+  .field-input {
+    font: inherit; padding: 9px 11px; border-radius: 10px;
     border: 1px solid #223041; background: #10161F; color: #F1F5FA; width: 100%;
   }
+  select.field-input { font-weight: 600; }
   .muted { color: #8FA0B4; font-size: 12px; }
+  .warn { color: #E0A33E; font-size: 12px; }
+  .bad { color: #E05A5A; font-size: 13px; }
+
   .chip {
-    display: inline-block; padding: 6px 12px; border-radius: 20px;
+    display: inline-block; padding: 7px 13px; border-radius: 20px;
     border: 1px solid #223041; background: #121A24; color: #9BA9BB;
     font-size: 13px; white-space: nowrap;
   }
   .chip.on { background: #16324D; border-color: #2E7DD1; color: #DCE3EC; }
-  .chips { display: flex; gap: 6px; overflow-x: auto; padding: 2px 0; }
+  .chips { display: flex; gap: 6px; overflow-x: auto; padding: 3px 0; }
   .chips::-webkit-scrollbar { height: 0; }
 
   button.small {
-    padding: 7px 11px; font-size: 13px; border-radius: 10px;
+    font: inherit; padding: 9px 13px; font-size: 13px; border-radius: 10px;
     background: #121A24; border: 1px solid #223041; color: #DCE3EC;
   }
   button.small.primary { background: #16324D; border-color: #2E7DD1; }
+  button.small.danger { border-color: #5A2A2A; color: #F0A5A5; }
   button.small:disabled { opacity: .45; }
 
   .pane { padding: 12px 14px 0; }
   .head {
-    display: flex; align-items: baseline; gap: 8px;
-    margin: 14px 0 6px; color: #F1F5FA; font-weight: 600;
+    display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+    margin: 18px 0 6px; color: #F1F5FA; font-weight: 600; font-size: 15px;
   }
   .head .muted { font-weight: 400; }
 
+  .note {
+    background: #121A24; border: 1px solid #223041; border-radius: 10px;
+    padding: 9px 11px; margin: 6px 0 10px; font-size: 12px; color: #9BA9BB;
+  }
+  .note b { color: #DCE3EC; font-weight: 600; }
+
   /* -- the script ---------------------------------------------------- */
-  .stack { padding-left: 0; }
-  .stack .stack { padding-left: 14px; border-left: 1px dashed #223041; margin-left: 8px; }
+  .code {
+    font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    font-size: 13px; color: #DCE3EC; white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
   .blk {
     border: 1px solid #223041; border-left: 3px solid #2E7DD1;
     background: #121A24; border-radius: 10px;
-    padding: 8px 10px; margin: 6px 0;
+    padding: 9px 11px; margin: 6px 0;
   }
   .blk.sel { border-color: #2E7DD1; background: #16243A; }
-  .blk .lbl { font-size: 14px; color: #DCE3EC; }
-  .blk .vals { font-size: 12px; color: #8FA0B4; margin-top: 3px; word-break: break-word; }
+  .blk .why { font-size: 12px; color: #8FA0B4; margin-top: 3px; }
+  .blk.holds .why::after { content: "  ·  holds blocks"; color: #6FB3FF; }
   .blk.cat-Logic, .blk.cat-Loops { border-left-color: #E0A33E; }
   .blk.cat-Functions, .blk.cat-Classes { border-left-color: #9B6FE0; }
   .blk.cat-Text, .blk.cat-Lists, .blk.cat-Dictionaries { border-left-color: #43B581; }
   .blk.cat-Errors { border-left-color: #E05A5A; }
+  .rail { border-left: 1px dashed #223041; margin-left: 9px; padding-left: 13px; }
+  .closing { font-size: 12px; color: #55657A; margin: 2px 0 6px 6px; }
 
-  .tools { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
-  .tools button { padding: 6px 10px; font-size: 13px; min-width: 38px; }
+  .tools { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 9px; }
+  .tools button { padding: 8px 11px; font-size: 12px; }
 
   /* -- the palette --------------------------------------------------- */
-  .pal { max-height: 46vh; overflow-y: auto; -webkit-overflow-scrolling: touch; }
+  .pal { max-height: 44vh; overflow-y: auto; -webkit-overflow-scrolling: touch; }
   .pick {
     display: block; width: 100%; text-align: left;
     border: 1px solid #223041; background: #10161F; color: #DCE3EC;
-    border-radius: 10px; padding: 9px 11px; margin: 5px 0; font: inherit;
+    border-radius: 10px; padding: 10px 12px; margin: 6px 0; font: inherit;
   }
-  .pick .code { display: block; color: #6FB3FF; font-size: 12px;
-                font-family: ui-monospace, Menlo, Consolas, monospace; margin-top: 2px; }
+  .pick .what { font-size: 14px; color: #F1F5FA; }
+  .pick .code { color: #6FB3FF; font-size: 12px; margin-top: 3px; display: block; }
 
   /* -- overlays ------------------------------------------------------ */
   .sheet {
-    position: fixed; inset: 0; background: rgba(4, 8, 12, .82);
-    display: none; z-index: 20; overflow-y: auto; padding: 24px 12px 40px;
+    position: fixed; top: 0; right: 0; bottom: 0; left: 0;
+    background: rgba(4, 8, 12, .86);
+    display: none; z-index: 20; overflow-y: auto; padding: 22px 12px 40px;
   }
   .sheet.open { display: block; }
   .sheet .card { max-width: 640px; margin: 0 auto; }
-  .field { margin: 10px 0; }
-  .field label { display: block; font-size: 12px; color: #8FA0B4; margin-bottom: 4px; }
+  .field { margin: 12px 0; }
+  .field label { display: block; font-size: 12px; color: #8FA0B4; margin-bottom: 5px; }
 
   .foot {
     position: fixed; left: 0; right: 0; bottom: 0; z-index: 10;
     background: #0B0F14; border-top: 1px solid #223041;
-    padding: 10px 14px calc(10px + env(safe-area-inset-bottom));
+    padding: 10px 14px 14px;
     display: flex; gap: 8px;
   }
-  .foot button { flex: 1 1 0; padding: 12px 8px; }
-  .empty { color: #8FA0B4; font-size: 13px; padding: 18px 2px; }
-  pre.out { max-height: 52vh; overflow: auto; }
+  .foot button { flex: 1 1 0; padding: 13px 8px; font-size: 14px; }
+  .empty {
+    color: #8FA0B4; font-size: 13px; padding: 16px 12px;
+    border: 1px dashed #223041; border-radius: 10px; text-align: center;
+  }
+  pre.out { max-height: 50vh; overflow: auto; }
 </style>
 
 <div class="bar">
   <div class="row">
-    <input id="name" class="name grow" value="hello" aria-label="Project name">
-    <button class="small" id="drawer">Projects</button>
+    <input id="name" class="field-input grow" value="hello" aria-label="Project name">
+    <button class="small" id="drawer">Saved</button>
   </div>
   <div class="row" style="margin-top:8px">
-    <div class="chips grow" id="langs"></div>
+    <select id="lang" class="field-input grow" aria-label="Language"></select>
   </div>
-  <div class="muted" id="count" style="margin-top:6px">&nbsp;</div>
+  <div class="muted" id="count" style="margin-top:7px">&nbsp;</div>
 </div>
 
 <div class="pane">
-  <div class="head">Your script <span class="muted" id="hint"></span></div>
+  <div id="trouble"></div>
+
+  <div class="head">
+    Your script <span class="muted" id="hint"></span>
+    <span class="grow"></span>
+    <button class="small" id="jump">Blocks &darr;</button>
+  </div>
+  <div class="note" id="example" style="display:none">
+    This is an <b>example</b> to start from. Change it, or press <b>New</b> for an
+    empty one.
+  </div>
   <div id="script"></div>
 
-  <div class="head">Blocks <span class="muted" id="palcount"></span></div>
-  <input id="search" class="name" placeholder="Search blocks" aria-label="Search blocks">
+  <div class="head">Add a block <span class="muted" id="palcount"></span></div>
+  <div class="note" id="where">Blocks land at the end of the script.</div>
+  <input id="search" class="field-input" placeholder="Search - print, loop, colour"
+         aria-label="Search blocks">
   <div class="chips" id="cats" style="margin-top:8px"></div>
   <div class="pal" id="palette"></div>
 </div>
 
 <div class="foot">
   <button class="small" id="new">New</button>
-  <button class="small" id="build">Build</button>
-  <button class="small primary" id="save">Save to Files</button>
+  <button class="small" id="build">See the code</button>
+  <button class="small primary" id="save">Save as a file</button>
 </div>
 
 <div class="sheet" id="editSheet">
   <div class="card">
     <h2 id="editTitle">Fill it in</h2>
+    <div class="code" id="editPreview" style="margin-bottom:8px"></div>
     <div id="editFields"></div>
-    <div class="row" style="margin-top:14px">
+    <div class="row" style="margin-top:16px">
       <button class="small primary grow" id="editOk">Done</button>
       <button class="small" id="editCancel">Cancel</button>
     </div>
@@ -139,11 +183,11 @@
 
 <div class="sheet" id="codeSheet">
   <div class="card">
-    <h2 id="codeTitle">What it writes</h2>
-    <pre class="out"><code id="codeOut"></code></pre>
-    <div id="codeProblems" class="muted"></div>
-    <div class="row" style="margin-top:14px">
-      <button class="small primary grow" id="codeSave">Save to Files</button>
+    <h2 id="codeTitle">The code</h2>
+    <pre class="out"><code class="code" id="codeOut"></code></pre>
+    <div id="codeProblems" class="warn"></div>
+    <div class="row" style="margin-top:16px">
+      <button class="small primary grow" id="codeSave">Save as a file</button>
       <button class="small" id="codeClose">Close</button>
     </div>
   </div>
@@ -151,16 +195,16 @@
 
 <div class="sheet" id="saveSheet">
   <div class="card">
-    <h2>Save into the workspace</h2>
+    <h2>Save it into the workspace</h2>
     <div class="field">
       <label for="saveName">File name</label>
-      <input id="saveName" class="name">
+      <input id="saveName" class="field-input">
     </div>
     <div class="field">
       <label for="saveFolder">Folder inside the workspace (blank means the top)</label>
-      <input id="saveFolder" class="name" placeholder="sites/blog">
+      <input id="saveFolder" class="field-input" placeholder="sites/blog">
     </div>
-    <div class="row" style="margin-top:14px">
+    <div class="row" style="margin-top:16px">
       <button class="small primary grow" id="saveOk">Save</button>
       <button class="small" id="saveCancel">Cancel</button>
     </div>
@@ -169,10 +213,22 @@
 
 <div class="sheet" id="drawerSheet">
   <div class="card">
-    <h2>Projects</h2>
+    <h2>Saved projects</h2>
     <div id="drawerList"></div>
-    <div class="row" style="margin-top:14px">
-      <button class="small grow" id="drawerClose">Close</button>
+    <div class="row" style="margin-top:16px">
+      <button class="small primary grow" id="drawerKeep">Keep this one</button>
+      <button class="small" id="drawerClose">Close</button>
+    </div>
+  </div>
+</div>
+
+<div class="sheet" id="askSheet">
+  <div class="card">
+    <h2 id="askTitle">Are you sure?</h2>
+    <div class="muted" id="askBody"></div>
+    <div class="row" style="margin-top:16px">
+      <button class="small danger grow" id="askOk">Yes</button>
+      <button class="small" id="askNo">No</button>
     </div>
   </div>
 </div>
@@ -183,20 +239,28 @@
 
   // ---------------------------------------------------------------- state
   //
-  // A project is a language, a name and a tree of nodes; a node is a block id,
-  // the values filled into its slots, and its children. Nothing else is kept:
-  // the panel is a view of that tree, and every button below edits it and
-  // redraws.
+  // One draft per language, so picking a different language is picking a
+  // different script rather than throwing the current one away. That is what
+  // the language chooser used to do, behind a `confirm()` that a WebView with
+  // no chrome client answers by ignoring - which made switching look broken.
 
   var state = {
-    id: '',                  // the project's id in the drawer, '' until saved
-    project: { name: 'hello', language: 'python', blocks: [] },
-    catalogue: null,         // categories for the current language
-    byId: {},                // block id -> definition
+    language: 'python',
+    drafts: {},        // language -> { name, blocks, file }
+    ids: {},           // language -> id in the saved drawer, '' until saved
+    catalogues: {},    // language -> { categories: [...] }
+    byId: {},          // block id -> definition, for the current language
     languages: [],
     category: '',
     search: '',
-    selected: null           // a path, e.g. [0, 2, 1]
+    selected: null,    // a path into the tree, e.g. [0, 2, 1]
+    untouched: true,   // still showing the example it opened with
+    startedIn: '',     // the language that example was in
+    outline: {},       // a node's uid -> the line it wrote
+    closings: {},      // a node's uid -> the line that closes it
+    uid: 0,            // handed out to every node, so a moved block keeps its line
+    building: null,
+    folder: ''
   };
 
   var $ = function (id) { return document.getElementById(id); };
@@ -206,13 +270,79 @@
       .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   }
 
+  /**
+   * A name for a node that survives being moved.
+   *
+   * The compiler answers with one line per block, and the script view has to
+   * know which block each line belongs to. A path is the obvious key and the
+   * wrong one: delete the first block and every path below it changes, so the
+   * lines would sit under the wrong blocks until the next build came back.
+   */
+  function nextUid() {
+    state.uid += 1;
+    return 'n' + state.uid;
+  }
+
+  /**
+   * Names every node in a tree that has just arrived from storage.
+   *
+   * Always a fresh name, never the one that was saved: the counter starts at
+   * zero each time the panel opens, so keeping a stored `n3` would mean the
+   * third block added afterwards was also `n3`, and two blocks sharing a name
+   * share a line.
+   */
+  function stampUids(nodes) {
+    (nodes || []).forEach(function (node) {
+      node.uid = nextUid();
+      stampUids(node.children);
+    });
+  }
+
+  function freshUids(node) {
+    node.uid = nextUid();
+    (node.children || []).forEach(freshUids);
+    return node;
+  }
+
+  function draft() {
+    if (!state.drafts[state.language]) {
+      state.drafts[state.language] = { name: 'untitled', blocks: [], file: '' };
+    }
+    return state.drafts[state.language];
+  }
+
+  function project() {
+    var current = draft();
+    return {
+      name: current.name,
+      language: state.language,
+      blocks: current.blocks,
+      file: current.file || ''
+    };
+  }
+
+  /** Anything that went wrong is said on the page, not only in a toast. */
+  function trouble(message) {
+    var host = $('trouble');
+    host.innerHTML = '';
+    if (!message) return;
+    var card = document.createElement('div');
+    card.className = 'note bad';
+    card.textContent = message;
+    host.appendChild(card);
+  }
+
+  function ask(title, body, yes) {
+    $('askTitle').textContent = title;
+    $('askBody').textContent = body;
+    state.askYes = yes;
+    $('askSheet').classList.add('open');
+  }
+
   // ------------------------------------------------------------ the tree
-  //
-  // Paths are arrays of indices. Everything that edits the script goes
-  // through these five, so there is one place where the shape can go wrong.
 
   function listAt(path) {
-    var list = state.project.blocks;
+    var list = draft().blocks;
     for (var i = 0; i < path.length - 1; i++) {
       var node = list[path[i]];
       if (!node) return null;
@@ -236,8 +366,8 @@
 
   function insertAfter(path, node) {
     if (!path) {
-      state.project.blocks.push(node);
-      return [state.project.blocks.length - 1];
+      draft().blocks.push(node);
+      return [draft().blocks.length - 1];
     }
     var list = listAt(path);
     var at = path[path.length - 1] + 1;
@@ -249,8 +379,7 @@
 
   function removeAt(path) {
     var list = listAt(path);
-    if (!list) return;
-    list.splice(path[path.length - 1], 1);
+    if (list) list.splice(path[path.length - 1], 1);
   }
 
   function move(path, delta) {
@@ -258,22 +387,20 @@
     var from = path[path.length - 1];
     var to = from + delta;
     if (to < 0 || to >= list.length) return path;
-    var node = list.splice(from, 1)[0];
-    list.splice(to, 0, node);
+    list.splice(to, 0, list.splice(from, 1)[0]);
     var next = path.slice();
     next[next.length - 1] = to;
     return next;
   }
 
-  // Into the block above it, if that block can hold things.
   function indent(path) {
     var list = listAt(path);
     var at = path[path.length - 1];
-    if (at === 0) return path;
+    if (at === 0) { pycmd.toast('There is no block above this one to go inside.'); return path; }
     var above = list[at - 1];
     var spec = state.byId[above.block];
     if (!spec || !spec.wrap) {
-      pycmd.toast('The block above cannot hold blocks.');
+      pycmd.toast('"' + (spec ? spec.label : 'That block') + '" cannot hold blocks.');
       return path;
     }
     above.children = above.children || [];
@@ -282,9 +409,8 @@
     return path.slice(0, -1).concat([at - 1, above.children.length - 1]);
   }
 
-  // Out to the parent's level, straight after the parent.
   function outdent(path) {
-    if (path.length < 2) return path;
+    if (path.length < 2) { pycmd.toast('This block is already at the top level.'); return path; }
     var list = listAt(path);
     var node = list.splice(path[path.length - 1], 1)[0];
     var parentPath = path.slice(0, -1);
@@ -298,9 +424,7 @@
 
   function countBlocks(nodes) {
     var total = 0;
-    (nodes || []).forEach(function (node) {
-      total += 1 + countBlocks(node.children);
-    });
+    (nodes || []).forEach(function (node) { total += 1 + countBlocks(node.children); });
     return total;
   }
 
@@ -312,54 +436,101 @@
     return values;
   }
 
-  function summarise(node, spec) {
-    var parts = [];
+  /**
+   * The line a block writes.
+   *
+   * From the compiler when it has answered, and from the block's own filled-in
+   * preview until then - so the first paint says something true rather than
+   * nothing, and the next one says it exactly.
+   */
+  function fill(template, node, spec) {
+    var text = template || '';
     (spec.slots || []).forEach(function (slot) {
       var value = node.values && node.values[slot.name] !== undefined
         ? node.values[slot.name] : slot.default;
-      if (String(value).length) parts.push(String(value));
+      text = text.split('@' + slot.name + '@').join(String(value === undefined ? '' : value));
     });
-    return parts.join('  ·  ');
+    return text.split('@@').join('@');
+  }
+
+  function lineFor(path, node, spec) {
+    var known = state.outline[node.uid];
+    if (known !== undefined) return known;
+    if (!spec) return 'unknown block: ' + node.block;
+    return fill(spec.open, node, spec) || '(an empty line)';
+  }
+
+  /** The line that closes a container - `}`, `</div>`, `}, 500);`. */
+  function closingFor(node, spec) {
+    var known = state.closings[node.uid];
+    if (known !== undefined) return known;
+    if (!spec || !spec.close) return '';
+    return fill(spec.close, node, spec);
+  }
+
+  function refresh() {
+    // Anything that edits the script means it is not the example any more.
+    state.untouched = false;
+    drawScript();
+    scheduleBuild();
   }
 
   function drawScript() {
     var host = $('script');
     host.innerHTML = '';
-    if (!state.project.blocks.length) {
+    var blocks = draft().blocks;
+    if (!blocks.length) {
       var empty = document.createElement('div');
       empty.className = 'empty';
-      empty.textContent = 'Nothing here yet. Pick a block below and it lands here.';
+      empty.textContent = 'Nothing here yet. Pick a block from below and it lands here.';
       host.appendChild(empty);
     } else {
-      host.appendChild(drawStack(state.project.blocks, []));
+      host.appendChild(drawStack(blocks, []));
     }
-    var total = countBlocks(state.project.blocks);
-    $('count').textContent = total + ' block' + (total === 1 ? '' : 's') +
-      '  ·  ' + state.project.language;
-    $('hint').textContent = state.selected ? 'new blocks land under the selected one' : '';
+
+    var total = countBlocks(blocks);
+    var meta = languageRow(state.language);
+    $('count').textContent = total + ' block' + (total === 1 ? '' : 's') + '  ·  ' +
+      (meta ? meta.name : state.language) + '  ·  ' + (meta ? meta.extension : '');
+    $('hint').textContent = state.selected ? 'one selected' : 'nothing selected';
+    $('example').style.display =
+      (state.untouched && state.language === state.startedIn && blocks.length) ? '' : 'none';
+    drawWhere();
+  }
+
+  function drawWhere() {
+    var target = state.selected ? nodeAt(state.selected) : null;
+    var spec = target ? state.byId[target.block] : null;
+    var text;
+    if (!target) {
+      text = 'The next block goes <b>at the end</b> of the script. Tap a block above to put it somewhere else.';
+    } else if (spec && spec.wrap) {
+      text = 'The next block goes <b>inside</b> "' + escapeHtml(spec.label) + '".';
+    } else {
+      text = 'The next block goes <b>after</b> "' + escapeHtml(spec ? spec.label : 'the selected block') + '".';
+    }
+    $('where').innerHTML = text;
   }
 
   function drawStack(nodes, base) {
     var wrap = document.createElement('div');
-    wrap.className = 'stack';
     nodes.forEach(function (node, index) {
       var path = base.concat([index]);
       var spec = state.byId[node.block];
       var element = document.createElement('div');
-      element.className = 'blk' + (samePath(path, state.selected) ? ' sel' : '');
+      element.className = 'blk' + (samePath(path, state.selected) ? ' sel' : '') +
+        (spec && spec.wrap ? ' holds' : '');
       if (spec) element.className += ' cat-' + String(spec.cat).replace(/[^A-Za-z]/g, '');
 
-      var label = document.createElement('div');
-      label.className = 'lbl';
-      label.textContent = spec ? spec.label : ('unknown block: ' + node.block);
-      element.appendChild(label);
+      var code = document.createElement('div');
+      code.className = 'code';
+      code.textContent = lineFor(path, node, spec);
+      element.appendChild(code);
 
-      if (spec && spec.slots.length) {
-        var values = document.createElement('div');
-        values.className = 'vals';
-        values.textContent = summarise(node, spec);
-        element.appendChild(values);
-      }
+      var why = document.createElement('div');
+      why.className = 'why';
+      why.textContent = spec ? spec.label : 'this block is not in this language';
+      element.appendChild(why);
 
       element.addEventListener('click', function (event) {
         event.stopPropagation();
@@ -372,18 +543,28 @@
 
       if (spec && spec.wrap) {
         node.children = node.children || [];
-        if (node.children.length) wrap.appendChild(drawStack(node.children, path));
+        if (node.children.length) {
+          var rail = document.createElement('div');
+          rail.className = 'rail';
+          rail.appendChild(drawStack(node.children, path));
+          wrap.appendChild(rail);
+        }
+        var closingText = closingFor(node, spec);
+        if (closingText) {
+          var closing = document.createElement('div');
+          closing.className = 'closing code';
+          closing.textContent = closingText;
+          wrap.appendChild(closing);
+        }
       }
     });
     return wrap;
   }
 
-  function tool(label, title, action) {
+  function tool(label, action) {
     var button = document.createElement('button');
     button.className = 'small';
     button.textContent = label;
-    button.title = title;
-    button.setAttribute('aria-label', title);
     button.addEventListener('click', function (event) {
       event.stopPropagation();
       action();
@@ -394,29 +575,27 @@
   function drawTools(path, spec) {
     var row = document.createElement('div');
     row.className = 'tools';
-    row.appendChild(tool('▲', 'Move up', function () {
-      state.selected = move(path, -1); drawScript();
-    }));
-    row.appendChild(tool('▼', 'Move down', function () {
-      state.selected = move(path, 1); drawScript();
-    }));
-    row.appendChild(tool('→', 'Put inside the block above', function () {
-      state.selected = indent(path); drawScript();
-    }));
-    row.appendChild(tool('←', 'Take back out', function () {
-      state.selected = outdent(path); drawScript();
-    }));
     if (spec && spec.slots.length) {
-      row.appendChild(tool('Edit', 'Fill it in', function () { openEditor(path); }));
+      row.appendChild(tool('Fill in', function () { openEditor(path); }));
     }
-    row.appendChild(tool('Copy', 'Make another like it', function () {
-      var copy = JSON.parse(JSON.stringify(nodeAt(path)));
+    row.appendChild(tool('Up', function () { state.selected = move(path, -1); refresh(); }));
+    row.appendChild(tool('Down', function () { state.selected = move(path, 1); refresh(); }));
+    row.appendChild(tool('Move inside', function () { state.selected = indent(path); refresh(); }));
+    row.appendChild(tool('Move out', function () { state.selected = outdent(path); refresh(); }));
+    row.appendChild(tool('Duplicate', function () {
+      // A copy is a different block, so it gets its own name - two blocks
+      // sharing one would share a line as well.
+      var copy = freshUids(JSON.parse(JSON.stringify(nodeAt(path))));
       state.selected = insertAfter(path, copy);
-      drawScript();
+      refresh();
     }));
-    row.appendChild(tool('✕', 'Delete', function () {
-      removeAt(path); state.selected = null; drawScript();
-    }));
+    var drop = tool('Delete', function () {
+      removeAt(path);
+      state.selected = null;
+      refresh();
+    });
+    drop.className = 'small danger';
+    row.appendChild(drop);
     return row;
   }
 
@@ -425,10 +604,10 @@
   function drawCategories() {
     var host = $('cats');
     host.innerHTML = '';
-    var groups = (state.catalogue && state.catalogue.categories) || [];
+    var groups = (state.catalogues[state.language] || { categories: [] }).categories || [];
     var all = document.createElement('span');
     all.className = 'chip' + (state.category === '' ? ' on' : '');
-    all.textContent = 'All';
+    all.textContent = 'Everything';
     all.addEventListener('click', function () {
       state.category = ''; drawCategories(); drawPalette();
     });
@@ -447,20 +626,22 @@
   function drawPalette() {
     var host = $('palette');
     host.innerHTML = '';
-    var groups = (state.catalogue && state.catalogue.categories) || [];
+    var groups = (state.catalogues[state.language] || { categories: [] }).categories || [];
     var needle = state.search.trim().toLowerCase();
     var shown = 0;
 
     groups.forEach(function (group) {
       if (state.category && group.name !== state.category) return;
       group.blocks.forEach(function (spec) {
-        if (needle && (spec.label + ' ' + spec.open + ' ' + spec.cat)
-            .toLowerCase().indexOf(needle) < 0) return;
+        var haystack = (spec.label + ' ' + spec.preview + ' ' + spec.cat).toLowerCase();
+        if (needle && haystack.indexOf(needle) < 0) return;
         shown += 1;
         var button = document.createElement('button');
         button.className = 'pick';
-        button.innerHTML = escapeHtml(spec.label) +
-          '<span class="code">' + escapeHtml(spec.open || '(blank line)') + '</span>';
+        button.innerHTML =
+          '<span class="what">' + escapeHtml(spec.label) + '</span>' +
+          '<span class="code">' + escapeHtml(spec.preview || '(an empty line)') +
+          (spec.closing ? '  …  ' + escapeHtml(spec.closing) : '') + '</span>';
         button.addEventListener('click', function () { add(spec); });
         host.appendChild(button);
       });
@@ -469,18 +650,19 @@
     if (!shown) {
       var none = document.createElement('div');
       none.className = 'empty';
-      none.textContent = 'No block matches that.';
+      none.textContent = needle
+        ? 'No block matches "' + needle + '".'
+        : 'No blocks loaded for this language yet.';
       host.appendChild(none);
     }
-    $('palcount').textContent = shown + ' to choose from';
+    var total = (state.catalogues[state.language] || {}).count || 0;
+    $('palcount').textContent = shown + ' of ' + total;
   }
 
   function add(spec) {
-    var node = { block: spec.id, values: defaultsFor(spec) };
+    var node = { block: spec.id, uid: nextUid(), values: defaultsFor(spec) };
     if (spec.wrap) node.children = [];
 
-    // Into the selected block when it can hold things, so building a loop is
-    // "tap the loop, tap what goes in it" rather than tap-then-indent.
     var target = state.selected ? nodeAt(state.selected) : null;
     var targetSpec = target ? state.byId[target.block] : null;
     if (target && targetSpec && targetSpec.wrap) {
@@ -490,7 +672,7 @@
     } else {
       state.selected = insertAfter(state.selected, node);
     }
-    drawScript();
+    refresh();
   }
 
   // --------------------------------------------------------- the editor
@@ -503,9 +685,10 @@
     if (!spec) return;
     editing = path;
     $('editTitle').textContent = spec.label;
+    $('editPreview').textContent = lineFor(path, node, spec);
+
     var host = $('editFields');
     host.innerHTML = '';
-
     spec.slots.forEach(function (slot) {
       var field = document.createElement('div');
       field.className = 'field';
@@ -534,8 +717,9 @@
         input.autocomplete = 'off';
         input.spellcheck = false;
       }
+      input.className = 'field-input';
       input.id = 'slot-' + slot.name;
-      input.dataset.slot = slot.name;
+      input.setAttribute('data-slot', slot.name);
       field.appendChild(input);
       host.appendChild(field);
     });
@@ -543,75 +727,107 @@
     $('editSheet').classList.add('open');
   }
 
-  function closeEditor(save) {
-    if (save && editing) {
+  function closeEditor(keep) {
+    if (keep && editing) {
       var node = nodeAt(editing);
       if (node) {
         node.values = node.values || {};
         var fields = $('editFields').querySelectorAll('[data-slot]');
         for (var i = 0; i < fields.length; i++) {
-          node.values[fields[i].dataset.slot] = fields[i].value;
+          node.values[fields[i].getAttribute('data-slot')] = fields[i].value;
         }
       }
     }
     editing = null;
     $('editSheet').classList.remove('open');
-    drawScript();
+    refresh();
   }
 
   // ----------------------------------------------------- build and save
 
-  function build() {
-    return pycmd.call('build', { project: state.project });
+  /**
+   * Asks the compiler what the script writes, and keeps the answer.
+   *
+   * Debounced, because it runs after every edit: the answer is what the
+   * script view shows, so it has to be current, and one call per keystroke
+   * would be one bridge round trip per keystroke.
+   */
+  function scheduleBuild() {
+    if (state.building) clearTimeout(state.building);
+    state.building = setTimeout(function () {
+      state.building = null;
+      pycmd.call('build', { project: project() }).then(function (result) {
+        if (!result || !result.ok) return;
+        var lines = {};
+        var closes = {};
+        (result.outline || []).forEach(function (entry) {
+          if (!entry.uid) return;
+          if (entry.role === 'open') lines[entry.uid] = entry.text;
+          if (entry.role === 'close') closes[entry.uid] = entry.text;
+        });
+        state.outline = lines;
+        state.closings = closes;
+        drawScript();
+      }).catch(function (error) {
+        trouble('The compiler did not answer: ' + (error.message || error));
+      });
+    }, 140);
   }
 
   function showCode() {
-    build().then(function (result) {
+    pycmd.call('build', { project: project() }).then(function (result) {
       if (!result || !result.ok) {
-        pycmd.toast((result && result.error) || 'That did not build.');
+        trouble((result && result.error) || 'That did not build.');
         return;
       }
-      $('codeOut').textContent = result.code || '(nothing yet)';
+      $('codeOut').textContent = result.code || '(nothing yet - add some blocks)';
       $('codeTitle').textContent = result.lines + ' line' +
         (result.lines === 1 ? '' : 's') + ' of ' + result.language;
-      $('codeProblems').textContent = (result.problems || []).join(' · ');
+      $('codeProblems').textContent = (result.problems || []).join('  ·  ');
       $('codeSheet').classList.add('open');
-    }).catch(function (error) { pycmd.toast(String(error.message || error)); });
+    }).catch(function (error) {
+      trouble('That did not build: ' + (error.message || error));
+    });
   }
 
   function openSave() {
-    var meta = state.languages.filter(function (row) {
-      return row.id === state.project.language;
-    })[0];
-    var extension = (meta && meta.extension) || '.txt';
-    var name = state.project.name || 'untitled';
-    $('saveName').value = name.indexOf('.') >= 0 ? name : name + extension;
+    var meta = languageRow(state.language);
+    var name = draft().name || 'untitled';
+    $('saveName').value = name.indexOf('.') >= 0
+      ? name
+      : name + ((meta && meta.extension) || '.txt');
+    $('saveFolder').value = state.folder || '';
     $('saveSheet').classList.add('open');
   }
 
   function doSave() {
     var name = $('saveName').value;
     var folder = $('saveFolder').value;
+    state.folder = folder;
     $('saveSheet').classList.remove('open');
-    pycmd.call('save_file', {
-      project: state.project, name: name, folder: folder
-    }).then(function (result) {
-      if (!result || !result.ok) {
-        pycmd.toast((result && result.error) || 'That did not save.');
-        return;
-      }
-      state.project.file = result.path;
-      pycmd.toast('Saved ' + result.path);
-      storeProject();
-    }).catch(function (error) { pycmd.toast(String(error.message || error)); });
+    pycmd.call('save_file', { project: project(), name: name, folder: folder })
+      .then(function (result) {
+        if (!result || !result.ok) {
+          trouble((result && result.error) || 'That did not save.');
+          return;
+        }
+        trouble('');
+        draft().file = result.path;
+        pycmd.toast('Saved ' + result.path);
+        keepProject();
+      }).catch(function (error) {
+        trouble('That did not save: ' + (error.message || error));
+      });
   }
 
-  function storeProject() {
-    return pycmd.call('save_project', { id: state.id, project: state.project })
+  function keepProject() {
+    return pycmd.call('save_project', { id: state.ids[state.language] || '', project: project() })
       .then(function (result) {
-        if (result && result.ok) state.id = result.id;
+        if (result && result.ok) state.ids[state.language] = result.id;
         return result;
-      }).catch(function (error) { pycmd.toast(String(error.message || error)); });
+      }).catch(function (error) {
+        trouble('That project was not kept: ' + (error.message || error));
+      });
   }
 
   // ------------------------------------------------------------- drawer
@@ -624,7 +840,7 @@
       if (!rows.length) {
         var none = document.createElement('div');
         none.className = 'empty';
-        none.textContent = 'Nothing saved yet. Build something and press Save.';
+        none.textContent = 'Nothing kept yet. "Keep this one" puts the script you are on in here.';
         host.appendChild(none);
       }
       rows.forEach(function (row) {
@@ -635,18 +851,19 @@
         var open = document.createElement('button');
         open.className = 'small grow';
         open.style.textAlign = 'left';
-        open.innerHTML = escapeHtml(row.name) +
-          '<span class="code"> ' + escapeHtml(row.language) + ' · ' +
+        open.innerHTML = '<span class="what">' + escapeHtml(row.name) + '</span>' +
+          '<span class="code">' + escapeHtml(row.language) + '  ·  ' +
           row.blocks + ' blocks</span>';
         open.addEventListener('click', function () { loadProject(row.id); });
 
         var drop = document.createElement('button');
-        drop.className = 'small';
-        drop.textContent = '✕';
-        drop.title = 'Delete ' + row.name;
+        drop.className = 'small danger';
+        drop.textContent = 'Delete';
         drop.addEventListener('click', function () {
           pycmd.call('delete_project', { id: row.id }).then(function () {
-            if (state.id === row.id) state.id = '';
+            Object.keys(state.ids).forEach(function (key) {
+              if (state.ids[key] === row.id) state.ids[key] = '';
+            });
             openDrawer();
           });
         });
@@ -656,95 +873,149 @@
         host.appendChild(line);
       });
       $('drawerSheet').classList.add('open');
+    }).catch(function (error) {
+      trouble('The saved projects could not be read: ' + (error.message || error));
     });
   }
 
   function loadProject(id) {
     pycmd.call('open_project', { id: id }).then(function (result) {
-      if (!result || !result.ok) { pycmd.toast('That project is gone.'); return; }
-      state.id = result.id;
-      state.project = {
-        name: result.project.name,
-        language: result.project.language,
-        blocks: result.project.blocks || [],
-        file: result.project.file || ''
+      if (!result || !result.ok) { trouble('That project is gone.'); return; }
+      var loaded = result.project;
+      state.language = loaded.language;
+      state.drafts[loaded.language] = {
+        name: loaded.name,
+        blocks: loaded.blocks || [],
+        file: loaded.file || ''
       };
+      stampUids(state.drafts[loaded.language].blocks);
+      state.ids[loaded.language] = result.id;
       state.selected = null;
-      $('name').value = state.project.name;
+      state.category = '';
+      $('name').value = loaded.name;
+      $('lang').value = loaded.language;
       $('drawerSheet').classList.remove('open');
-      loadCatalogue(state.project.language).then(drawScript);
-      drawLanguages();
+      useLanguage(loaded.language);
     });
   }
 
   // ---------------------------------------------------------- languages
 
+  function languageRow(id) {
+    for (var i = 0; i < state.languages.length; i++) {
+      if (state.languages[i].id === id) return state.languages[i];
+    }
+    return null;
+  }
+
   function drawLanguages() {
-    var host = $('langs');
+    var host = $('lang');
     host.innerHTML = '';
     state.languages.forEach(function (row) {
-      var chip = document.createElement('span');
-      chip.className = 'chip' + (row.id === state.project.language ? ' on' : '');
-      chip.textContent = row.name;
-      chip.title = row.about;
-      chip.addEventListener('click', function () { switchLanguage(row.id); });
-      host.appendChild(chip);
+      var option = document.createElement('option');
+      option.value = row.id;
+      option.textContent = row.name + '  -  ' + row.blocks + ' blocks';
+      if (row.id === state.language) option.selected = true;
+      host.appendChild(option);
     });
   }
 
-  function switchLanguage(id) {
-    if (id === state.project.language) return;
-    if (state.project.blocks.length &&
-        !confirm('Blocks belong to their language. Switching to ' + id +
-                 ' clears the script - is that what you want?')) {
-      return;
-    }
-    state.project.language = id;
-    state.project.blocks = [];
+  /** Switches to a language and makes sure its blocks are loaded. */
+  function useLanguage(id) {
+    state.language = id;
     state.selected = null;
     state.category = '';
-    drawLanguages();
-    loadCatalogue(id).then(drawScript);
+    $('name').value = draft().name;
+    state.outline = {};
+    state.closings = {};
+    var wasUntouched = state.untouched;
+    return loadCatalogue(id).then(function () {
+      drawCategories();
+      drawPalette();
+      refresh();
+      state.untouched = wasUntouched;
+      drawScript();
+    });
   }
 
   function loadCatalogue(language) {
+    if (state.catalogues[language]) {
+      indexBlocks(language);
+      return Promise.resolve(state.catalogues[language]);
+    }
     return pycmd.call('catalogue', { language: language }).then(function (result) {
       if (!result || !result.ok) {
-        pycmd.toast((result && result.error) || 'The blocks did not load.');
-        return;
+        trouble('The blocks for ' + language + ' did not load: ' +
+                ((result && result.error) || 'no answer'));
+        return null;
       }
-      state.catalogue = (result.groups || [])[0] || { categories: [] };
-      state.byId = {};
-      (state.catalogue.categories || []).forEach(function (group) {
-        group.blocks.forEach(function (spec) { state.byId[spec.id] = spec; });
-      });
-      drawCategories();
-      drawPalette();
+      var group = (result.groups || [])[0];
+      if (!group) {
+        trouble('The blocks for ' + language + ' came back empty.');
+        return null;
+      }
+      state.catalogues[language] = group;
+      indexBlocks(language);
+      trouble('');
+      return group;
+    }).catch(function (error) {
+      trouble('The blocks for ' + language + ' did not load: ' +
+              (error.message || error));
+      return null;
+    });
+  }
+
+  function indexBlocks(language) {
+    state.byId = {};
+    var group = state.catalogues[language];
+    if (!group) return;
+    (group.categories || []).forEach(function (category) {
+      category.blocks.forEach(function (spec) { state.byId[spec.id] = spec; });
     });
   }
 
   // --------------------------------------------------------------- wiring
 
-  $('name').addEventListener('input', function () {
-    state.project.name = $('name').value;
-  });
+  $('name').addEventListener('input', function () { draft().name = $('name').value; });
   $('search').addEventListener('input', function () {
     state.search = $('search').value;
     drawPalette();
   });
+  $('lang').addEventListener('change', function () { useLanguage($('lang').value); });
+  $('jump').addEventListener('click', function () {
+    var host = $('palette');
+    if (host && typeof host.scrollIntoView === 'function') {
+      host.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+  });
   $('build').addEventListener('click', showCode);
   $('save').addEventListener('click', openSave);
-  $('drawer').addEventListener('click', function () { storeProject().then(openDrawer); });
+  $('drawer').addEventListener('click', openDrawer);
+  $('drawerKeep').addEventListener('click', function () {
+    keepProject().then(function () { pycmd.toast('Kept'); openDrawer(); });
+  });
   $('new').addEventListener('click', function () {
-    if (state.project.blocks.length &&
-        !confirm('Start a new project? Save the one you have first if you want it.')) {
-      return;
-    }
-    state.id = '';
-    state.project = { name: 'untitled', language: state.project.language, blocks: [] };
-    state.selected = null;
-    $('name').value = state.project.name;
-    drawScript();
+    if (!draft().blocks.length) { pycmd.toast('This one is already empty.'); return; }
+    ask('Start again?', 'The blocks in this ' + state.language +
+        ' script go. Anything you saved as a file, or kept in Saved, stays.',
+        function () {
+          state.ids[state.language] = '';
+          state.drafts[state.language] = { name: 'untitled', blocks: [], file: '' };
+          state.selected = null;
+          $('name').value = 'untitled';
+          refresh();
+        });
+  });
+
+  $('askOk').addEventListener('click', function () {
+    $('askSheet').classList.remove('open');
+    var yes = state.askYes;
+    state.askYes = null;
+    if (yes) yes();
+  });
+  $('askNo').addEventListener('click', function () {
+    $('askSheet').classList.remove('open');
+    state.askYes = null;
   });
 
   $('editOk').addEventListener('click', function () { closeEditor(true); });
@@ -768,21 +1039,30 @@
 
   pycmd.call('languages', {}).then(function (result) {
     state.languages = (result && result.languages) || [];
-    // No language asked for, so the plugin's own setting decides.
+    if (!state.languages.length) {
+      trouble('Creator could not read its own languages. Switch the plugin off and on again.');
+    }
     return pycmd.call('starter', {});
   }).then(function (result) {
     if (result && result.ok && result.project) {
-      state.project = JSON.parse(JSON.stringify(result.project));
-      $('name').value = state.project.name;
-      $('saveFolder').value = result.folder || '';
+      var start = JSON.parse(JSON.stringify(result.project));
+      state.language = start.language;
+      state.drafts[start.language] = {
+        name: start.name, blocks: start.blocks, file: ''
+      };
+      stampUids(state.drafts[start.language].blocks);
+      state.folder = result.folder || '';
+      state.startedIn = start.language;
     }
     drawLanguages();
-    return loadCatalogue(state.project.language);
-  }).then(function () {
-    drawScript();
+    return useLanguage(state.language).then(function () { state.untouched = true; });
   }).catch(function (error) {
-    pycmd.toast('Creator could not start: ' + (error.message || error));
+    trouble('Creator could not start: ' + (error.message || error));
   });
+
+  // The panel is driven from the test suite as well as by hand; this is the
+  // door it comes through, and nothing else uses it.
+  window.__creator = state;
 })();
 </script>
 </body>

@@ -40,6 +40,7 @@ __all__ = [
     "LANGUAGES",
     "BLOCKS",
     "catalogue",
+    "preview_of",
     "compile_project",
     "block",
     "MAX_BLOCKS",
@@ -1286,6 +1287,23 @@ def block(block_id: str):
     return BY_ID.get(str(block_id))
 
 
+def preview_of(row: dict, language: str, values: dict = None) -> dict:
+    """The line a block would actually write, with its holes filled in.
+
+    The palette used to show the template - `print(@text@)` - which reads as
+    placeholder text rather than as a block that does something. This renders
+    it the same way the compiler will, so what you pick is what you get.
+    """
+    ignored = []
+    filled = _render(row["open"], row["slots"], values or {}, language,
+                     ignored, row["id"])
+    closing = ""
+    if row.get("close"):
+        closing = _render(row["close"], row["slots"], values or {}, language,
+                          ignored, row["id"])
+    return {"preview": filled, "closing": closing}
+
+
 def catalogue(language: str = "") -> dict:
     """The blocks for one language, grouped the way the palette shows them.
 
@@ -1308,7 +1326,7 @@ def catalogue(language: str = "") -> dict:
         for row in rows:
             if not categories or categories[-1]["name"] != row["cat"]:
                 categories.append({"name": row["cat"], "blocks": []})
-            categories[-1]["blocks"].append(row)
+            categories[-1]["blocks"].append(dict(row, **preview_of(row, name)))
         groups.append({"language": name, "categories": categories, "count": len(rows)})
 
     return {
@@ -1428,14 +1446,33 @@ def compile_project(project: dict) -> dict:
     indent = meta["indent"]
     lines: list = []
     problems: list = []
+    # One entry per line, saying which block in the tree wrote it. The panel
+    # draws the script from this, so what is on screen is the code, not an
+    # approximation of it drawn separately and free to drift.
+    outline: list = []
     used = 0
 
-    def emit(nodes, depth: int) -> None:
+    def note(path: list, node: dict, role: str, depth: int, text: str) -> None:
+        outline.append({
+            "path": list(path),
+            # Whatever the panel put on the node to recognise it by. Paths move
+            # when a block is deleted above; this does not, which is the
+            # difference between the script showing the right line and showing
+            # the line that used to be there.
+            "uid": str(node.get("uid", "")),
+            "role": role,
+            "depth": depth,
+            "text": text,
+            "line": len(lines) - 1,
+        })
+
+    def emit(nodes, depth: int, base: list) -> None:
         nonlocal used
         if depth > MAX_DEPTH:
             problems.append(f"nested deeper than {MAX_DEPTH}; stopped there")
             return
-        for node in nodes or []:
+        for index, node in enumerate(nodes or []):
+            path = base + [index]
             if not isinstance(node, dict):
                 continue
             if used >= MAX_BLOCKS:
@@ -1459,21 +1496,24 @@ def compile_project(project: dict) -> dict:
             # blank line with eight spaces of indentation on it is trailing
             # whitespace nobody asked for.
             lines.append(indent * depth + head if head.strip() else "")
+            note(path, node, "open", depth, head)
 
             children = node.get("children") or []
             if spec["wrap"]:
                 if children:
-                    emit(children, depth + 1)
+                    emit(children, depth + 1, path)
                 elif spec["empty"]:
                     lines.append(indent * (depth + 1) + spec["empty"])
+                    note(path, node, "empty", depth + 1, spec["empty"])
                 if spec["close"]:
                     close = _render(spec["close"], spec["slots"], values, language,
                                     problems, spec["id"])
                     lines.append(indent * depth + close if close.strip() else "")
+                    note(path, node, "close", depth, close)
             elif children:
                 problems.append(f"{spec['id']} cannot hold blocks; its children were skipped")
 
-    emit(project.get("blocks"), 0)
+    emit(project.get("blocks"), 0, [])
 
     code = "\n".join(lines).rstrip("\n")
     if code:
@@ -1485,5 +1525,6 @@ def compile_project(project: dict) -> dict:
         "extension": meta["extension"],
         "lines": len(lines),
         "blocks": used,
+        "outline": outline,
         "problems": problems,
     }

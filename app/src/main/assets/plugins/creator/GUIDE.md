@@ -11,8 +11,8 @@ Turn it on in **More → Plugins → Creator**, and **Creator** appears in More.
 
 ## The three parts of the screen
 
-**The bar** at the top holds the project's name and its language. Five to pick
-from, and the language decides which blocks exist:
+**The bar** at the top holds the project's name and a language chooser. Five
+to pick from, and the language decides which blocks exist:
 
 | Language | Blocks | What it is for |
 |---|---|---|
@@ -22,30 +22,38 @@ from, and the language decides which blocks exist:
 | CSS | 42 | How the page looks |
 | Markdown | 20 | Notes and documents |
 
-Three hundred and sixty-three in all. Switching language empties the script,
-because a Python block in a CSS file is not a thing that can be written.
+Three hundred and sixty-three in all. **Switching language does not throw
+anything away**: Creator keeps one script per language, so the chooser moves
+between five drafts and your Python is still there when you come back.
 
-**Your script** is the middle: the blocks you have stacked, in the order they
-will be written out. Tap one to select it. A selected block grows a row of
-buttons:
+**Your script** is the middle, and every row is **the line that block writes** -
+real code, from the same compiler that writes the file - with the block's
+plain-English name underneath it. A block that holds other blocks says so, its
+contents sit inside a rail, and its closing line is greyed out below.
+
+Tap a block to select it. A selected block grows a row of buttons:
 
 | Button | What it does |
 |---|---|
-| ▲ ▼ | Move it up or down among its neighbours |
-| → | Put it inside the block above, if that block can hold things |
-| ← | Take it back out, to just after the block it was in |
-| Edit | Fill in its holes |
-| Copy | Another one just like it, underneath |
-| ✕ | Delete it |
+| Fill in | Its holes, one field each |
+| Up / Down | Move it among its neighbours |
+| Move inside | Put it inside the block above, if that block can hold things |
+| Move out | Take it back out, to just after the block it was in |
+| Duplicate | Another one just like it, underneath |
+| Delete | Remove it |
 
-**Blocks** at the bottom is everything you can add. Filter by category, or
-search - "print", "loop", "colour". Tapping one adds it:
+**Add a block** at the bottom is everything you can add, each row showing the
+line it would write. Filter by category, or search - "print", "loop", "colour".
+The line above the search box always says where the next one will land:
 
-- with nothing selected, at the end of the script;
-- with a block selected, straight after it;
+- with nothing selected, **at the end** of the script;
+- with a block selected, **after** it;
 - with a **container** selected - a loop, an `if`, a `<div>`, a CSS rule - it
-  goes *inside* it. That is the whole trick to building a loop: tap the loop,
+  goes **inside** it. That is the whole trick to building a loop: tap the loop,
   then tap what goes in it.
+
+The first time you open Creator there is already an example script on screen,
+labelled as one. Change it, or press **New** for an empty one.
 
 ---
 
@@ -76,11 +84,11 @@ The kinds of hole, and what they do differently:
 
 ## Build, then save
 
-**Build** shows exactly what your blocks write, before anything is saved. If a
-block is in a language the project is not, or a container is empty, it says so
-under the code rather than writing something broken.
+**See the code** shows the whole file, before anything is saved. If a block is
+in a language the project is not, it says so under the code rather than writing
+something broken.
 
-**Save to Files** asks for a file name and a folder inside your workspace, then
+**Save as a file** asks for a file name and a folder inside your workspace, then
 writes it. The Files tab refreshes, and the editor opens it unless you turn
 that off in the plugin's settings. From there it is an ordinary file:
 
@@ -89,8 +97,9 @@ that off in the plugin's settings. From there it is an ordinary file:
   Pages tab at it;
 - everything is editable by hand afterwards, and Creator does not mind.
 
-Your projects are kept separately from the files they produce - **Projects** in
-the bar is the drawer, up to sixty of them. Saving a file does not delete the
+Your projects are kept separately from the files they produce - **Saved** in
+the bar is the drawer, up to sixty of them, and **Keep this one** puts the
+script you are on into it. Saving a file does not delete the
 blocks, and editing the file afterwards does not change them: they are two
 things, and the file is the one that runs.
 
