@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>PyCmd</title>
+<!--
+  The app chrome.
+
+  On the phone this is Jetpack Compose: a navigation bar, a top bar, and a
+  screen per tab. Here it is this file, and the reason is that half the app was
+  already HTML - the console, the editor, every plugin panel - so making the
+  other half HTML too means one language for the whole UI and the panels keep
+  working untouched.
+
+  The layout rule PyCmd learned the hard way on Android applies here as well
+  and for a different reason: the window resizes, so the shell is a grid that
+  fills it and the middle is what scrolls. Nothing is positioned against the
+  viewport, and no percentage height is asked of anything that has not been
+  given one.
+-->
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+
+<header class="top">
+  <div class="brand">
+    <span class="mark">&gt;_</span>
+    <span class="title">PyCmd</span>
+    <span class="chip" id="pyChip">starting…</span>
+  </div>
+  <div class="grow"></div>
+  <button class="icon" id="btnStop" title="Stop whatever is running">&#9632;</button>
+  <button class="icon" id="btnLog" title="Debug log">&#9679;<span class="badge" id="logBadge" hidden>0</span></button>
+  <button class="icon" id="btnAbout" title="About PyCmd">i</button>
+</header>
+
+<div class="body">
+  <nav class="side" id="tabs"></nav>
+  <main class="screen" id="screen"></main>
+</div>
+
+<div class="toast" id="toast" hidden></div>
+
+<div class="sheet" id="sheet" hidden>
+  <div class="sheet-card">
+    <div class="sheet-head">
+      <h2 id="sheetTitle">…</h2>
+      <button class="small" id="sheetClose">Close</button>
+    </div>
+    <div class="sheet-body" id="sheetBody"></div>
+  </div>
+</div>
+
+<script src="app.js"></script>
+<script src="screens.js"></script>
+</body>
+</html>
