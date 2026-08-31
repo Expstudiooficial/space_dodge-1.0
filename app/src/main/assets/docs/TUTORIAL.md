@@ -680,11 +680,14 @@ the same compiler that writes the file - with the block's plain-English name
 underneath. The palette shows the same thing: what each block would write,
 filled in, rather than a template full of holes.
 
-Pick a block and it lands in your script. Tap one to select it, and a row of
-buttons appears: Fill in, Up, Down, Move inside, Move out, Duplicate, Delete.
-Select a container - a loop, an `if`, a `<div>`, a CSS rule - and the next
-block you pick goes *inside* it. That is the whole trick to building a loop,
-and the line above the search box always says where the next one will land.
+**+ Add a block** opens the block picker - a screen of its own, with the search
+and the categories at the top - and it stays open while you tap, so several
+blocks can go on in a row. Tap a block in your script to select it, and a row
+of buttons appears: Fill in, Up, Down, Move inside, Move out, Duplicate,
+Delete. Select a container - a loop, an `if`, a `<div>`, a CSS rule - and the
+next block you pick goes *inside* it. That is the whole trick to building a
+loop, and both the picker and the line beside "Your script" always say where
+the next block will land.
 
 Switching language does not throw anything away: Creator keeps one script per
 language, so the chooser moves between five drafts.

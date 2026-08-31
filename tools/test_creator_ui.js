@@ -248,8 +248,19 @@ async function start() {
   return sandbox;
 }
 
+/**
+ * An element by id.
+ *
+ * Through the document rather than the node map: the shim only makes a node
+ * when the page asks for it, and a test that reaches for one the page has not
+ * touched yet would find nothing there.
+ */
+function el(sandbox, id) {
+  return sandbox.document.getElementById(id);
+}
+
 function palette(sandbox) {
-  return sandbox.nodes.palette.children;
+  return el(sandbox, 'palette').children;
 }
 
 function scriptRows(sandbox) {
@@ -260,7 +271,7 @@ function scriptRows(sandbox) {
       walk(child);
     });
   };
-  walk(sandbox.nodes.script);
+  walk(el(sandbox, 'script'));
   return rows;
 }
 
@@ -268,14 +279,32 @@ async function main() {
   console.log('== the panel comes up with blocks in it ==');
   const sandbox = await start();
 
-  check('there is no error card', sandbox.nodes.trouble.children.length === 0,
-        sandbox.nodes.trouble.children.map((c) => c.textContent));
+  check('there is no error card', el(sandbox, 'trouble').children.length === 0,
+        el(sandbox, 'trouble').children.map((c) => c.textContent));
   check('the starter script is on screen', scriptRows(sandbox).length === 3,
         scriptRows(sandbox).map((row) => row.textContent));
   check('and the palette is full', palette(sandbox).length === 154,
         palette(sandbox).length);
   check('the language chooser has all five',
-        sandbox.nodes.lang.children.length === 5, sandbox.nodes.lang.children.length);
+        el(sandbox, 'lang').children.length === 5, el(sandbox, 'lang').children.length);
+
+  console.log('\n== the blocks are on a screen of their own ==');
+  check('the picker starts closed',
+        !el(sandbox, 'addSheet').classList.contains('open'),
+        el(sandbox, 'addSheet').className);
+  el(sandbox, 'openAdd').dispatch('click');
+  check('and the Add a block button opens it',
+        el(sandbox, 'addSheet').classList.contains('open'),
+        el(sandbox, 'addSheet').className);
+  check('with the whole palette in it', palette(sandbox).length === 154,
+        palette(sandbox).length);
+  check('and a line saying where the next one lands',
+        el(sandbox, 'where').innerHTML.indexOf('at the end') > 0,
+        el(sandbox, 'where').innerHTML);
+  el(sandbox, 'addDone').dispatch('click');
+  check('Done closes it again',
+        !el(sandbox, 'addSheet').classList.contains('open'),
+        el(sandbox, 'addSheet').className);
 
   console.log('\n== what a block row shows is the code it writes ==');
   const first = palette(sandbox)[0];
@@ -291,17 +320,17 @@ async function main() {
   check('a container says so',
         rows[1].className.indexOf('holds') >= 0, rows[1].className);
   check('and the starter is labelled as an example',
-        sandbox.nodes.example.style.display === '', sandbox.nodes.example.style.display);
+        el(sandbox, 'example').style.display === '', el(sandbox, 'example').style.display);
 
   console.log('\n== a language that closes its blocks shows the closing line ==');
-  sandbox.nodes.lang.value = 'javascript';
-  sandbox.nodes.lang.dispatch('change');
+  el(sandbox, 'lang').value = 'javascript';
+  el(sandbox, 'lang').dispatch('change');
   for (let i = 0; i < 6; i += 1) { await flush(); settle(sandbox); }
-  sandbox.nodes.search.value = 'after a delay';
-  sandbox.nodes.search.dispatch('input');
+  el(sandbox, 'search').value = 'after a delay';
+  el(sandbox, 'search').dispatch('input');
   palette(sandbox)[0].dispatch('click');
   for (let i = 0; i < 6; i += 1) { await flush(); settle(sandbox); }
-  const closings = sandbox.nodes.script.children[0].children
+  const closings = el(sandbox, 'script').children[0].children
     .filter((child) => String(child.className).indexOf('closing') === 0);
   check('the closing line is drawn under the block',
         closings.length === 1 && closings[0].textContent === '}, 1000);',
@@ -312,25 +341,25 @@ async function main() {
   const delayTools = delayRow.children.filter((child) => child.className === 'tools')[0];
   const delayLabels = delayTools.children.map((button) => button.textContent);
   delayTools.children[delayLabels.indexOf('Fill in')].dispatch('click');
-  const slots = sandbox.nodes.editFields.querySelectorAll('[data-slot]');
+  const slots = el(sandbox, 'editFields').querySelectorAll('[data-slot]');
   slots[0].value = '250';
-  sandbox.nodes.editOk.dispatch('click');
+  el(sandbox, 'editOk').dispatch('click');
   for (let i = 0; i < 6; i += 1) { await flush(); settle(sandbox); }
-  const after = sandbox.nodes.script.children[0].children
+  const after = el(sandbox, 'script').children[0].children
     .filter((child) => String(child.className).indexOf('closing') === 0);
   check('and it follows what was filled in',
         after.length === 1 && after[0].textContent === '}, 250);',
         after.map((c) => c.textContent));
-  sandbox.nodes.search.value = '';
-  sandbox.nodes.search.dispatch('input');
+  el(sandbox, 'search').value = '';
+  el(sandbox, 'search').dispatch('input');
 
   console.log('\n== switching language keeps both scripts ==');
-  sandbox.nodes.lang.value = 'css';
-  sandbox.nodes.lang.dispatch('change');
+  el(sandbox, 'lang').value = 'css';
+  el(sandbox, 'lang').dispatch('change');
   for (let i = 0; i < 6; i += 1) { await flush(); settle(sandbox); }
   check('the CSS blocks arrived', palette(sandbox).length === 42, palette(sandbox).length);
-  check('no error card', sandbox.nodes.trouble.children.length === 0,
-        sandbox.nodes.trouble.children.map((c) => c.textContent));
+  check('no error card', el(sandbox, 'trouble').children.length === 0,
+        el(sandbox, 'trouble').children.map((c) => c.textContent));
   check('the CSS script starts empty', scriptRows(sandbox).length === 0,
         scriptRows(sandbox).length);
   check('and nothing was thrown away',
@@ -341,8 +370,8 @@ async function main() {
   console.log('\n== every language loads its own blocks ==');
   const counts = { javascript: 98, html: 49, markdown: 20, python: 154 };
   for (const [language, expected] of Object.entries(counts)) {
-    sandbox.nodes.lang.value = language;
-    sandbox.nodes.lang.dispatch('change');
+    el(sandbox, 'lang').value = language;
+    el(sandbox, 'lang').dispatch('change');
     for (let i = 0; i < 6; i += 1) { await flush(); settle(sandbox); }
     check(`${language} shows ${expected} blocks`, palette(sandbox).length === expected,
           palette(sandbox).length);
@@ -351,18 +380,21 @@ async function main() {
         sandbox.window.__creator.drafts.python.blocks.length === 2);
 
   console.log('\n== building a script by tapping ==');
-  sandbox.nodes.lang.value = 'python';
-  sandbox.nodes.lang.dispatch('change');
+  el(sandbox, 'lang').value = 'python';
+  el(sandbox, 'lang').dispatch('change');
   for (let i = 0; i < 6; i += 1) { await flush(); settle(sandbox); }
 
   // Tap the loop in the script, then a block in the palette: it goes inside.
   const loop = scriptRows(sandbox)[1];
   loop.dispatch('click');
   check('selecting a container says where the next block goes',
-        sandbox.nodes.where.innerHTML.indexOf('inside') >= 0,
-        sandbox.nodes.where.innerHTML);
+        el(sandbox, 'where').innerHTML.indexOf('inside') >= 0,
+        el(sandbox, 'where').innerHTML);
+  check('and the script heading says it too, without opening anything',
+        el(sandbox, 'hint').textContent.indexOf('inside') > 0,
+        el(sandbox, 'hint').textContent);
 
-  const search = sandbox.nodes.search;
+  const search = el(sandbox, 'search');
   search.value = 'print text';
   search.dispatch('input');
   check('search narrows the palette', palette(sandbox).length >= 1 &&
@@ -373,14 +405,28 @@ async function main() {
   const tree = sandbox.window.__creator.drafts.python.blocks;
   check('the block landed inside the loop', tree[1].children.length === 2,
         tree[1].children.length);
+  check('and the picker said so rather than looking like nothing happened',
+        el(sandbox, 'added').textContent.indexOf('Added "print text"') === 0,
+        el(sandbox, 'added').textContent);
   check('and the example note went the moment it was edited',
-        sandbox.nodes.example.style.display === 'none',
-        sandbox.nodes.example.style.display);
+        el(sandbox, 'example').style.display === 'none',
+        el(sandbox, 'example').style.display);
   check('and the script shows four rows now', scriptRows(sandbox).length === 4,
         scriptRows(sandbox).length);
   check('the new row is indented in the code it shows',
         scriptRows(sandbox)[3].textContent.indexOf('print("Hello")') === 0,
         scriptRows(sandbox)[3].textContent);
+
+  console.log('\n== the picker forgets what you searched for ==');
+  el(sandbox, 'search').value = 'print text';
+  el(sandbox, 'search').dispatch('input');
+  const narrowed = palette(sandbox).length;
+  el(sandbox, 'addDone').dispatch('click');
+  el(sandbox, 'openAdd').dispatch('click');
+  check('opening it again shows every block, not the last search',
+        palette(sandbox).length > narrowed && el(sandbox, 'search').value === '',
+        [narrowed, palette(sandbox).length]);
+  el(sandbox, 'addDone').dispatch('click');
 
   console.log('\n== a line stays with its block when things move ==');
   // Delete the first block: every path below it shifts by one, and the lines
@@ -400,8 +446,8 @@ async function main() {
         scriptRows(sandbox)[1].textContent);
 
   // Put it back, so the rest of the file reads against the same script.
-  sandbox.nodes.search.value = 'print text';
-  sandbox.nodes.search.dispatch('input');
+  el(sandbox, 'search').value = 'print text';
+  el(sandbox, 'search').dispatch('input');
   palette(sandbox)[0].dispatch('click');
   for (let i = 0; i < 6; i += 1) { await flush(); settle(sandbox); }
 
@@ -458,9 +504,9 @@ async function main() {
   );
   for (let i = 0; i < 6; i += 1) { await flush(); settle(broken); }
   check('the panel shows what went wrong instead of an empty screen',
-        broken.nodes.trouble.children.length === 1 &&
-        broken.nodes.trouble.children[0].textContent.indexOf('not ready') > 0,
-        broken.nodes.trouble.children.map((c) => c.textContent));
+        el(broken, 'trouble').children.length === 1 &&
+        el(broken, 'trouble').children[0].textContent.indexOf('not ready') > 0,
+        el(broken, 'trouble').children.map((c) => c.textContent));
 
   console.log('');
   if (failures) {

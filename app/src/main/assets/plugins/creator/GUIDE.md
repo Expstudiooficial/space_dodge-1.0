@@ -9,7 +9,7 @@ Turn it on in **More → Plugins → Creator**, and **Creator** appears in More.
 
 ---
 
-## The three parts of the screen
+## The two screens
 
 **The bar** at the top holds the project's name and a language chooser. Five
 to pick from, and the language decides which blocks exist:
@@ -42,15 +42,20 @@ Tap a block to select it. A selected block grows a row of buttons:
 | Duplicate | Another one just like it, underneath |
 | Delete | Remove it |
 
-**Add a block** at the bottom is everything you can add, each row showing the
-line it would write. Filter by category, or search - "print", "loop", "colour".
-The line above the search box always says where the next one will land:
+**+ Add a block** at the bottom opens the second screen: everything you can
+add, each row showing the line it would write. Filter by category, or search -
+"print", "loop", "colour". It stays open while you tap, saying what went in and
+how many blocks you have now, so several can go on in a row; **Done** takes you
+back to the script, at the block you just added.
+
+The line at the top of that screen always says where the next one will land,
+and so does the line beside **Your script**:
 
 - with nothing selected, **at the end** of the script;
 - with a block selected, **after** it;
 - with a **container** selected - a loop, an `if`, a `<div>`, a CSS rule - it
-  goes **inside** it. That is the whole trick to building a loop: tap the loop,
-  then tap what goes in it.
+  goes **inside** it. That is the whole trick to building a loop: tap the loop
+  in your script, then **+ Add a block** and pick what goes in it.
 
 The first time you open Creator there is already an example script on screen,
 labelled as one. Change it, or press **New** for an empty one.

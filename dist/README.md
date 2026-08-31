@@ -1,17 +1,49 @@
 # Prebuilt APK
 
-`PyCmd-2.5.4.apk` — ready to install, nothing else needed.
+`PyCmd-2.5.5.apk` — ready to install, nothing else needed.
 
 | | |
 |---|---|
 | Package | `com.expstudio.pycmd.debug` |
-| Version | 2.5.4 |
+| Version | 2.5.5 |
 | Size | 18 MB |
 | Signed with | the key in [`keystore/`](../keystore/), committed so updates can install over it |
 | Works on | Android 7.0 (API 24) and newer, **arm64-v8a** (every phone since about 2016) |
 | SHA-256 | see [SHA256SUMS.txt](SHA256SUMS.txt) |
 
-## What is new in 2.5.4
+## What is new in 2.5.5
+
+**The blocks were on the screen and nowhere anybody could see them.** The
+palette sat at the bottom of the same scrolling page as your script - so on a
+phone the search box, the categories and the results were all below the fold,
+behind the button bar. Searching worked, the counter said "9 of 154", and the
+nine blocks were somewhere you had to go looking for. A list you have to
+scroll to find is a list that is not there.
+
+**Adding a block is a screen of its own now.** A wide **+ Add a block** button
+at the bottom opens it: the search and the categories are pinned at the top,
+the results fill the screen, and it stays open while you tap, saying what went
+in and how many blocks you have now - so several can go on in a row. **Done**
+takes you back to the script and scrolls to the block you just added.
+
+That leaves the main screen as your script and nothing else, which is what it
+should have been: full width, no hunting past it for a control. **New** moved
+up beside **Saved**, and the bottom bar is now **+ Add a block**, **Code** and
+**Save**.
+
+Where the next block will land is said in both places it matters - beside
+**Your script**, and at the top of the picker - so you can see it without
+opening anything.
+
+Small things from the same sweep: the picker forgets what you searched for last
+time, keeps the category you were browsing, and a container's closing line
+follows the values you filled in rather than the defaults it was made with.
+
+The panel's test suite grew with it - the picker is opened, searched, tapped
+and closed there, and the "results are unreachable" shape of this bug is now
+something a test can see.
+
+## What was new in 2.5.4
 
 **The Creator tab was confusing, and one of the reasons was a bug.** Both are
 fixed, and the panel has been rebuilt round one rule: everything on screen is
@@ -792,7 +824,7 @@ every tab with things to paste in and try.
 ## Installing over USB
 
 ```bash
-adb install -r dist/PyCmd-2.5.4.apk
+adb install -r dist/PyCmd-2.5.5.apk
 ```
 
 ## Checking the download
@@ -813,7 +845,7 @@ python3 tools/make_latest.py            # checks the one that is there
 | Field | What it is |
 |---|---|
 | `versionCode` | The build number. The app offers an update only when this is higher than its own. |
-| `versionName` | What the card shows: `2.5.4`. |
+| `versionName` | What the card shows: `2.5.5`. |
 | `package` | Which app this is for. A mismatch is refused before the download starts. |
 | `url` | An `https://` address of the APK. Plain `http` is refused. |
 | `sha256` | The APK's fingerprint. The download is checked against it and thrown away if it differs. |

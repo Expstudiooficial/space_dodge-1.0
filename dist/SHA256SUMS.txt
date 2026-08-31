@@ -1,1 +1,1 @@
-ddf0d4ec920bbc34c62dde3aa039c35fed26cc847c846b6ef6710f92d8627414  PyCmd-2.5.4.apk
+7bd13da506ef8c7e243d7be1e90d0ac725da98ef0f0fa595c1f2ab70b1254e4e  PyCmd-2.5.5.apk
