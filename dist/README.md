@@ -1,17 +1,67 @@
 # Prebuilt APK
 
-`PyCmd-2.5.6.apk` — ready to install, nothing else needed.
+`PyCmd-2.5.7.apk` — ready to install, nothing else needed.
 
 | | |
 |---|---|
 | Package | `com.expstudio.pycmd.debug` |
-| Version | 2.5.6 |
+| Version | 2.5.7 |
 | Size | 18 MB |
 | Signed with | the key in [`keystore/`](../keystore/), committed so updates can install over it |
 | Works on | Android 7.0 (API 24) and newer, **arm64-v8a** (every phone since about 2016) |
 | SHA-256 | see [SHA256SUMS.txt](SHA256SUMS.txt) |
 
-## What is new in 2.5.6
+## What is new in 2.5.7
+
+**Cloud sometimes failed to load, with a file that was definitely there:**
+
+```
+FileNotFoundError: .../plugins/pycmd.cloud/main.py
+```
+
+It was a race between two things the app does at startup, and it could hit any
+plugin - Cloud was just the one that showed up.
+
+**Installing a plugin replaces its folder. Loading one imports a module out of
+that folder.** Those ran on different threads, at the same time, on every
+launch: the plugin was being imported while its own files were being moved out
+from underneath it, so a file that passed the check a moment earlier was gone
+by the time Python went to read it. Three things now make that impossible.
+
+**Everything that touches a plugin folder runs on one thread.** Installing,
+loading, listing, panels, settings - one after another, never at once. (The
+console's own plugin commands stay on the interpreter thread, where they have
+to be; they no longer have a folder moving under them either, because of the
+next one.)
+
+**Replacing a plugin is one rename now, not a delete and a move.** The old
+folder is moved aside, the new one is renamed into place, and only then is the
+old one deleted - so there is never a moment when the folder is missing or
+half-emptied. The old way had a worse failure too: `shutil.move` into a folder
+that still exists puts the new copy *inside* it, so a delete that only half
+worked left `main.py` one level down and a plugin that listed fine and could
+never load. Removing a plugin works the same way now.
+
+**And the plugins that ship with the app were being reinstalled on every single
+launch.** The check for "is this one already installed?" read a list that had
+not been filled in yet, saw nothing, and concluded nothing was installed - so
+all five were deleted and written out again every time you opened the app, for
+nothing. It asks the real listing now, and installs happen before anything is
+loaded rather than beside it. That is several megabytes of file copying gone
+from every start, on top of the crash it was causing.
+
+A plugin whose folder cannot be read is no longer treated as up to date
+either, so one that did get damaged is repaired on the next launch instead of
+staying broken.
+
+The suite gained checks for all of it: that replacing a plugin leaves one whole
+plugin behind and nothing nested inside it, that a leftover from an install
+that was killed is tidied away, that every call into the plugin runtime is on
+the plugin thread, and that bundled plugins are installed before anything is
+loaded. 1111 checks pass and the release build lints clean; the race itself
+needs a phone to see, and there is no emulator here.
+
+## What was new in 2.5.6
 
 **The app stopped for a moment, came back, stopped again.** Not one bug -
 four, all of them plugin-shaped, and all of them work being done on the one

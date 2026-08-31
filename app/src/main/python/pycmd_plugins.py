@@ -107,14 +107,41 @@ def install(source: str, source_name: str = "", bundled: str = "") -> str:
 
     target = plugin_dir(manifest["id"])
     replaced = os.path.isdir(target)
+    retired = ""
     try:
         if replaced:
             unload(manifest["id"])
-            shutil.rmtree(target, ignore_errors=True)
-        shutil.move(staged, target)
+            # Moved aside rather than deleted, and then swapped in one
+            # rename. Deleting first left a window where the plugin's folder
+            # did not exist, or existed half-emptied, and anything reading it
+            # at that moment - a load, a panel, a command - found a file gone
+            # that had been there a moment earlier.
+            #
+            # It also cannot nest any more. `shutil.move` into a folder that
+            # still exists puts the source *inside* it, so a delete that only
+            # half worked used to leave main.py one level down and a plugin
+            # that looked installed and could not be loaded.
+            retired = os.path.join(
+                _plugins_dir, f".retired-{_safe_id(manifest['id'])}-{int(time.time() * 1000)}"
+            )
+            shutil.rmtree(retired, ignore_errors=True)
+            os.rename(target, retired)
+        os.rename(staged, target)
     except OSError as error:
+        # Put back what was there. A failed update must not leave somebody
+        # with nothing where a working plugin used to be.
+        if retired and os.path.isdir(retired) and not os.path.isdir(target):
+            try:
+                os.rename(retired, target)
+            except OSError:
+                pass
+        elif retired:
+            shutil.rmtree(retired, ignore_errors=True)
         shutil.rmtree(staged, ignore_errors=True)
         return _json({"ok": False, "error": f"could not save the plugin: {error}"})
+
+    if retired:
+        shutil.rmtree(retired, ignore_errors=True)
 
     manifest["installed_at"] = int(time.time())
     manifest["bundled"] = bool(bundled) and bundled != "0"
@@ -130,8 +157,23 @@ def install(source: str, source_name: str = "", bundled: str = "") -> str:
     return _json({"ok": True, "replaced": replaced, "manifest": manifest})
 
 
+def _tidy_scratch() -> None:
+    """Clears anything a killed install left behind.
+
+    Staging and retired folders are named with a leading dot so the listing
+    walks past them, which also means nothing else would ever notice one
+    sitting there taking up room.
+    """
+    if not os.path.isdir(_plugins_dir):
+        return
+    for name in os.listdir(_plugins_dir):
+        if name.startswith(".staging-") or name.startswith(".retired-"):
+            shutil.rmtree(os.path.join(_plugins_dir, name), ignore_errors=True)
+
+
 def _stage(source: str, source_name: str):
     """Copies a candidate into a scratch folder and reads its manifest."""
+    _tidy_scratch()
     scratch = os.path.join(_plugins_dir, f".staging-{int(time.time() * 1000)}")
     shutil.rmtree(scratch, ignore_errors=True)
     os.makedirs(scratch, exist_ok=True)
@@ -702,7 +744,23 @@ def remove(plugin_id: str) -> str:
     folder = plugin_dir(plugin_id)
     if not os.path.isdir(folder):
         return _json({"ok": False, "error": "that plugin is not installed"})
-    shutil.rmtree(folder, ignore_errors=True)
+    # Renamed out of the way first, for the same reason install swaps rather
+    # than deletes: a delete that only half works leaves a folder that still
+    # looks like a plugin and no longer is. After the rename it is gone as far
+    # as anything reading the plugins folder is concerned, whatever happens to
+    # the bytes afterwards.
+    retired = os.path.join(
+        _plugins_dir, f".retired-{_safe_id(plugin_id)}-{int(time.time() * 1000)}"
+    )
+    shutil.rmtree(retired, ignore_errors=True)
+    try:
+        os.rename(folder, retired)
+    except OSError:
+        shutil.rmtree(folder, ignore_errors=True)
+        if os.path.isdir(folder):
+            return _json({"ok": False, "error": "that plugin's files would not delete"})
+        return _json({"ok": True})
+    shutil.rmtree(retired, ignore_errors=True)
     return _json({"ok": True})
 
 

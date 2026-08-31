@@ -556,8 +556,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             refreshDownloads()
             refreshLanguages()
             _previewable.value = engine.previewableExtensions()
-            refreshCustomPlugins()
+            // Bundled plugins first, and this order is not arbitrary.
+            // Installing one replaces its folder on disk; loading one imports
+            // a module out of that folder. Listing first meant the two ran at
+            // once - a plugin being imported while its own folder was being
+            // taken apart underneath it, which is a FileNotFoundError on a
+            // file that was there a moment ago. Nothing is loaded until the
+            // folders have stopped moving.
             installBundledPlugins()
+            refreshCustomPlugins()
             quietlyCheckForUpdate()
             refreshVersions()
             refreshPages()
@@ -595,6 +602,24 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val staged = workspace.stageBundledPlugins()
         if (staged.isEmpty()) return
 
+        // Asked for here rather than read off the state flow. This runs at
+        // startup, before anything has filled that in, so an empty list read
+        // as "none of them are installed" - and every bundled plugin was
+        // deleted and written again on every single launch, for nothing.
+        val installed = mutableMapOf<String, String>()
+        val listing = engine.listPlugins()
+        val rows = listing.optJSONArray("plugins")
+        if (rows != null) {
+            for (index in 0 until rows.length()) {
+                val row = rows.optJSONObject(index) ?: continue
+                // A folder that cannot be read is not a version to match
+                // against: leaving it alone is how a half-written plugin
+                // would stay half-written for ever.
+                if (row.optBoolean("broken")) continue
+                installed[row.optString("id")] = row.optString("version")
+            }
+        }
+
         var installedAny = false
         for (folder in staged) {
             val manifest = runCatching {
@@ -604,8 +629,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             val version = manifest.optString("version")
             if (id.isEmpty()) continue
 
-            val existing = CustomPlugins.installed.value.firstOrNull { it.id == id }
-            if (existing != null && existing.version == version) continue
+            if (installed[id] == version) continue
 
             val reply = engine.installPlugin(folder.absolutePath, folder.name, bundled = true)
             if (reply.optBoolean("ok")) {
@@ -615,7 +639,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 DebugLog.warn(TAG_VIEW, "bundled plugin $id failed", reply.optString("error"))
             }
         }
-        if (installedAny) refreshCustomPlugins()
+        if (installedAny) DebugLog.info(TAG_VIEW, "bundled plugins refreshed")
     }
 
     // --------------------------------------------------------------- plugins

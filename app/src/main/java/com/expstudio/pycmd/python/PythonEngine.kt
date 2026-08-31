@@ -1273,7 +1273,12 @@ object PythonEngine {
     suspend fun removePlugin(id: String): JSONObject = pluginCall("remove", id)
 
     suspend fun loadPlugins(enabled: Collection<String>): JSONObject =
-        withContext(controlDispatcher) {
+        // On the plugin thread with everything else that touches a plugin
+        // folder. Loading imports a module out of that folder and installing
+        // replaces it; on two different threads they can happen at once, and
+        // then a plugin is imported while its own files are being moved out
+        // from under it.
+        withContext(pluginDispatcher) {
             runCatching {
                 // Sent as one string rather than a collection: Chaquopy hands
                 // Kotlin's EmptyList across as an object Python cannot iterate,
@@ -1316,7 +1321,7 @@ object PythonEngine {
     fun pluginDirectory(id: String): File = File(pluginsDir, id)
 
     suspend fun pluginPanel(id: String, panelFile: String = ""): String =
-        withContext(controlDispatcher) {
+        withContext(pluginDispatcher) {
         runCatching { pluginRuntime.callAttr("panel_html", id, panelFile).toString() }
             .getOrElse { error ->
                 DebugLog.error(TAG_PLUGIN, "panel failed for $id", error)

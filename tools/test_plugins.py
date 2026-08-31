@@ -709,6 +709,74 @@ check("sizes are reported", by_id["demo.notes"]["size"] > 0, by_id["demo.notes"]
 check("file lists are reported", "ui.html" in by_id["demo.notes"]["files"],
       by_id["demo.notes"])
 
+# ------------------------------------------------------- replacing in place
+
+print("\n== replacing a plugin leaves one whole plugin behind ==")
+# The bug this guards: install used to delete the folder and then move the
+# new one into the gap. `shutil.move` into a folder that still exists puts the
+# source *inside* it - so a delete that only half worked left main.py one
+# level down, and a plugin that listed fine and could not be loaded:
+#
+#   FileNotFoundError: .../plugins/pycmd.cloud/main.py
+#
+# The swap is a rename onto a folder that has already been moved aside, which
+# cannot nest and cannot leave a half-emptied folder behind.
+
+swap = os.path.join(scratch, "swap-v1")
+os.makedirs(swap, exist_ok=True)
+with open(os.path.join(swap, "plugin.json"), "w", encoding="utf-8") as handle:
+    json.dump({"id": "demo.swap", "name": "Swap", "version": "1.0.0",
+               "entry": "main.py"}, handle)
+with open(os.path.join(swap, "main.py"), "w", encoding="utf-8") as handle:
+    handle.write("VALUE = 1\n")
+
+check("the first version installs", result(plugins.install(swap)).get("ok"))
+
+swap2 = os.path.join(scratch, "swap-v2")
+os.makedirs(swap2, exist_ok=True)
+with open(os.path.join(swap2, "plugin.json"), "w", encoding="utf-8") as handle:
+    json.dump({"id": "demo.swap", "name": "Swap", "version": "2.0.0",
+               "entry": "main.py"}, handle)
+with open(os.path.join(swap2, "main.py"), "w", encoding="utf-8") as handle:
+    handle.write("VALUE = 2\n")
+
+again = result(plugins.install(swap2))
+check("the second installs over it", again.get("ok"), again)
+check("and says it replaced something", again.get("replaced"), again)
+
+home = plugins.plugin_dir("demo.swap")
+check("the entry file is where the manifest says it is",
+      os.path.isfile(os.path.join(home, "main.py")), sorted(os.listdir(home)))
+with open(os.path.join(home, "main.py"), encoding="utf-8") as handle:
+    check("and it is the new one", "VALUE = 2" in handle.read())
+check("nothing was nested inside the plugin folder",
+      not [n for n in os.listdir(home) if os.path.isdir(os.path.join(home, n))
+           and n.startswith(".")],
+      sorted(os.listdir(home)))
+check("and it loads", result(plugins.load("demo.swap")).get("ok"))
+
+listed = result(plugins.listing())
+row = next((p for p in listed["plugins"] if p["id"] == "demo.swap"), None)
+check("the listing shows the new version", row and row["version"] == "2.0.0", row)
+
+check("no staging or retired folders are left lying about",
+      not [n for n in os.listdir(plugin_home)
+           if n.startswith(".staging-") or n.startswith(".retired-")],
+      sorted(os.listdir(plugin_home)))
+
+# A leftover from a killed install is cleared by the next one rather than
+# sitting in private storage for ever.
+litter = os.path.join(plugin_home, ".retired-demo.swap-1")
+os.makedirs(litter, exist_ok=True)
+with open(os.path.join(litter, "junk.txt"), "w", encoding="utf-8") as handle:
+    handle.write("x")
+result(plugins.install(swap2))
+check("and a leftover from a killed install is tidied away",
+      not os.path.isdir(litter), sorted(os.listdir(plugin_home)))
+
+plugins.unload("demo.swap")
+result(plugins.remove("demo.swap"))
+
 shutil.rmtree(scratch, ignore_errors=True)
 
 total = 0

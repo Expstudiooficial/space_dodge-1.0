@@ -93,6 +93,45 @@ check("and the System screen says forks are welcome",
 check("with an address to write to",
       "andrejbaltes4@proton.me" in system, "no contact address")
 
+print("\n== one thread owns the plugin folders ==")
+# Installing a plugin replaces its folder; loading one imports a module out of
+# that folder; a panel reads its HTML from it. On separate threads those can
+# happen at the same time, and then a plugin is imported while its own files
+# are being moved out from under it:
+#
+#   FileNotFoundError: .../plugins/pycmd.cloud/main.py
+#
+# The rule is that everything reaching pycmd_plugins goes to the plugin
+# thread, except run_command, which has to be on the interpreter thread
+# because it prints to the console and shares that namespace.
+engine = read(JAVA, "python", "PythonEngine.kt")
+wrong = []
+for match in re.finditer(r"pluginRuntime\.callAttr\(\s*\"?(\w+)", engine):
+    name = match.group(1)
+    # Look back for the dispatcher this call is running under.
+    before = engine[:match.start()]
+    dispatcher = ""
+    for candidate in re.finditer(r"withContext\((\w+)\)", before):
+        dispatcher = candidate.group(1)
+    if name == "run_command":
+        if dispatcher != "pythonDispatcher":
+            wrong.append((name, dispatcher))
+    elif dispatcher not in ("pluginDispatcher", "pythonDispatcher"):
+        wrong.append((name, dispatcher))
+check("every plugin call runs on the plugin thread", not wrong, wrong)
+check("and there is a plugin thread to run them on",
+      "newSingleThreadExecutor" in engine and "python-plugins" in engine,
+      "the plugin dispatcher is gone")
+
+print("\n== bundled plugins are installed before anything is loaded ==")
+model = read(JAVA, "ui", "MainViewModel.kt")
+install_at = model.find("installBundledPlugins()\n            refreshCustomPlugins()")
+check("the startup order puts installing first", install_at > 0,
+      "refreshCustomPlugins runs before installBundledPlugins again")
+check("and the version check reads the real listing rather than a state flow",
+      "engine.listPlugins()" in model.split("private suspend fun installBundledPlugins")[1][:1600],
+      "an empty flow reads as 'nothing installed' and reinstalls everything")
+
 print()
 if FAILURES:
     print(f"{len(FAILURES)} branding checks failed")
