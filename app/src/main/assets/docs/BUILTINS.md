@@ -14,7 +14,7 @@ runs with everything the app can do — exactly like a plugin you installed
 yourself. They appear under *Ships with PyCmd*, and they cannot be deleted,
 because the next start would only put them back.
 
-Each of the four bundled plugins ships its own guide, which appears in
+Each of the five bundled plugins ships its own guide, which appears in
 **Guides → From your plugins** once you switch it on.
 
 If you want to write one of your own, [PLUGINS.md](PLUGINS.md) is the guide.
@@ -134,6 +134,7 @@ console:
 |---|---|
 | `web install htmx` | Vendors it into `vendor/htmx/`, and prints the tag to paste |
 | `web install chart.js@4.4.0` | A version you pick |
+| `web use htmx blog` | Copies it into `blog/vendor/`, where a page can actually load it |
 | `web list` / `web remove <name>` | What is vendored, and undoing it |
 | `web catalogue` | The seventeen with a one-tap button |
 | `kit new blog flask` | A whole project the Servers tab can run |
@@ -169,6 +170,33 @@ Adds a **Scheduled jobs** section to the Servers tab, and two commands:
 
 Jobs live as long as the app does. Android gives an app no promise of being
 alive later, so nothing here claims a schedule that survives being closed.
+
+---
+
+### Creator
+
+A tab of its own where code is **built out of blocks** instead of typed - and
+then saved as an ordinary file.
+
+Three hundred and sixty-three blocks across five languages: **Python** (154),
+**JavaScript** (98), **HTML** (49), **CSS** (42) and **Markdown** (20). Pick
+one, fill in its holes, stack it, nest it inside a loop. **Build** shows the
+source it writes before anything is saved; **Save to Files** puts a real
+`.py`, `.js`, `.html`, `.css` or `.md` in your workspace, and from there the
+editor opens it, the Servers tab runs it and the Pages tab serves it like
+anything else.
+
+| Command | What it does |
+|---|---|
+| `blocks` | The projects in the drawer |
+| `blocks langs` | The languages, and how many blocks each has |
+| `blocks build <name>` | Print what a project writes |
+| `blocks save <name>` | Write it into the workspace |
+
+What it will not do is read a file back into blocks. That would mean a parser
+for each language, kept correct forever, and the direction people want is this
+one - where the colons, braces, indentation and closing tags are, which is the
+fiddly part on a phone keyboard.
 
 ---
 

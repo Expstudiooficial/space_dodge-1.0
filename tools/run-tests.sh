@@ -38,6 +38,10 @@ echo "== The music library =="
 "$PYTHON" tools/test_music.py
 
 echo
+echo "== Creator: the blocks and what they compile to =="
+"$PYTHON" tools/test_creator.py
+
+echo
 echo "== Plugins, doctor, preview, cloud, bundled =="
 "$PYTHON" tools/test_plugins.py
 "$PYTHON" tools/test_doctor.py

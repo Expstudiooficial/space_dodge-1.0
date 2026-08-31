@@ -12,7 +12,7 @@ already has. Another twenty file types are edited, highlighted, previewed and
 served, and music, video, images, PDFs, archives and fonts are brought in from
 the phone, kept, served and played.
 
-Version 2.5.2. Kotlin and Jetpack Compose for the app, JavaScript for the console
+Version 2.5.3. Kotlin and Jetpack Compose for the app, JavaScript for the console
 and editor.
 
 ---
@@ -69,14 +69,29 @@ Pro** plugin adds everything that is not Python: JavaScript and CSS libraries,
 web fonts and whole starter projects, vendored into the workspace so a page
 works with no connection.
 
-**Pages** — websites that live in the app. Make one (up to 70), switch it on
-(up to 25 at a time) and it is served from the phone for real: a static site, a
-Flask app with templates, a JSON API, or a folder you already had. Each page
+**Pages** — websites that live in the app. Point one at a folder you already
+have in the workspace (up to 70), switch it on (up to 25 at a time) and it is
+served from the phone for real. Nothing to point at yet is a template away: a
+static site, a Flask app with templates, a JSON API, or an empty folder, made
+at the top of the workspace under its own name rather than in a `pages/` folder
+the app invented. What a page *is* stays in the workspace where you can edit
+it; what happened to it - what was deployed, where, when - is kept in the app's
+own storage, one folder per page, so a deploy never leaves a build folder in
+your files. Each page
 keeps its name, its port and its files, so running it again is a tap. **Share**
 puts a random public address in front of it through a tunnel, so anyone
 anywhere can open it while the app is running. And with a Cloudflare account
 connected, a page deploys to **Cloudflare Pages** instead - a real `pages.dev`
 address that stays up when the phone is off, and takes your own domain.
+
+**Creator** — a tab where code is built out of blocks instead of typed, added
+by a plugin that ships in the app. Three hundred and sixty-three blocks across
+Python, JavaScript, HTML, CSS and Markdown: pick one, fill in its holes, stack
+it, nest it inside a loop. Build shows the source before anything is saved;
+Save puts a real file in your workspace, which the editor opens, the Servers
+tab runs and the Pages tab serves like anything you wrote by hand. It gets the
+shape right - the colons, the braces, the indentation, the closing tags - which
+is the part that is miserable on a phone keyboard.
 
 **Music** — your own audio, kept in the app and playing while you work. Add
 anything on the phone, video files included: those are taken for their sound
@@ -110,7 +125,7 @@ doing while it does it, on its own thread, so Stop and Kill keep working
 throughout. It never acts on its own.
 
 **Plugins** — three kinds of the same idea. Thirteen **built-in switches**,
-each over behaviour already compiled into the app. Four **bundled plugins**
+each over behaviour already compiled into the app. Five **bundled plugins**
 that ship inside the APK and start switched off: **Server Pro**, **Cloud**,
 **Scheduler** and **Packages Pro**. And **plugins you write yourself** — Python that PyCmd imports,
 which can publish a row in More with its own name and picture, put a card of
@@ -183,7 +198,7 @@ signal, no answer - says nothing at all.
 ## Just want to try it
 
 A ready-to-install APK is in [`dist/`](dist/) - download
-[`PyCmd-2.5.2.apk`](dist/PyCmd-2.5.2.apk), open it on the phone, and allow the
+[`PyCmd-2.5.3.apk`](dist/PyCmd-2.5.3.apk), open it on the phone, and allow the
 install when Android asks. It is a release build: minified by R8, not
 debuggable, and about 18 MB rather than the 35 MB the debug builds were. It is
 signed with the key in [`keystore/`](keystore/) - the standard Android debug
@@ -258,8 +273,9 @@ tools/run-tests.sh
 That runs four things: the embedded Python modules against a stand-in for the
 Kotlin bridge (execution, error reporting, stdin, interrupt-and-recover,
 completions, a real install/import/uninstall round trip against PyPI and a real
-HTTP server, byte-range requests for the media player, the pages registry and
-the music library), the published update manifest against the APK actually
+HTTP server, byte-range requests for the media player, the pages registry, the
+music library, and every one of Creator's blocks compiled and handed to
+Python's own parser), the published update manifest against the APK actually
 sitting in `dist/`, the WebView JavaScript under Node against a stub document,
 and both a debug and a release build with Android Lint.
 
@@ -417,6 +433,7 @@ app/src/main/
     pycmd_music.py           the music library: tracks, playlists, order
   assets/
     web/                     console and editor pages, ANSI and highlighting
+    plugins/creator/         the block catalogue and what it compiles to
     examples/                scripts seeded into the workspace on first launch
 tools/                       host-side test suites, and make_latest.py
 keystore/pycmd.keystore      the one signing key, so updates can install

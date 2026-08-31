@@ -617,6 +617,14 @@ object PythonEngine {
             .getOrDefault(JSONArray())
     }
 
+    /** The workspace folders a page could point at, for the picker. */
+    suspend fun pageFolders(): JSONArray = withContext(controlDispatcher) {
+        if (!_status.value.ready) return@withContext JSONArray()
+        runCatching {
+            JSONArray(pages.callAttr("folders", workspaceDir.absolutePath).toString())
+        }.getOrDefault(JSONArray())
+    }
+
     private suspend fun pageCall(name: String, vararg args: Any?): JSONObject =
         withContext(controlDispatcher) {
             if (!_status.value.ready) {
@@ -662,8 +670,29 @@ object PythonEngine {
     suspend fun setPageHost(id: String, host: String): JSONObject = pageCall("set_host", id, host)
 
     /** Remembers where a page was last deployed, so its card can link to it. */
-    suspend fun notePageDeployment(id: String, url: String, project: String): JSONObject =
-        pageCall("note_deployment", id, url, project)
+    suspend fun notePageDeployment(
+        id: String,
+        url: String,
+        project: String,
+        files: Int,
+        bytes: Long,
+    ): JSONObject = withContext(controlDispatcher) {
+        if (!_status.value.ready) return@withContext failed("The interpreter is not ready yet.")
+        runCatching {
+            JSONObject(
+                pages.callAttr("note_deployment", id, url, project, files, bytes).toString(),
+            )
+        }.getOrElse { failed(it.message.orEmpty()) }
+    }
+
+    /** Copies what would be deployed into the page's own build folder. */
+    suspend fun stagePage(id: String): JSONObject = pageCall("stage", id)
+
+    /** Everywhere this page has been sent, newest first. */
+    suspend fun pageDeployments(id: String): JSONObject = pageCall("deployments", id)
+
+    /** Throws away the build copy; the history stays. */
+    suspend fun clearPageBuild(id: String): JSONObject = pageCall("clear_build", id)
 
     // ---- Music: the library, not the playing ------------------------------
 

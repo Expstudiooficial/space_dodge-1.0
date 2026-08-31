@@ -590,6 +590,7 @@ fun PyCmdRoot(viewModel: MainViewModel = viewModel()) {
                     state = pagesState,
                     kitOn = kitOn,
                     onCreate = viewModel::createPage,
+                    onAdopt = viewModel::adoptPage,
                     onStart = { viewModel.startPage(it.id) },
                     onStop = { viewModel.stopPage(it.id) },
                     onOpen = viewModel::openPage,
@@ -606,6 +607,7 @@ fun PyCmdRoot(viewModel: MainViewModel = viewModel()) {
                     onConnectCloudflare = viewModel::connectCloudflare,
                     onForgetCloudflare = viewModel::forgetCloudflare,
                     onDeploy = viewModel::deployPage,
+                    onClearBuild = viewModel::clearPageBuild,
                     onSetHost = { project, host -> viewModel.setPageHost(project.id, host) },
                     pluginSections = {
                         PluginSections(

@@ -76,6 +76,10 @@ check("and an index.html in it",
 check("and a port of its own", pycmd_pages.PORT_FROM <= page.get("port", 0) <= pycmd_pages.PORT_TO,
       page.get("port"))
 check("and it is not running yet", page.get("running") is False, page)
+check("the folder is at the top of the workspace, not in a pages/ folder",
+      os.path.dirname(page.get("folder", "")) == workspace and
+      not os.path.isdir(os.path.join(workspace, "pages")),
+      page.get("folder"))
 
 again = pycmd_pages.create("my site", "static", workspace)
 check("the same name twice is refused", not again.get("ok"), again)
@@ -169,6 +173,21 @@ time.sleep(0.4)
 after = next(row for row in pycmd_pages.listing() if row["id"] == page["id"])
 check("and the listing agrees", not after["running"], after)
 
+say("\n== picking a folder out of the workspace ==")
+os.makedirs(os.path.join(workspace, "notes", "drafts"), exist_ok=True)
+os.makedirs(os.path.join(workspace, "__pycache__"), exist_ok=True)
+os.makedirs(os.path.join(workspace, ".hidden"), exist_ok=True)
+offered = pycmd_pages.folders(workspace)
+paths = [row["relative"] for row in offered]
+check("the picker offers folders in the workspace", "notes" in paths, paths[:8])
+check("and one level inside them", "notes/drafts" in paths, paths[:8])
+check("caches are left out", "__pycache__" not in paths, paths[:8])
+check("and so are hidden folders", ".hidden" not in paths, paths[:8])
+check("a folder that is already a page says so",
+      any(row["taken"] for row in offered), offered[:4])
+check("every row says how much is in it",
+      all("files" in row and "bytes" in row for row in offered), offered[:2])
+
 say("\n== adopting a folder that already exists ==")
 hand_made = os.path.join(workspace, "by-hand")
 os.makedirs(hand_made, exist_ok=True)
@@ -186,12 +205,70 @@ set_host = pycmd_pages.set_host(page["id"], "cloudflare")
 check("a page can be marked for Cloudflare", set_host.get("ok"), set_host)
 bad_host = pycmd_pages.set_host(page["id"], "somewhere-else")
 check("and nowhere else", not bad_host.get("ok"), bad_host)
-noted = pycmd_pages.note_deployment(page["id"], "https://x.pages.dev", "x")
+noted = pycmd_pages.note_deployment(page["id"], "https://x.pages.dev", "x", 3, 900)
 check("a deployment is remembered", noted.get("ok"), noted)
 check("and shows on the card",
       next(r for r in pycmd_pages.listing() if r["id"] == page["id"])
       .get("deployed_url") == "https://x.pages.dev",
       pycmd_pages.listing()[0])
+
+say("\n== a page's own storage, outside the workspace ==")
+store = pycmd_pages.store_dir(page["id"])
+check("a page has a folder of its own", os.path.isdir(store), store)
+check("and it is nowhere near the workspace",
+      not store.startswith(workspace), store)
+
+history = pycmd_pages.deployments(page["id"])
+check("the deployment went into it", len(history["deployments"]) == 1, history)
+check("with what was sent",
+      history["deployments"][0]["files"] == 3 and
+      history["deployments"][0]["bytes"] == 900,
+      history["deployments"][0])
+
+pycmd_pages.note_deployment(page["id"], "https://y.pages.dev", "y", 4, 1000)
+history = pycmd_pages.deployments(page["id"])
+check("the newest deployment is first",
+      history["deployments"][0]["url"] == "https://y.pages.dev", history["deployments"][0])
+
+staged = pycmd_pages.stage(page["id"])
+check("a page can be packed for deployment", staged.get("ok"), staged)
+check("the copy is in the page's own folder",
+      staged.get("folder", "").startswith(store), staged)
+check("and carries its files",
+      os.path.isfile(os.path.join(staged["folder"], "index.html")), staged)
+check("and it is not in the workspace",
+      not staged.get("folder", "").startswith(workspace), staged)
+
+junk = os.path.join(page["folder"], "__pycache__")
+os.makedirs(junk, exist_ok=True)
+with open(os.path.join(junk, "x.pyc"), "wb") as handle:
+    handle.write(b"\0")
+with open(os.path.join(page["folder"], ".hidden"), "w", encoding="utf-8") as handle:
+    handle.write("x")
+restaged = pycmd_pages.stage(page["id"])
+check("caches are left out of the copy",
+      not os.path.isdir(os.path.join(restaged["folder"], "__pycache__")), restaged)
+check("and so are hidden files",
+      not os.path.isfile(os.path.join(restaged["folder"], ".hidden")), restaged)
+
+cleared = pycmd_pages.clear_build(page["id"])
+check("the copy can be thrown away", cleared.get("ok") and cleared.get("freed", 0) > 0, cleared)
+check("and it is gone", not os.path.isdir(restaged["folder"]), restaged)
+check("but the history stayed",
+      len(pycmd_pages.deployments(page["id"])["deployments"]) == 2)
+
+empty_folder = os.path.join(workspace, "nothing-here")
+os.makedirs(empty_folder, exist_ok=True)
+empty_page_row = pycmd_pages.adopt("Nothing Here", empty_folder)["page"]
+check("packing an empty folder is refused, not silently empty",
+      not pycmd_pages.stage(empty_page_row["id"]).get("ok"),
+      pycmd_pages.stage(empty_page_row["id"]))
+check("and no half-made copy is left behind",
+      not os.path.isdir(os.path.join(pycmd_pages.store_dir(empty_page_row["id"]), "build")))
+gone_store = pycmd_pages.store_dir(empty_page_row["id"])
+pycmd_pages.remove(empty_page_row["id"], False)
+check("removing a page takes its own folder with it",
+      not os.path.isdir(gone_store), gone_store)
 
 # ---------------------------------------------------------------------------
 say("\n== the tunnel, against a stand-in service ==")

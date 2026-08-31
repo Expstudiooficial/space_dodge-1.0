@@ -1,8 +1,12 @@
 package com.expstudio.pycmd.ui
 
 import android.annotation.SuppressLint
+import android.app.AlertDialog
 import android.view.MotionEvent
+import android.webkit.ConsoleMessage
 import android.webkit.JavascriptInterface
+import android.webkit.JsResult
+import android.webkit.WebChromeClient
 import android.webkit.WebResourceRequest
 import android.webkit.WebView
 import android.webkit.WebViewClient
@@ -110,6 +114,55 @@ fun PluginPanelView(
                 false
             }
             addJavascriptInterface(bridge, "__pycmd_panel")
+            // Without a chrome client a WebView answers `alert`, `confirm` and
+            // `prompt` by ignoring them - and `confirm` then reads as "no",
+            // silently, which is how a panel's "are you sure?" turns into a
+            // button that does nothing. These are the app's dialogs, so a
+            // panel asking a question looks like the rest of the app asking.
+            webChromeClient = object : WebChromeClient() {
+                override fun onJsAlert(
+                    view: WebView?,
+                    url: String?,
+                    message: String?,
+                    result: JsResult,
+                ): Boolean {
+                    AlertDialog.Builder(context)
+                        .setMessage(message.orEmpty())
+                        .setPositiveButton("OK") { _, _ -> result.confirm() }
+                        .setOnCancelListener { result.cancel() }
+                        .show()
+                    return true
+                }
+
+                override fun onJsConfirm(
+                    view: WebView?,
+                    url: String?,
+                    message: String?,
+                    result: JsResult,
+                ): Boolean {
+                    AlertDialog.Builder(context)
+                        .setMessage(message.orEmpty())
+                        .setPositiveButton("Yes") { _, _ -> result.confirm() }
+                        .setNegativeButton("No") { _, _ -> result.cancel() }
+                        .setOnCancelListener { result.cancel() }
+                        .show()
+                    return true
+                }
+
+                override fun onConsoleMessage(message: ConsoleMessage): Boolean {
+                    // A panel's JavaScript error is otherwise invisible: the
+                    // page just stops doing anything.
+                    val where = "${message.sourceId().substringAfterLast('/')}" +
+                        ":${message.lineNumber()}"
+                    val text = "[${plugin.name}] ${message.message()}  ($where)"
+                    when (message.messageLevel()) {
+                        ConsoleMessage.MessageLevel.ERROR -> DebugLog.error("plugin", text)
+                        ConsoleMessage.MessageLevel.WARNING -> DebugLog.warn("plugin", text)
+                        else -> DebugLog.debug("plugin", text)
+                    }
+                    return true
+                }
+            }
             webViewClient = object : WebViewClient() {
                 override fun shouldOverrideUrlLoading(
                     view: WebView?,

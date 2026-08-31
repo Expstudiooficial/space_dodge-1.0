@@ -289,6 +289,19 @@ check("and it hands back the tag to paste",
 listed = result(plugins.call_export("pycmd.packages-pro", "vendored", "{}"))["result"]
 check("it remembers what it fetched", any(r["npm"] == "htmx.org" for r in listed), listed)
 
+# A page is served rooted at its own folder, so `../vendor` is a path the
+# browser cannot follow. `web use` is the answer, and it has to actually copy.
+os.makedirs(os.path.join(workspace, "blog"), exist_ok=True)
+moved = json.loads(plugins.run_command("web", "use htmx blog"))
+check("a vendored library can be copied into a project folder",
+      moved.get("handled"), moved)
+check("and it lands where a page can load it",
+      os.path.isfile(os.path.join(workspace, "blog", "vendor", "htmx", "htmx.min.js")),
+      sorted(os.listdir(os.path.join(workspace, "blog"))))
+nowhere = json.loads(plugins.run_command("web", "use htmx not-a-folder"))
+check("copying into a folder that is not there is refused",
+      nowhere.get("handled"), nowhere)
+
 unknown = result(plugins.call_export("pycmd.packages-pro", "add", json.dumps({
     "name": "some-package-nobody-published",
 })))["result"]

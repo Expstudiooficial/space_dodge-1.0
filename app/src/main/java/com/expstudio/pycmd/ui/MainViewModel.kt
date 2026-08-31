@@ -218,6 +218,22 @@ data class PageProject(
 /** What a new page can start as. */
 data class PageTemplate(val id: String, val title: String, val about: String)
 
+/**
+ * A workspace folder a page could point at.
+ *
+ * [taken] is why this is a type rather than a string: offering a folder that
+ * is already a page, and then refusing it after the tap, is worse than saying
+ * so on the row.
+ */
+data class WorkspaceFolder(
+    val path: String,
+    val name: String,
+    val relative: String,
+    val files: Int,
+    val bytes: Long,
+    val taken: Boolean,
+)
+
 /** Whether a Cloudflare account is connected, and which. */
 data class CloudflareState(
     val connected: Boolean = false,
@@ -229,6 +245,8 @@ data class CloudflareState(
 data class PagesState(
     val projects: List<PageProject> = emptyList(),
     val templates: List<PageTemplate> = emptyList(),
+    /** Workspace folders the picker offers, refreshed with the tab. */
+    val folders: List<WorkspaceFolder> = emptyList(),
     val used: Int = 0,
     val maxProjects: Int = 70,
     val active: Int = 0,
@@ -2374,6 +2392,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             val rows = engine.pages()
             val counts = engine.pageCounts()
             val templates = engine.pageTemplates()
+            val choices = engine.pageFolders()
             val cloud = engine.cloudflareState()
             if (generation != pagesGeneration) return@launch
             _pages.value = _pages.value.copy(
@@ -2388,6 +2407,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                             about = row.optString("about"),
                         )
                     }
+                },
+                folders = choices.rows().map { row ->
+                    WorkspaceFolder(
+                        path = row.optString("path"),
+                        name = row.optString("name"),
+                        relative = row.optString("relative"),
+                        files = row.optInt("files"),
+                        bytes = row.optLong("bytes"),
+                        taken = row.optBoolean("taken"),
+                    )
                 },
                 used = counts.optInt("projects"),
                 maxProjects = counts.optInt("max_projects", 70),
@@ -2452,9 +2481,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun adoptPageFromFolder(file: File) {
-        pageAction("Adding ${file.name}...", { "${file.name} is a page now" }) {
-            engine.adoptPage(file.name, file.absolutePath)
+    /**
+     * Points a page at a folder somebody picked out of the workspace.
+     *
+     * This is how a page is normally made now. The app inventing a folder was
+     * the old way and is still there behind "start from a template", but a
+     * page is usually something you already have.
+     */
+    fun adoptPage(folder: WorkspaceFolder, name: String) {
+        val title = name.trim().ifBlank { folder.name }
+        pageAction("Adding $title...", { "$title is a page now" }) {
+            engine.adoptPage(title, folder.path)
         }
     }
 
@@ -2884,22 +2921,49 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
      * Minutes of network on a phone connection, so the card carries the
      * progress the deploy reports rather than a spinner that says nothing.
      */
+    /**
+     * Sends a page to Cloudflare - from a copy, not from the live folder.
+     *
+     * The copy is made first, in the page's own storage outside the workspace,
+     * so what went up is a thing that still exists afterwards and can be
+     * looked at. Uploading straight out of the workspace means uploading
+     * whatever each file happened to contain at the moment the upload reached
+     * it, which is not something anybody can reason about later.
+     */
     fun deployPage(page: PageProject) {
         viewModelScope.launch {
-            cloudflareBusy("Deploying ${page.name}...")
-            val reply = engine.deployToCloudflare(page.folder, page.name) { message ->
+            cloudflareBusy("Packing ${page.name}...")
+            val staged = engine.stagePage(page.id)
+            if (!staged.optBoolean("ok")) {
+                cloudflareBusy("")
+                showToast(staged.optString("error", "That folder could not be packed."))
+                return@launch
+            }
+            val folder = staged.optString("folder")
+            val files = staged.optInt("files")
+            val bytes = staged.optLong("bytes")
+
+            cloudflareBusy("Deploying ${page.name} - $files file(s)...")
+            val reply = engine.deployToCloudflare(folder, page.name) { message ->
                 cloudflareBusy(message)
             }
             cloudflareBusy("")
             if (reply.optBoolean("ok")) {
                 val url = reply.optString("url")
-                engine.notePageDeployment(page.id, url, reply.optString("project"))
+                engine.notePageDeployment(page.id, url, reply.optString("project"), files, bytes)
                 showToast("Live at $url")
             } else {
                 showToast(reply.optString("error", "The deploy did not finish."))
             }
             refreshPages()
         }
+    }
+
+    /** Throws away a page's build copy, keeping its deployment history. */
+    fun clearPageBuild(page: PageProject) {
+        pageAction("Clearing...", { reply ->
+            "Freed ${readableSize(reply.optLong("freed"))}"
+        }) { engine.clearPageBuild(page.id) }
     }
 
     // ----------------------------------------------------------------- servers

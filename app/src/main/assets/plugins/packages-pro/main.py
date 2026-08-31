@@ -291,6 +291,59 @@ def installed() -> list:
     return rows
 
 
+def use_in(name: str, folder_name: str) -> dict:
+    """Copies a vendored library into a project folder, so a page can reach it.
+
+    `vendor/` sits at the top of the workspace, and a page is served rooted at
+    its own folder - so `../vendor/htmx/htmx.min.js` is a path the browser
+    cannot follow, whatever the file manager says. The fix is the one every
+    web project uses: the library goes *into* the project. This copies it and
+    hands back the tag to paste, which is the whole of what anybody wanted.
+    """
+    rows = [row for row in installed()
+            if name in (row.get("npm"), row.get("name"))
+            or os.path.basename(row.get("folder", "")) == name]
+    if not rows:
+        return {"ok": False, "error": f"{name} is not vendored. Try: web install {name}"}
+    record = rows[0]
+
+    target_root = _api.workspace_path(*[
+        part for part in str(folder_name or "").strip().strip("/").split("/")
+        if part and part not in (".", "..")
+    ])
+    if not os.path.isdir(target_root):
+        return {"ok": False, "error": f"There is no folder called {folder_name}."}
+
+    inside = os.path.join(target_root, "vendor", os.path.basename(record["folder"]))
+    os.makedirs(inside, exist_ok=True)
+    copied = []
+    for name_of_file in record.get("files", []):
+        source = os.path.join(record["folder"], name_of_file)
+        if not os.path.isfile(source):
+            continue
+        try:
+            with open(source, "rb") as reading, \
+                    open(os.path.join(inside, name_of_file), "wb") as writing:
+                writing.write(reading.read())
+            copied.append(name_of_file)
+        except OSError as error:
+            return {"ok": False, "error": f"could not copy {name_of_file}: {error}"}
+
+    if not copied:
+        return {"ok": False, "error": f"{name} has no files on disk any more."}
+
+    relative = os.path.relpath(inside, target_root).replace(os.sep, "/")
+    tags = []
+    for name_of_file in copied:
+        href = f"{relative}/{name_of_file}"
+        if name_of_file.endswith(".css"):
+            tags.append(f'<link rel="stylesheet" href="{href}">')
+        elif name_of_file.endswith(".js"):
+            tags.append(f'<script src="{href}"></script>')
+    return {"ok": True, "name": record.get("name", name), "folder": inside,
+            "files": copied, "html": "\n".join(tags)}
+
+
 def remove(name: str) -> dict:
     """Deletes a vendored library's files and forgets it."""
     rows = _ledger()
@@ -657,7 +710,10 @@ def setup(api):
                 api.open_file(os.path.join(result["folder"], first))
         return result
 
-    @api.command("web", help="web install <name>[@version] | list | remove <x> | catalogue")
+    @api.command(
+        "web",
+        help="web install <name>[@version] | list | use <name> <folder> | remove <x> | catalogue",
+    )
     def web_command(argument=""):
         parts = str(argument).split()
         action = parts[0] if parts else "catalogue"
@@ -707,6 +763,23 @@ def setup(api):
             api.refresh("files")
             return
 
+        if action in ("use", "into", "copy"):
+            if len(rest) < 2:
+                api.print("web use <name> <folder>     e.g. web use htmx blog")
+                api.print("  puts the library inside that folder, where a page can load it")
+                return
+            result = use_in(rest[0], " ".join(rest[1:]))
+            if not result.get("ok"):
+                api.print("  " + result.get("error", "no"))
+                return
+            api.print(f"{result['name']} -> {os.path.relpath(result['folder'], _api.workspace_path())}")
+            if result.get("html"):
+                api.print("  paste into your page:")
+                for line in result["html"].splitlines():
+                    api.print("    " + line)
+            api.refresh("files")
+            return
+
         if action in ("catalogue", "catalog", "all"):
             for row in CATALOGUE:
                 api.print(f"  {row['id']:<16} {row['name']:<22} {row['about']}")
@@ -715,7 +788,7 @@ def setup(api):
             return
 
         api.print(f"web: no idea what '{action}' means. "
-                  "Try: web install htmx, web list, web catalogue")
+                  "Try: web install htmx, web list, web use htmx blog, web catalogue")
 
     @api.command("kit", help="kit new <folder> <flask|site|htmx|chart|three|api|cli>")
     def kit_command(argument=""):

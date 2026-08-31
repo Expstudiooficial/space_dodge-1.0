@@ -414,7 +414,7 @@ depend on the device.
 
 ## 8. The plugins that ship with it
 
-**More → Plugins**. Four sit under **Ships with PyCmd**, installed for you and
+**More → Plugins**. Five sit under **Ships with PyCmd**, installed for you and
 switched **off**:
 
 * **Server Pro** — turns the Servers tab into a board you can work in.
@@ -423,6 +423,8 @@ switched **off**:
 * **Scheduler** — run a script again every so often.
 * **Packages Pro** — JavaScript and CSS libraries, web fonts, and whole starter
   projects, fetched into your workspace.
+* **Creator** — a tab of its own where code is built out of blocks. See
+  [11e](#11e-creator--code-built-out-of-blocks).
 
 Turn Cloud on, open **More → Cloud**, and connect a project. Then, from the
 console:
@@ -465,7 +467,7 @@ can publish a row in **More** with its own name, description and picture.
 Neither needs the app to change.
 
 **Plugins → How do I write one?** opens the full guide on the phone:
-the manifest, the API, the events, the panel bridge, four complete plugins,
+the manifest, the API, the events, the panel bridge, five complete plugins,
 and a prompt you can paste into an AI to have one written for you.
 
 ---
@@ -548,7 +550,13 @@ exists. There is a panel for all of it under **Packages**.
 
 ## 11c. Pages — a website that lives in the app
 
-**More → Pages.** Name one, pick what it starts as, press **Create page**:
+**More → Pages.** A page is a folder you already have: press **Choose a
+folder**, pick one out of the workspace, give it a name, press **Add page**.
+The picker lists every folder in the workspace and one level inside each, says
+how much is in it, and greys out the ones that are already pages.
+
+Nothing to point at yet? Open **Nothing to point at yet?** underneath and start
+one from a template:
 
 | Starts as | What you get |
 |---|---|
@@ -556,6 +564,12 @@ exists. There is a panel for all of it under **Packages**.
 | A Python site | `app.py` with Flask, `templates/`, `static/` |
 | A JSON API | `app.py` answering `/api`, and a page that calls it |
 | Empty | a folder, and whatever you put in it |
+
+The folder lands at the **top of the workspace under its own name**. Earlier
+versions put it in a `pages/` folder the app invented, which is a name sitting
+in the way of `vendor/` from Packages Pro, whatever pip installed, and your own
+folders. Files can move it wherever you like afterwards; the page follows it by
+path.
 
 Then **Run**. It is a real server: the card shows an address like
 `http://192.168.1.42:8631/`, and anyone on the same wifi can open it in a
@@ -599,6 +613,14 @@ goes in your workspace, and is never shown back to you.
 
 Once connected, each page card gets **This phone / Cloudflare** and a **Deploy**
 button.
+
+**What went up is kept, and it is not in your workspace.** Deploying packs the
+folder into a copy first - skipping `__pycache__`, `.git`, `node_modules` and
+hidden files - and uploads that. The copy, and the record of where and when
+each deployment went, live in the page's own storage inside the app, one folder
+per page. So "what did I actually send" has an answer afterwards, and your
+workspace never grows a build folder you did not put there. **Clear** on the
+card throws the copy away and keeps the history.
 
 ---
 
@@ -646,6 +668,103 @@ PyCmd takes, so a workspace export never carries somebody's album. If a file
 goes missing another way - a delete that half worked, storage cleared under the
 app - the row says so, and **Tidy up** clears those rows and any stray files
 nothing points at.
+
+---
+
+## 11e. Creator — code built out of blocks
+
+**More → Plugins → Creator** to switch it on, then **More → Creator**.
+
+Pick a block, and it lands in your script. Tap a block to select it, and a row
+of buttons appears: move it up or down, put it **inside** the block above,
+take it back out, fill in its holes, copy it, delete it. Select a container -
+a loop, an `if`, a `<div>`, a CSS rule - and the next block you pick goes
+*inside* it. That is the whole trick to building a loop.
+
+Three hundred and sixty-three blocks, in five languages:
+
+| Language | Blocks | Some of what is in there |
+|---|---|---|
+| Python | 154 | print, input, loops, functions, files, JSON, requests, Flask, classes |
+| JavaScript | 98 | the page, events, fetch, arrays, objects, timers |
+| HTML | 49 | the whole document, forms, tables, media |
+| CSS | 42 | rules, flexbox, grid, colours, transitions, media queries |
+| Markdown | 20 | headings, lists, tables, code fences |
+
+**Build** shows the source your blocks write, before anything is saved. **Save
+to Files** asks for a name and a folder and writes a real file into the
+workspace - and then it is an ordinary file: the editor opens it, `run
+thing.py` runs it, a folder of them is a page the Pages tab can serve.
+
+Your projects are kept apart from the files they make, in a drawer of up to
+sixty. Saving a file does not clear the blocks, and editing the file afterwards
+does not change them.
+
+From the console: `blocks`, `blocks langs`, `blocks build <name>`,
+`blocks save <name>`.
+
+Two honest limits. It cannot read a file back into blocks - blocks go one way.
+And it does not check what you type into a hole: `score +` is written into the
+file exactly like that, and Python complains when you run it. What the blocks
+get right is the *shape* - the colons, the braces, the indentation, the closing
+tags - which is the part that is miserable on a phone keyboard.
+
+---
+
+## 11f. Using what you installed, everywhere
+
+Two tabs install things, and they land in two different places for two
+different reasons. Both are reachable from everywhere in the app; the how is
+different.
+
+### Python packages: install once, import anywhere
+
+**Packages → install**, or `pip install requests` in the console. It goes into
+the app's own `site-packages`, which is on the path of the **one interpreter**
+everything here shares. So after installing it once:
+
+```python
+import requests            # in the console
+import requests            # in a file you Run from the editor
+import requests            # in a server, in the Servers tab
+import requests            # in a page's app.py, in the Pages tab
+import requests            # in a plugin you wrote
+```
+
+All the same interpreter, all the same packages. Nothing to add to a path,
+nothing to activate, no virtualenv. `pip list` in the console says what is
+there, and Flask, requests and rich are already in the box.
+
+The one rule: **install before you run**, not while. A server already running
+loaded its imports when it started.
+
+### Web libraries: they go in the project
+
+`web install htmx` (Packages Pro) fetches into `vendor/` at the top of your
+workspace, which is the right place to keep them - but a page is served rooted
+at **its own folder**, so `../vendor/htmx/htmx.min.js` is a path the browser
+cannot follow. Copy it into the project instead:
+
+```
+web use htmx blog
+```
+
+That puts it in `blog/vendor/htmx/` and prints the tag to paste. Now
+`<script src="vendor/htmx/htmx.min.js"></script>` works in `blog/index.html`,
+offline, served from the phone, and deployed to Cloudflare unchanged - because
+it is inside the folder that gets uploaded.
+
+`kit new blog flask` does the same thing from the other end: a project folder
+that already runs, with what it needs already inside it.
+
+### Where each of them lives
+
+| What | Where it lands | How you reach it |
+|---|---|---|
+| `pip install X` | the app's `site-packages` | `import X`, anywhere |
+| `web install X` | `vendor/X/` in the workspace | `web use X <folder>`, then a relative tag |
+| `kit new X` | a folder in the workspace | point Servers or Pages at it |
+| Creator's **Save** | the folder you pick | like any file you wrote |
 
 ---
 
@@ -743,6 +862,13 @@ debug log first if something failed; it is worth more than a description.
   `import tabulate` on the next line. No `os.system`, no restart.
 - **A command never eats your Python.** Type `ls = [1, 2]`, press Run, then
   type `ls` - you should get your list back, not a directory listing.
+- **Blocks build something that runs.** In Creator, stack a loop with a print
+  inside it, press Build, then Save. Run the file it wrote - it should do what
+  the blocks said, with no editing.
+- **A page points where you pointed it.** Add a page from a folder you made in
+  Files, run it, and open the address. Nothing should appear in your workspace
+  that you did not put there - no `pages/` folder, and no build folder after a
+  deploy.
 
 ---
 

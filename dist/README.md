@@ -1,17 +1,80 @@
 # Prebuilt APK
 
-`PyCmd-2.5.2.apk` — ready to install, nothing else needed.
+`PyCmd-2.5.3.apk` — ready to install, nothing else needed.
 
 | | |
 |---|---|
 | Package | `com.expstudio.pycmd.debug` |
-| Version | 2.5.2 |
+| Version | 2.5.3 |
 | Size | 18 MB |
 | Signed with | the key in [`keystore/`](../keystore/), committed so updates can install over it |
 | Works on | Android 7.0 (API 24) and newer, **arm64-v8a** (every phone since about 2016) |
 | SHA-256 | see [SHA256SUMS.txt](SHA256SUMS.txt) |
 
-## What is new in 2.5.2
+## What is new in 2.5.3
+
+**Creator: a tab where code is built out of blocks.** Switch on the Creator
+plugin and More grows a tab of its own, in the app's own colours, where you
+stack blocks instead of typing. **363 blocks** across five languages - Python
+(154), JavaScript (98), HTML (49), CSS (42) and Markdown (20).
+
+Pick a block and it lands in your script. Tap one to select it and it grows a
+row of buttons: move it up or down, put it **inside** the block above, take it
+back out, fill in its holes, copy it, delete it. Select a container - a loop,
+an `if`, a `<div>`, a CSS rule - and the next block you pick goes *inside* it.
+That is the whole trick to building a loop on a phone.
+
+**Build** shows the source your blocks write before anything is saved. **Save
+to Files** writes a real file into your workspace - and then it is just a file:
+the editor opens it, `run thing.py` runs it, a folder of them is a page the
+Pages tab serves. Nothing in it says it was made of blocks.
+
+What it gets right is the *shape*: the colons, the braces, the indentation, the
+closing tags, the escaping. Every one of the 154 Python blocks is compiled and
+handed to Python's own parser by the test suite, so a block that writes a
+syntax error is a build that fails here rather than a file that fails on
+somebody's phone. What it does not do is check your expressions, or read a file
+back into blocks - blocks go one way, and that is stated in the guide rather
+than discovered.
+
+From the console: `blocks`, `blocks langs`, `blocks build <name>`,
+`blocks save <name>`.
+
+**Pages now points at a folder you already have.** Press **Choose a folder**
+and pick one out of the workspace. Making a page used to mean the app inventing
+`workspace/pages/<slug>/` for you, and a folder called `pages` sits in the way
+of `vendor/` from Packages Pro, of whatever pip installed, and of your own
+folders. Now a page points at a folder you chose, and the only thing it makes
+on its own is a starter folder at the top of the workspace when you ask for one
+from a template.
+
+**And a deploy no longer touches your workspace.** Deploying packs the folder
+into a copy first - skipping `__pycache__`, `.git`, `node_modules` and hidden
+files - uploads that, and keeps it, along with the record of where and when
+each deployment went, in the page's **own** storage inside the app: one folder
+per page, outside the workspace entirely. So "what did I actually send" has an
+answer afterwards, and nothing appears in your files that you did not put
+there. **Clear** on the card throws the copy away and keeps the history.
+
+**Using what you installed, everywhere.** The guides now say it plainly, and
+one thing that was only true in principle is true in practice:
+
+* `pip install requests` puts a package in the **one interpreter** everything
+  here shares, so `import requests` works in the console, in a file you Run, in
+  a server, in a page's `app.py` and in a plugin. Nothing to activate.
+* `web install htmx` fetches into `vendor/` at the top of the workspace - but a
+  page is served rooted at its own folder, so `../vendor/...` is a path no
+  browser will follow. **`web use htmx blog`** is new: it copies the library
+  into `blog/vendor/` and prints the tag to paste. Offline, served from the
+  phone, and deployed to Cloudflare unchanged.
+
+**Plugin panels can ask a question again.** A WebView with no chrome client
+answers `confirm()` by ignoring it, which reads as "no" - so a panel's "are you
+sure?" was a button that did nothing. Panels now get the app's own dialogs for
+`alert` and `confirm`, and their JavaScript errors go to the debug console
+instead of nowhere.
+
+## What was new in 2.5.2
 
 **Music: your own audio, playing while you work.** A new tab in the app itself.
 Import anything on the phone - MP3, M4A, FLAC, OGG, WAV, and video files too -
@@ -692,7 +755,7 @@ every tab with things to paste in and try.
 ## Installing over USB
 
 ```bash
-adb install -r dist/PyCmd-2.5.2.apk
+adb install -r dist/PyCmd-2.5.3.apk
 ```
 
 ## Checking the download
@@ -713,7 +776,7 @@ python3 tools/make_latest.py            # checks the one that is there
 | Field | What it is |
 |---|---|
 | `versionCode` | The build number. The app offers an update only when this is higher than its own. |
-| `versionName` | What the card shows: `2.5.2`. |
+| `versionName` | What the card shows: `2.5.3`. |
 | `package` | Which app this is for. A mismatch is refused before the download starts. |
 | `url` | An `https://` address of the APK. Plain `http` is refused. |
 | `sha256` | The APK's fingerprint. The download is checked against it and thrown away if it differs. |

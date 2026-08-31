@@ -11,11 +11,15 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Checkbox
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
@@ -52,6 +56,7 @@ fun PagesScreen(
     state: PagesState,
     kitOn: Boolean,
     onCreate: (String, String) -> Unit,
+    onAdopt: (WorkspaceFolder, String) -> Unit,
     onStart: (PageProject) -> Unit,
     onStop: (PageProject) -> Unit,
     onOpen: (PageProject) -> Unit,
@@ -65,6 +70,7 @@ fun PagesScreen(
     onConnectCloudflare: (String, String) -> Unit,
     onForgetCloudflare: () -> Unit,
     onDeploy: (PageProject) -> Unit,
+    onClearBuild: (PageProject) -> Unit,
     onSetHost: (PageProject, String) -> Unit,
     modifier: Modifier = Modifier,
     /** Sections plugins have added to this screen; empty when none are on. */
@@ -76,6 +82,10 @@ fun PagesScreen(
     }
     var renaming by remember { mutableStateOf<PageProject?>(null) }
     var removing by remember { mutableStateOf<PageProject?>(null) }
+    var picked by remember { mutableStateOf<WorkspaceFolder?>(null) }
+    var choosing by remember { mutableStateOf(false) }
+    var starting by remember { mutableStateOf(false) }
+    var startName by remember { mutableStateOf("") }
 
     LazyColumn(
         modifier.fillMaxSize(),
@@ -120,10 +130,30 @@ fun PagesScreen(
         item { SectionTitle("New page") }
         item {
             PyCard {
+                Text("Point it at a folder", style = MaterialTheme.typography.titleSmall,
+                     fontWeight = FontWeight.SemiBold)
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    "A page is a folder you already have. Pick one from the " +
+                        "workspace - the app does not make a pages folder of its own, " +
+                        "because that name is in the way of everything else up there.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(Modifier.height(10.dp))
+                GhostButton(
+                    text = picked?.let { "Folder: ${it.relative}" } ?: "Choose a folder",
+                    icon = PyIcons.FolderOpen,
+                    onClick = { choosing = true },
+                    enabled = !state.full,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Spacer(Modifier.height(10.dp))
                 OutlinedTextField(
                     value = newName,
                     onValueChange = { newName = it },
                     label = { Text("Name") },
+                    placeholder = { Text(picked?.name ?: "What to call it") },
                     singleLine = true,
                     enabled = !state.full,
                     shape = RoundedCornerShape(12.dp),
@@ -134,48 +164,105 @@ fun PagesScreen(
                     ),
                     modifier = Modifier.fillMaxWidth(),
                 )
-                Spacer(Modifier.height(10.dp))
-                Text(
-                    "What it starts as",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                Spacer(Modifier.height(12.dp))
+                ActionButton(
+                    text = if (state.full) "That is all ${state.maxProjects}" else "Add page",
+                    icon = PyIcons.Add,
+                    onClick = {
+                        picked?.let { folder ->
+                            onAdopt(folder, newName.trim())
+                            newName = ""
+                            picked = null
+                        }
+                    },
+                    enabled = picked != null && !state.full && state.busy.isEmpty(),
+                    modifier = Modifier.fillMaxWidth(),
                 )
-                Spacer(Modifier.height(6.dp))
-                FlowRow(
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    state.templates.forEach { row ->
-                        StatusChip(
-                            text = row.title,
-                            color = if (template == row.id) {
-                                MaterialTheme.colorScheme.primary
-                            } else {
-                                MaterialTheme.colorScheme.onSurfaceVariant
-                            },
-                            modifier = Modifier.clickable { template = row.id },
+            }
+        }
+
+        item {
+            PyCard {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text(
+                            "Nothing to point at yet?",
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                        Spacer(Modifier.height(3.dp))
+                        Text(
+                            "Start a folder from a template. It lands at the top of " +
+                                "the workspace under its own name, and Files can move " +
+                                "it wherever you want it.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    IconButton(onClick = { starting = !starting }) {
+                        Icon(
+                            if (starting) PyIcons.ExpandLess else PyIcons.ExpandMore,
+                            contentDescription = "Start from a template",
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
                 }
-                state.templates.firstOrNull { it.id == template }?.let { chosen ->
-                    Spacer(Modifier.height(6.dp))
-                    Text(
-                        chosen.about,
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+
+                if (starting) {
+                    Spacer(Modifier.height(10.dp))
+                    OutlinedTextField(
+                        value = startName,
+                        onValueChange = { startName = it },
+                        label = { Text("Folder name") },
+                        singleLine = true,
+                        enabled = !state.full,
+                        shape = RoundedCornerShape(12.dp),
+                        textStyle = MaterialTheme.typography.bodyMedium,
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = MaterialTheme.colorScheme.primary,
+                            unfocusedBorderColor = MaterialTheme.colorScheme.outline,
+                        ),
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    Spacer(Modifier.height(10.dp))
+                    FlowRow(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        state.templates.forEach { row ->
+                            StatusChip(
+                                text = row.title,
+                                color = if (template == row.id) {
+                                    MaterialTheme.colorScheme.primary
+                                } else {
+                                    MaterialTheme.colorScheme.onSurfaceVariant
+                                },
+                                modifier = Modifier.clickable { template = row.id },
+                            )
+                        }
+                    }
+                    state.templates.firstOrNull { it.id == template }?.let { chosen ->
+                        Spacer(Modifier.height(6.dp))
+                        Text(
+                            chosen.about,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    Spacer(Modifier.height(12.dp))
+                    ActionButton(
+                        text = "Make the folder",
+                        icon = PyIcons.CreateNewFolder,
+                        onClick = {
+                            onCreate(startName.trim(), template)
+                            startName = ""
+                            starting = false
+                        },
+                        enabled = startName.isNotBlank() && !state.full &&
+                            state.busy.isEmpty(),
+                        modifier = Modifier.fillMaxWidth(),
                     )
                 }
-                Spacer(Modifier.height(12.dp))
-                ActionButton(
-                    text = if (state.full) "That is all ${state.maxProjects}" else "Create page",
-                    icon = PyIcons.Add,
-                    onClick = {
-                        onCreate(newName.trim(), template)
-                        newName = ""
-                    },
-                    enabled = newName.isNotBlank() && !state.full && state.busy.isEmpty(),
-                    modifier = Modifier.fillMaxWidth(),
-                )
             }
         }
 
@@ -207,6 +294,7 @@ fun PagesScreen(
                 onOpenFolder = { onOpenFolder(project) },
                 onCopy = onCopy,
                 onDeploy = { onDeploy(project) },
+                onClearBuild = { onClearBuild(project) },
                 onSetHost = { host -> onSetHost(project, host) },
             )
         }
@@ -284,6 +372,65 @@ fun PagesScreen(
             },
         )
     }
+
+    if (choosing) {
+        ListDialog(title = "Pick a folder", onDismiss = { choosing = false }) {
+            if (state.folders.isEmpty()) {
+                Text(
+                    "There are no folders in the workspace yet. Make one in Files, " +
+                        "or start one from a template below.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            state.folders.forEach { folder ->
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .clickable(enabled = !folder.taken) {
+                            picked = folder
+                            choosing = false
+                        }
+                        .padding(vertical = 11.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Icon(
+                        PyIcons.Folder,
+                        contentDescription = null,
+                        tint = if (folder.taken) {
+                            MaterialTheme.colorScheme.outline
+                        } else {
+                            MaterialTheme.colorScheme.onSurfaceVariant
+                        },
+                        modifier = Modifier.size(18.dp),
+                    )
+                    Spacer(Modifier.width(10.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text(
+                            folder.relative,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = if (folder.taken) {
+                                MaterialTheme.colorScheme.outline
+                            } else {
+                                MaterialTheme.colorScheme.onSurface
+                            },
+                            maxLines = 1,
+                        )
+                        Text(
+                            if (folder.taken) {
+                                "already a page"
+                            } else {
+                                "${folder.files} file(s) here - ${readableSize(folder.bytes)}"
+                            },
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                        )
+                    }
+                }
+            }
+        }
+    }
 }
 
 @OptIn(ExperimentalLayoutApi::class)
@@ -304,6 +451,7 @@ private fun PageCard(
     onOpenFolder: () -> Unit,
     onCopy: (String) -> Unit,
     onDeploy: () -> Unit,
+    onClearBuild: () -> Unit,
     onSetHost: (String) -> Unit,
 ) {
     PyCard {
@@ -349,6 +497,17 @@ private fun PageCard(
         }
         if (project.deployedUrl.isNotEmpty()) {
             AddressLine("Deployed", project.deployedUrl, onCopy)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    "A copy of what went up is kept outside the workspace.",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.weight(1f),
+                )
+                androidx.compose.material3.TextButton(onClick = onClearBuild, enabled = !busy) {
+                    Text("Clear", style = MaterialTheme.typography.labelSmall)
+                }
+            }
         }
 
         Spacer(Modifier.height(10.dp))

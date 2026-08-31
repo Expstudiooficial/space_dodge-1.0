@@ -1,0 +1,58 @@
+{
+  "id": "pycmd.creator",
+  "name": "Creator",
+  "version": "2.5.3",
+  "author": "PyCmd",
+  "description": "A tab of its own where code is built out of blocks instead of typed. Over three hundred and sixty blocks across Python, JavaScript, HTML, CSS and Markdown: pick one, fill in its holes, stack it, nest it. Press Build to see the source it writes, and Save to put a real file in your workspace - which the editor opens, the Servers tab runs and the Pages tab serves like anything else you wrote by hand.",
+  "entry": "main.py",
+  "panel": "ui.html",
+  "tab": {
+    "title": "Creator",
+    "description": "Build code out of blocks, then save it as a real file",
+    "icon": "puzzle"
+  },
+  "commands": [
+    {
+      "name": "blocks",
+      "help": "blocks [list|langs|build <name>|save <name>] - projects from the Creator tab"
+    }
+  ],
+  "permissions": [
+    "files"
+  ],
+  "settings": [
+    {
+      "name": "default_language",
+      "type": "choice",
+      "label": "New projects start in",
+      "options": [
+        "python",
+        "javascript",
+        "html",
+        "css",
+        "markdown"
+      ],
+      "default": "python"
+    },
+    {
+      "name": "open_after_save",
+      "type": "switch",
+      "label": "Open the file after saving it",
+      "default": true
+    },
+    {
+      "name": "save_folder",
+      "type": "text",
+      "label": "Where saved files land",
+      "help": "A folder inside your workspace. Blank means the top of it.",
+      "default": ""
+    }
+  ],
+  "guides": [
+    {
+      "file": "GUIDE.md",
+      "title": "Building with blocks",
+      "summary": "What a block is, how the stack works, and what the file it writes looks like."
+    }
+  ]
+}

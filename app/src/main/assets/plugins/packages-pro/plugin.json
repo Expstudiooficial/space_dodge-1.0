@@ -1,7 +1,7 @@
 {
   "id": "pycmd.packages-pro",
   "name": "Packages Pro",
-  "version": "2.5.0",
+  "version": "2.5.3",
   "author": "PyCmd",
   "description": "Packages for everything that is not Python. Fetches JavaScript and CSS libraries - htmx, Alpine, Tailwind, Bootstrap, three.js, Chart.js, D3, Vue, marked, highlight.js - and web fonts, straight from jsDelivr into a vendor/ folder in your workspace, so a page can use them with no CDN and no connection. Any npm package by name, too. Then it scaffolds whole projects: a Flask app with templates, a static site, an htmx page with its own backend, a three.js scene - each one ready for the Servers tab to run.",
   "entry": "main.py",
@@ -17,7 +17,7 @@
   "commands": [
     {
       "name": "web",
-      "help": "web install <name>[@version] | list | remove <name> | catalogue"
+      "help": "web install <name>[@version] | list | use <name> <folder> | remove <name> | catalogue"
     },
     {
       "name": "kit",
