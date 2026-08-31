@@ -28,7 +28,6 @@ import mimetypes
 import os
 import posixpath
 import secrets
-import socket
 import sys
 import threading
 import urllib.parse

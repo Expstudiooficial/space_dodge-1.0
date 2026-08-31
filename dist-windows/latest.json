@@ -1,0 +1,23 @@
+{
+  "name": "PyCmd for Windows",
+  "version": "1.0.0",
+  "build": 1,
+  "url": "https://raw.githubusercontent.com/expstudiooficial/space_dodge-1.0/windowsmain/dist-windows/PyCmd-1.0.0.exe",
+  "sha256": "",
+  "bytes": 0,
+  "notes": "PyCmd for Windows 1.0. The whole of PyCmd 2.5.9 as one exe, with real compilers for 46 languages instead of interpreters for four.",
+  "sizeText": "",
+  "releasedAt": "",
+  "minWindows": "10",
+  "arch": "x64",
+  "python": "3.13",
+  "runtime": "Edge WebView2 (already on Windows 10 and 11)",
+  "installer": false,
+  "portable": true,
+  "built": false,
+  "changelog": "https://raw.githubusercontent.com/expstudiooficial/space_dodge-1.0/windowsmain/dist-windows/README.md",
+  "checksums": "https://raw.githubusercontent.com/expstudiooficial/space_dodge-1.0/windowsmain/dist-windows/SHA256SUMS.txt",
+  "source": "https://github.com/expstudiooficial/space_dodge-1.0/tree/windowsmain",
+  "sourceZip": "https://codeload.github.com/expstudiooficial/space_dodge-1.0/zip/refs/heads/windowsmain",
+  "android": "https://raw.githubusercontent.com/expstudiooficial/space_dodge-1.0/claude/python-mobile-cmd-android-dj1ixb/dist/latest.json"
+}

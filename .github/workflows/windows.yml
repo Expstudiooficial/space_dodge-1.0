@@ -1,0 +1,109 @@
+# Builds PyCmd.exe on a real Windows machine.
+#
+# This exists because the exe cannot honestly be built anywhere else. Windows
+# is where PyInstaller produces a Windows binary, and it is the only place the
+# result can be started to see whether it opens. So the repository holds the
+# source and the recipe, and this makes the artefact.
+#
+# Push a tag like `windows-v1.0.0` and it builds, checks, hashes and attaches
+# the exe to a release. Run it by hand from the Actions tab to get a build
+# without publishing one.
+
+name: PyCmd for Windows
+
+on:
+  push:
+    tags: ["windows-v*"]
+    branches: [windowsmain]
+    paths:
+      - "windows/**"
+      - "app/src/main/python/**"
+      - "app/src/main/assets/**"
+      - "tools/test_windows.py"
+      - ".github/workflows/windows.yml"
+  pull_request:
+    paths: ["windows/**", "app/src/main/python/**"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - name: Install what the build needs
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r windows/build/requirements.txt
+
+      - name: Check
+        run: python tools/test_windows.py
+
+      # The point of building on Windows rather than cross-compiling: these
+      # are the toolchains a real user might have, and the detection code
+      # should find the ones this runner ships with.
+      - name: Check toolchain detection against what the runner has
+        run: python tools/test_toolchains_live.py
+
+      - name: Build
+        run: python -m PyInstaller windows/build/pycmd.spec --noconfirm --distpath dist-windows/build
+
+      - name: Prove it starts
+        shell: pwsh
+        run: |
+          $exe = "dist-windows/build/PyCmd.exe"
+          if (-not (Test-Path $exe)) { throw "no exe was produced" }
+          # --version does not open a window, so it is safe on a headless
+          # runner and still proves the bundle unpacks and imports.
+          $out = & $exe --version
+          Write-Host "it says: $out"
+          if ($LASTEXITCODE -ne 0) { throw "the exe would not run" }
+          if ($out -notmatch "PyCmd for Windows") { throw "that is not PyCmd" }
+
+      - name: Report its size and hash
+        shell: pwsh
+        run: |
+          $exe = Get-Item dist-windows/build/PyCmd.exe
+          $hash = (Get-FileHash $exe -Algorithm SHA256).Hash.ToLower()
+          Write-Host ("size:   {0:N1} MB" -f ($exe.Length / 1MB))
+          Write-Host "sha256: $hash"
+          "PYCMD_SHA=$hash" >> $env:GITHUB_ENV
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: PyCmd-windows
+          path: dist-windows/build/PyCmd.exe
+          if-no-files-found: error
+
+      - name: Publish it, if this is a tag
+        if: startsWith(github.ref, 'refs/tags/windows-v')
+        shell: pwsh
+        run: |
+          $version = "${{ github.ref_name }}" -replace "^windows-v", ""
+          $target = "dist-windows/PyCmd-$version.exe"
+          Copy-Item dist-windows/build/PyCmd.exe $target
+          python tools/make_latest_windows.py $target --notes "PyCmd for Windows $version"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add dist-windows
+          git commit -m "PyCmd for Windows $version"
+          git push origin HEAD:windowsmain
+
+      - uses: softprops/action-gh-release@v2
+        if: startsWith(github.ref, 'refs/tags/windows-v')
+        with:
+          files: dist-windows/build/PyCmd.exe
+          body: |
+            PyCmd for Windows.
+
+            One exe, nothing to install. Windows 10 or newer, 64-bit.
+
+            SHA-256: `${{ env.PYCMD_SHA }}`

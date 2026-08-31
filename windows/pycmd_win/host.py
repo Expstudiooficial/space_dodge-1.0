@@ -257,7 +257,10 @@ def _h_console_run(host, payload):
 
     def work():
         try:
-            host.engine["runtime"].run_console(text, channel)
+            # One argument, not two. The channel is the engine's own idea and
+            # it tracks it itself; passing one here was a TypeError that only
+            # showed up as "nothing happens when I press Run".
+            host.engine["runtime"].run_console(text)
         except Exception as error:  # noqa: BLE001 - somebody's code may do anything
             host.onOutput("stderr", f"{type(error).__name__}: {error}\n", channel)
             host.log("error", "console line failed", traceback.format_exc())

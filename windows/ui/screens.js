@@ -45,6 +45,33 @@ function consoleWrite(stream, text) {
 }
 
 PyCmd.on('output', (event) => consoleWrite(event.stream, event.text));
+
+/**
+ * A script called input().
+ *
+ * The interpreter thread is blocked waiting, so this asks and hands the answer
+ * straight back. Cancelling sends an empty line rather than nothing at all,
+ * because nothing at all leaves that thread waiting for ten minutes.
+ */
+PyCmd.on('input-wanted', () => {
+  const box = el('input', { placeholder: 'Your program is waiting for a line…' });
+  const send = () => {
+    PyCmd.call('console.stdin', { text: box.value });
+    consoleWrite('stdin', box.value + '\n');
+    PyCmd.closeSheet();
+  };
+  box.addEventListener('keydown', (event) => { if (event.key === 'Enter') send(); });
+  PyCmd.sheet('Your program is asking for something', el('div', {},
+    el('p', { class: 'muted', text: 'Whatever you type goes to input().' }),
+    box,
+    el('div', { class: 'row', style: 'margin-top:12px' },
+      el('button', { class: 'small primary', text: 'Send', onclick: send }),
+      el('button', {
+        class: 'small', text: 'Send nothing',
+        onclick: () => { PyCmd.call('console.stdin', { text: '' }); PyCmd.closeSheet(); },
+      }))));
+  setTimeout(() => box.focus(), 60);
+});
 PyCmd.on('finished', (event) => {
   if (event.status === 'error') consoleWrite('stderr', '');
 });
@@ -359,7 +386,26 @@ async function Plugins(screen) {
         el('p', { class: 'muted', text: (plugin.description || '').slice(0, 220) }),
         plugin.broken
           ? el('p', { class: 'muted', text: 'This one will not load: ' + (plugin.error || '') })
-          : null,
+          : el('div', { class: 'row', style: 'margin-top:8px' },
+              plugin.panel
+                ? el('button', {
+                    class: 'small primary', text: 'Open',
+                    onclick: () => openPanel(plugin, plugin.panel),
+                  })
+                : null,
+              el('button', {
+                class: 'small', text: 'Settings',
+                onclick: () => openSettings(plugin),
+              }),
+              el('button', {
+                class: 'small danger', text: 'Remove',
+                onclick: async () => {
+                  const done = await PyCmd.call('plugin.remove', { id: plugin.id });
+                  PyCmd.toast(done.ok ? (plugin.name + ' removed') : (done.error || 'no'));
+                  if (done.ok) go('plugins');
+                },
+              }),
+            ),
       ));
     });
     screen.appendChild(grid);
@@ -387,6 +433,40 @@ function builtinCard(plugin) {
       ? el('p', { class: 'muted' }, el('b', { text: 'On Windows: ' }), plugin.windows_note)
       : null,
   );
+}
+
+async function openSettings(plugin) {
+  const reply = await PyCmd.call('plugin.settings', { id: plugin.id });
+  const rows = (reply && reply.settings) || [];
+  if (!rows.length) {
+    PyCmd.sheet(plugin.name || plugin.id,
+      el('p', { class: 'muted', text: 'This plugin has no settings.' }));
+    return;
+  }
+  const body = el('div', {});
+  rows.forEach((row) => {
+    const kind = row.type === 'switch' ? 'checkbox' : row.type === 'number' ? 'number' : 'text';
+    let input;
+    if (row.type === 'choice') {
+      input = el('select', {});
+      (row.options || []).forEach((option) => {
+        input.appendChild(el('option', { value: option, text: option,
+                                         selected: option === row.value }));
+      });
+    } else {
+      input = el('input', { type: kind });
+      if (kind === 'checkbox') input.checked = !!row.value;
+      else input.value = row.value === null || row.value === undefined ? '' : String(row.value);
+    }
+    input.addEventListener('change', () => {
+      const value = kind === 'checkbox' ? (input.checked ? '1' : '') : input.value;
+      PyCmd.call('plugin.setting.set', { id: plugin.id, name: row.name, value });
+    });
+    body.appendChild(el('label', { class: 'field' },
+      el('span', { text: row.label || row.name }), input,
+      row.help ? el('span', { class: 'muted', text: row.help }) : null));
+  });
+  PyCmd.sheet(plugin.name || plugin.id, body);
 }
 
 async function importMobile() {
@@ -452,6 +532,83 @@ async function importMobile() {
     report,
   ));
 }
+
+// ---------------------------------------------------------------------------
+// A plugin's own panel
+// ---------------------------------------------------------------------------
+
+/**
+ * Opens a plugin's page.
+ *
+ * The HTML comes from the same `panel_html` the phone build uses - house
+ * stylesheet and bridge already injected - so what lands here is byte for byte
+ * what a phone would show. It goes into an iframe with `srcdoc`, which keeps
+ * this origin, which is what lets the object the page expects be put on its
+ * window before its own script runs.
+ *
+ * `__pycmd_panel` is the same four verbs Kotlin exposes: call, toast, log,
+ * close. The plugin cannot tell the difference, and that is the whole point.
+ */
+async function openPanel(plugin, panelFile) {
+  const reply = await PyCmd.call('plugin.panel', { id: plugin.id, panel: panelFile || '' });
+  if (!reply.ok || !reply.html) {
+    PyCmd.toast((reply && reply.error) || 'that panel would not build');
+    return;
+  }
+
+  const frame = el('iframe', {
+    style: 'width:100%;height:70vh;border:0;border-radius:10px;background:var(--bg)',
+    src: 'about:blank',
+  });
+
+  /*
+   * The object goes on first, then the document is written into the frame.
+   *
+   * With `srcdoc` the panel's own scripts run before anything outside can
+   * touch the frame, and the bridge's very first line is
+   * `JSON.parse(window.__pycmd_panel.manifest())` - so every panel threw
+   * before it drew. Loading about:blank gives a real same-origin window to
+   * put the object on; writing the HTML afterwards means the scripts find it
+   * already there, which is exactly the order Kotlin's addJavascriptInterface
+   * guarantees on the phone.
+   */
+  frame.addEventListener('load', function install() {
+    frame.removeEventListener('load', install);
+    const view = frame.contentWindow;
+    if (!view || view.__pycmd_panel) return;
+    view.__pycmd_panel = {
+      call(id, name, body) {
+        let payload = null;
+        try { payload = JSON.parse(body); } catch (error) { payload = body; }
+        PyCmd.call('plugin.export', { id: plugin.id, name, payload }).then((answer) => {
+          if (!view.__pycmd_resolve) return;
+          view.__pycmd_resolve(String(id), answer.ok !== false, JSON.stringify(answer));
+        });
+      },
+      toast: (text) => PyCmd.toast(String(text).slice(0, 300)),
+      log: (text) => console.log('[' + plugin.id + ']', text),
+      close: () => PyCmd.closeSheet(),
+      innerScroll() {},
+      manifest: () => JSON.stringify({
+        id: plugin.id, name: plugin.name, version: plugin.version, author: plugin.author,
+      }),
+    };
+    const document_ = view.document;
+    document_.open();
+    document_.write(reply.html);
+    document_.close();
+  });
+
+  PyCmd.sheet(plugin.name || plugin.id, frame);
+}
+
+// A plugin pushing to its own panel, the way api.send does on the phone.
+PyCmd.on('plugin-message', (event) => {
+  document.querySelectorAll('iframe[srcdoc]').forEach((frame) => {
+    const view = frame.contentWindow;
+    if (view && view.__pycmd_message) view.__pycmd_message(event.body);
+  });
+});
 
 // ---------------------------------------------------------------------------
 // The rest

@@ -55,6 +55,8 @@ def _note(chain_names: str, extra: str = "") -> str:
 # ---------------------------------------------------------------------------
 
 RELABELLED = {
+    "pdf": "Opens in the preview and reads properly - the Windows WebView has "
+           "a PDF viewer built in, which Android's does not.",
     "c": _note(
         "GCC, Clang or MSVC",
         "With none of them, PyCmd falls back to the C interpreter it carries - "
@@ -90,9 +92,9 @@ RELABELLED = {
     "lua": _note("Lua"),
     "sql": _note("sqlite3", "The script runs against an in-memory database."),
     "shell": (
-        "Windows has no /bin/sh. A .sh file is kept and highlighted here; to run "
-        "one, use PowerShell or a .bat file, or install Git Bash and run it from "
-        "the console."
+        "Windows has no /bin/sh of its own, but Git for Windows brings one and "
+        "so does WSL. With either installed a .sh file runs; without one, "
+        "PowerShell and .bat files are the native way round."
     ),
     "dockerfile": (
         "Kept, highlighted and servable. Building it needs Docker Desktop, which "
@@ -158,7 +160,9 @@ NEW = [
         template='println("hello")\n', note=_note("Julia"),
     ),
     Language(
-        "r", "R", [".r", ".R"], RUN, "python", "#",
+        # Just ".r": extensions are matched lowercased, so listing ".R" beside
+        # it is the same entry twice and hides whichever came second.
+        "r", "R", [".r"], RUN, "python", "#",
         template='cat("hello\\n")\n', note=_note("R (Rscript)"),
     ),
     Language(

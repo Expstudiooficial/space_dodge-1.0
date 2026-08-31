@@ -30,7 +30,6 @@ import os
 import re
 import shutil
 import subprocess
-import sys
 import time
 
 __all__ = [
@@ -237,6 +236,16 @@ TOOLCHAINS = [
         winget="winget install Microsoft.PowerShell",
         scoop="scoop install pwsh", choco="choco install powershell-core",
         site="https://learn.microsoft.com/powershell/",
+    ),
+    Toolchain(
+        "bash", "Bash", ["shell"], "bash",
+        _steps_run("{exe}", "{src}"),
+        version_args=("--version",),
+        winget="winget install Git.Git",
+        scoop="scoop install git", choco="choco install git",
+        site="https://gitforwindows.org/",
+        note="Windows has no /bin/sh of its own. Git for Windows brings one, "
+             "and so does WSL - either puts bash on the PATH and .sh files run.",
     ),
     Toolchain(
         "cmd", "Command Prompt", ["batch"], "cmd",

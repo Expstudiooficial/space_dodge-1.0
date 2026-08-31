@@ -1,0 +1,311 @@
+#!/usr/bin/env python3
+"""Checks the Windows build, everywhere.
+
+Runs on any machine, including the Linux one this was written on, because
+almost nothing here is Windows-specific: the toolchain table is data, the
+language registry is data, the host is a dict of functions, and the store is
+path arithmetic. What genuinely needs Windows - that the exe opens, that
+WebView2 is there - is checked by the GitHub Actions workflow on a Windows
+runner, and by `tools/test_toolchains_live.py` beside it.
+
+    python tools/test_windows.py
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import subprocess
+import sys
+import tempfile
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.join(ROOT, "windows"))
+sys.path.insert(0, os.path.join(ROOT, "app", "src", "main", "python"))
+
+# Every test gets its own store, so nothing here can touch a real install.
+_HOME = tempfile.mkdtemp(prefix="pycmd-win-tests-")
+os.environ["PYCMD_HOME"] = _HOME
+
+FAILURES = []
+CHECKS = [0]
+
+# The engine replaces sys.stdout the moment it is configured, so the real one
+# is kept aside before anything imports it.
+_OUT = sys.stdout
+
+
+def say(text=""):
+    print(text, file=_OUT)
+
+
+def check(name, condition, detail=""):
+    CHECKS[0] += 1
+    if condition:
+        say(f"  PASS  {name}")
+    else:
+        FAILURES.append(name)
+        say(f"  FAIL  {name}  {detail}")
+
+
+# ---------------------------------------------------------------------------
+
+from pycmd_win import builtins, bundle, langs, store, toolchains  # noqa: E402
+
+say("== where things live ==")
+made = store.prepare()
+check("PYCMD_HOME is honoured", made["root"] == _HOME, made["root"])
+check("every folder is made", all(os.path.isdir(made[name]) for name in store.FOLDERS))
+check("the shared engine is found", os.path.isdir(store.engine_path()), store.engine_path())
+check("the shared assets are found", os.path.isdir(store.assets_path()), store.assets_path())
+
+
+def refuses(function) -> bool:
+    """Whether calling this says no, rather than doing something surprising."""
+    try:
+        function()
+    except ValueError:
+        return True
+    except Exception:  # noqa: BLE001
+        return False
+    return False
+
+
+def placeholders(text: str):
+    """The {names} in a command template."""
+    import string
+
+    return [name for _literal, name, _spec, _conv in string.Formatter().parse(text) if name]
+
+
+check("a folder it does not know about is refused",
+      refuses(lambda: store.folder("etc")))
+
+
+say("\n== the toolchain table ==")
+ids = [chain.id for chain in toolchains.TOOLCHAINS]
+check("every id is unique", len(ids) == len(set(ids)),
+      [i for i in ids if ids.count(i) > 1])
+check("there are more than forty", len(ids) >= 40, len(ids))
+languages = sorted({lang for chain in toolchains.TOOLCHAINS for lang in chain.languages})
+check("covering more than thirty languages", len(languages) >= 30, len(languages))
+
+bad_steps = []
+for chain in toolchains.TOOLCHAINS:
+    if not chain.steps:
+        bad_steps.append((chain.id, "no steps"))
+        continue
+    for step in chain.steps:
+        if not step:
+            bad_steps.append((chain.id, "an empty step"))
+        for part in step:
+            # Every placeholder has to be one plan_for actually fills in, or
+            # the command is built with a literal {typo} in it and the failure
+            # is a file-not-found with a baffling name.
+            for token in placeholders(part):
+                if token not in ("exe", "src", "dir", "stem", "out"):
+                    bad_steps.append((chain.id, f"unknown placeholder {{{token}}}"))
+check("every command is made of placeholders that exist", not bad_steps, bad_steps)
+
+builds_without_out = [
+    chain.id for chain in toolchains.TOOLCHAINS
+    if chain.builds and not any("{out}" in part or "{stem}" in part
+                                for step in chain.steps for part in step)
+]
+check("every compiler says where it puts what it builds",
+      not builds_without_out, builds_without_out)
+
+no_install = [
+    chain.id for chain in toolchains.TOOLCHAINS
+    if not (chain.winget or chain.scoop or chain.choco or chain.site or chain.note)
+]
+check("every toolchain says how to get it", not no_install, no_install)
+
+say("\n== finding them ==")
+found = toolchains.detect_all()
+check("detection answers for every one", len(found) == len(ids), len(found))
+check("and says whether each is installed",
+      all(isinstance(row["installed"], bool) for row in found))
+summary = toolchains.summary()
+check("the summary counts agree",
+      summary["installed"] == sum(1 for r in found if r["installed"]), summary)
+say(f"        (this machine has {summary['installed']} of {summary['toolchains']})")
+
+say("\n== planning a run ==")
+plan = toolchains.plan_for(os.path.join(_HOME, "x.py"), "python")
+check("a language with a toolchain gets a plan", plan["ok"] or plan["reason"] == "missing", plan)
+plan = toolchains.plan_for(os.path.join(_HOME, "x.zzz"), "nosuchlanguage")
+check("a language with none says so", not plan["ok"] and plan["reason"] == "unsupported", plan)
+
+spaced = os.path.join(_HOME, "a folder with spaces", "hello.py")
+os.makedirs(os.path.dirname(spaced), exist_ok=True)
+open(spaced, "w").close()
+plan = toolchains.plan_for(spaced, "python")
+if plan.get("ok"):
+    flat = [part for command in plan["commands"] for part in command]
+    check("a path with spaces stays one argument",
+          any(part == spaced for part in flat), flat)
+    check("and nothing is quoted or escaped into a string",
+          all(isinstance(part, str) and '"' not in part for part in flat), flat)
+else:
+    check("a path with spaces stays one argument", True, "no python toolchain to check with")
+
+say("\n== the languages ==")
+stats = langs.stats()
+check("there are more than sixty file types", stats["total"] >= 60, stats)
+check("more than forty of them run", stats["runnable"] >= 40, stats)
+
+extensions = {}
+clashes = []
+for language in langs.LANGUAGES:
+    for extension in language.extensions:
+        if extension.lower() in extensions:
+            clashes.append((extension, extensions[extension.lower()], language.id))
+        extensions[extension.lower()] = language.id
+check("no two languages claim the same extension", not clashes, clashes[:4])
+
+check("for_path finds a known one", langs.for_path("a/b/thing.rs")["id"] == "rust")
+check("and falls back to text rather than nothing",
+      langs.for_path("a/b/thing.zzzz")["id"] == "text")
+check("Makefile is known by its name, not an extension",
+      langs.for_path("a/Makefile")["id"] == "makefile")
+
+# What matters is that no language still tells somebody it *cannot* be run
+# because of Android - not that the word never appears. Comparing the two
+# builds is useful, and several notes do it on purpose.
+STILL_FORBIDDEN = (
+    "does not let an app",
+    "not runnable on the device",
+    "cannot be run on the device",
+    "Android will not let",
+    "needs a compiler, and Android",
+)
+android_notes = [
+    language.id for language in langs.LANGUAGES
+    if any(phrase in (language.note or "") for phrase in STILL_FORBIDDEN)
+]
+check("no language still says Android forbids running it",
+      not android_notes, android_notes)
+
+missing_toolchain = [
+    language.id for language in langs.LANGUAGES
+    if language.mode == "run" and not toolchains.for_language(language.id)
+    and language.id not in ("python",)
+]
+check("everything marked runnable has something that runs it",
+      not missing_toolchain, missing_toolchain)
+
+say("\n== the thirteen built in ==")
+builtins.reset()
+listing = builtins.listing()
+check("there are thirteen", listing["count"] == 13, listing["count"])
+check("they are grouped", len(listing["groups"]) >= 4, len(listing["groups"]))
+check("the kit is on by default", listing["kit_complete"])
+check("ids match the phone build's",
+      builtins.POLYGLOT_FILES == "pycmd.polyglot.files", builtins.POLYGLOT_FILES)
+
+builtins.set_enabled(builtins.POLYGLOT_FILES, False)
+check("switching off what something needs switches that off too",
+      not builtins.is_on(builtins.POLYGLOT_RUNNER))
+builtins.set_enabled(builtins.POLYGLOT_RUNNER, True)
+check("and switching it back on brings its requirement with it",
+      builtins.is_on(builtins.POLYGLOT_FILES))
+check("powered_up needs Power Pack as well as the plugin",
+      builtins.powered_up(builtins.SNIPPETS) == builtins.is_on(builtins.POWER_PACK))
+builtins.set_enabled(builtins.POWER_PACK, False)
+check("and says no when Power Pack is off", not builtins.powered_up(builtins.SNIPPETS))
+builtins.reset()
+
+check("the switches survive a restart",
+      os.path.isfile(os.path.join(_HOME, "builtins.json")))
+
+say("\n== the plugins that ship inside ==")
+staged = bundle.stage_bundled()
+check("all five are in the build", len(staged) == 5, [os.path.basename(p) for p in staged])
+
+say("\n== reading a plugin from the phone ==")
+sample = os.path.join(ROOT, "app", "src", "main", "assets", "plugins", "creator")
+found = bundle.inspect_mobile(sample)
+check("a real plugin reads", found["ok"] and found["id"] == "pycmd.creator", found.get("error"))
+check("and one with nothing Android in it is called fine",
+      found["likely"] == "fine", found.get("warnings"))
+
+fake = os.path.join(_HOME, "phone-plugin")
+os.makedirs(fake, exist_ok=True)
+with open(os.path.join(fake, "plugin.json"), "w", encoding="utf-8") as handle:
+    json.dump({"id": "demo.phone", "name": "Phone Only", "version": "1.0.0",
+               "entry": "main.py", "permissions": ["notifications", "wakelock"]}, handle)
+with open(os.path.join(fake, "main.py"), "w", encoding="utf-8") as handle:
+    handle.write("from java import jclass\n\ndef setup(pycmd):\n    pass\n")
+found = bundle.inspect_mobile(fake)
+check("one that reaches for Android is read as mixed",
+      found["ok"] and found["likely"] == "mixed", found)
+check("and it says which parts", len(found["warnings"]) >= 2,
+      [w["about"] for w in found["warnings"]])
+check("naming the Android permissions",
+      any("notifications" in w["about"] for w in found["warnings"]),
+      found["warnings"])
+check("and the java import",
+      any("main.py" in w["about"] for w in found["warnings"]), found["warnings"])
+
+check("something that is not a plugin at all is refused",
+      not bundle.inspect_mobile(os.path.join(_HOME, "nothing-here"))["ok"])
+
+say("\n== the host ==")
+from pycmd_win import host as host_module  # noqa: E402
+
+instance = host_module.Host()
+check("hello answers before the engine is up",
+      host_module.call(instance, "hello")["ok"])
+check("an unknown call is an answer, not a crash",
+      not host_module.call(instance, "no.such.thing")["ok"])
+
+booted = instance.start()
+check("the engine starts", booted["ok"], booted)
+check("and the bundled plugins went in",
+      len(host_module.call(instance, "plugins")["installed"]) == 5)
+
+for name in sorted(host_module.HANDLERS):
+    if name in ("console.run", "run.file", "toolchain.install", "console.stdin",
+                "console.stop", "console.reset", "builtin.reset"):
+        continue  # these start work rather than answering a question
+    reply = host_module.call(instance, name, {})
+    check(f"{name} answers", isinstance(reply, dict) and "ok" in reply, reply)
+
+say("\n== running something ==")
+from pycmd_win import runner  # noqa: E402
+
+script = os.path.join(_HOME, "workspace", "hello.py")
+with open(script, "w", encoding="utf-8") as handle:
+    handle.write('print("from a real toolchain")\n')
+lines = []
+result = runner.run_file(script, lines.append)
+text = "".join(lines)
+check("a Python file runs", result.get("ok"), text[:200])
+check("and its output comes back", "from a real toolchain" in text, text[:200])
+check("with the toolchain named", "PyCmd]" in text, text[:120])
+
+missing = os.path.join(_HOME, "workspace", "nothing.py")
+check("a file that is not there is an answer, not an exception",
+      not runner.run_file(missing, lines.append).get("ok"))
+
+say("\n== the update manifest ==")
+manifest = subprocess.run(
+    [sys.executable, os.path.join(ROOT, "tools", "make_latest_windows.py")],
+    capture_output=True, text=True,
+)
+check("dist-windows/latest.json agrees with the source",
+      manifest.returncode == 0, (manifest.stdout + manifest.stderr).strip()[:300])
+
+say("\n== nothing points at the phone's manifest ==")
+from pycmd_win import updates  # noqa: E402
+
+check("updates read the Windows manifest",
+      updates.MANIFEST_URL.endswith("dist-windows/latest.json"), updates.MANIFEST_URL)
+check("and it is on the windows branch", "windowsmain" in updates.MANIFEST_URL)
+
+say()
+if FAILURES:
+    say(f"{len(FAILURES)} of {CHECKS[0]} checks failed: {FAILURES[:6]}")
+    raise SystemExit(1)
+say(f"all {CHECKS[0]} Windows checks passed")

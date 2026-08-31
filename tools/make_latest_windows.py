@@ -1,0 +1,225 @@
+#!/usr/bin/env python3
+"""Writes and checks `dist-windows/latest.json`.
+
+The Windows twin of `tools/make_latest.py`, and separate from it on purpose:
+the exe and the APK are different artefacts on different schedules, and one
+manifest describing both would eventually offer somebody the wrong one.
+
+    python tools/make_latest_windows.py dist-windows/PyCmd-1.0.0.exe --notes "..."
+    python tools/make_latest_windows.py          # just check what is there
+
+Called with no arguments it verifies rather than writes: that the manifest
+points at a file that exists, that its size and checksum match that file, and
+that its build number agrees with the source. That check runs in the suite, so
+a manifest that has drifted away from its exe is a red line rather than a
+download that fails for somebody else.
+"""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import os
+import re
+import sys
+from datetime import datetime, timezone
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+DIST = os.path.join(ROOT, "dist-windows")
+MANIFEST = os.path.join(DIST, "latest.json")
+SUMS = os.path.join(DIST, "SHA256SUMS.txt")
+
+REPO = "expstudiooficial/space_dodge-1.0"
+BRANCH = "windowsmain"
+RAW = f"https://raw.githubusercontent.com/{REPO}/{BRANCH}"
+
+
+def source_version() -> tuple:
+    """The version and build the code itself claims."""
+    path = os.path.join(ROOT, "windows", "pycmd_win", "host.py")
+    with open(path, "r", encoding="utf-8") as handle:
+        text = handle.read()
+    version = re.search(r'^VERSION = "([^"]+)"', text, re.M)
+    build = re.search(r"^BUILD = (\d+)", text, re.M)
+    if not version or not build:
+        raise SystemExit("windows/pycmd_win/host.py has no VERSION and BUILD to read")
+    return version.group(1), int(build.group(1))
+
+
+def digest(path: str) -> str:
+    sha = hashlib.sha256()
+    with open(path, "rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            sha.update(chunk)
+    return sha.hexdigest()
+
+
+def readable(count: int) -> str:
+    if count >= 1024 * 1024:
+        return f"{count / 1048576:.0f} MB"
+    return f"{count // 1024} KB"
+
+
+def build_manifest(exe: str, notes: str) -> dict:
+    version, build = source_version()
+    size = os.path.getsize(exe)
+    name = os.path.basename(exe)
+    return {
+        "name": "PyCmd for Windows",
+        "version": version,
+        "build": build,
+        "url": f"{RAW}/dist-windows/{name}",
+        "sha256": digest(exe),
+        "bytes": size,
+        "notes": notes,
+        "sizeText": readable(size),
+        "releasedAt": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "minWindows": "10",
+        "arch": "x64",
+        "python": "3.13",
+        "runtime": "Edge WebView2 (already on Windows 10 and 11)",
+        "installer": False,
+        "portable": True,
+        "changelog": f"{RAW}/dist-windows/README.md",
+        "checksums": f"{RAW}/dist-windows/SHA256SUMS.txt",
+        "source": f"https://github.com/{REPO}/tree/{BRANCH}",
+        "sourceZip": f"https://codeload.github.com/{REPO}/zip/refs/heads/{BRANCH}",
+        "android": f"https://raw.githubusercontent.com/{REPO}/"
+                   f"claude/python-mobile-cmd-android-dj1ixb/dist/latest.json",
+    }
+
+
+def seed(notes: str) -> int:
+    """Writes a manifest for a build that does not exist yet.
+
+    The exe is built on Windows, by CI or by somebody running build.ps1, and
+    this repository is checked out on machines that have never done either. So
+    the manifest can exist before the file does: it carries the version, the
+    address the build will land at, and an empty checksum.
+
+    An empty checksum is not a loophole. `updates.download` refuses a manifest
+    without one outright, so a seeded manifest can be read and cannot be
+    installed from - which is exactly the state of a version nobody has built.
+    """
+    version, build = source_version()
+    name = f"PyCmd-{version}.exe"
+    manifest = {
+        "name": "PyCmd for Windows",
+        "version": version,
+        "build": build,
+        "url": f"{RAW}/dist-windows/{name}",
+        "sha256": "",
+        "bytes": 0,
+        "notes": notes,
+        "sizeText": "",
+        "releasedAt": "",
+        "minWindows": "10",
+        "arch": "x64",
+        "python": "3.13",
+        "runtime": "Edge WebView2 (already on Windows 10 and 11)",
+        "installer": False,
+        "portable": True,
+        "built": False,
+        "changelog": f"{RAW}/dist-windows/README.md",
+        "checksums": f"{RAW}/dist-windows/SHA256SUMS.txt",
+        "source": f"https://github.com/{REPO}/tree/{BRANCH}",
+        "sourceZip": f"https://codeload.github.com/{REPO}/zip/refs/heads/{BRANCH}",
+        "android": f"https://raw.githubusercontent.com/{REPO}/"
+                   f"claude/python-mobile-cmd-android-dj1ixb/dist/latest.json",
+    }
+    os.makedirs(DIST, exist_ok=True)
+    with open(MANIFEST, "w", encoding="utf-8") as handle:
+        json.dump(manifest, handle, indent=2)
+        handle.write("\n")
+    print(f"seeded dist-windows/latest.json for {version} (build {build}), not yet built")
+    return 0
+
+
+def write(exe: str, notes: str) -> int:
+    if not os.path.isfile(exe):
+        print(f"there is no {exe} to describe", file=sys.stderr)
+        return 1
+    os.makedirs(DIST, exist_ok=True)
+    manifest = build_manifest(exe, notes)
+    with open(MANIFEST, "w", encoding="utf-8") as handle:
+        json.dump(manifest, handle, indent=2)
+        handle.write("\n")
+    with open(SUMS, "w", encoding="utf-8") as handle:
+        handle.write(f"{manifest['sha256']}  {os.path.basename(exe)}\n")
+    print(json.dumps(manifest, indent=2))
+    return 0
+
+
+def check() -> int:
+    """Is the manifest true? Used by the suite."""
+    if not os.path.isfile(MANIFEST):
+        print("dist-windows/latest.json is not there yet", file=sys.stderr)
+        return 1
+    with open(MANIFEST, "r", encoding="utf-8") as handle:
+        manifest = json.load(handle)
+
+    problems = []
+    version, build = source_version()
+    if manifest.get("version") != version:
+        problems.append(f"version is {manifest.get('version')}, the source says {version}")
+    if int(manifest.get("build", 0)) != build:
+        problems.append(f"build is {manifest.get('build')}, the source says {build}")
+
+    name = os.path.basename(manifest.get("url", ""))
+    exe = os.path.join(DIST, name)
+    if not name:
+        problems.append("there is no download address in it")
+    elif not manifest.get("sha256"):
+        # Seeded but not built. Say so plainly rather than passing silently:
+        # somebody reading the output should know there is no exe behind this.
+        if problems:
+            return _report(problems)
+        print(f"dist-windows/latest.json is seeded for {version} (build {build}) "
+              "and has no build behind it yet.")
+        print("  Build one with windows\\build\\build.ps1, or push a windows-v tag.")
+        return 0
+    elif not os.path.isfile(exe):
+        # Not a failure on its own. The exe is built on Windows and this check
+        # runs everywhere, so a checkout without one is the normal case for
+        # anybody who has not built it yet - it just cannot be verified.
+        print(f"dist-windows/latest.json describes {name}, which is not in this checkout.")
+        print(f"  version {version}, build {build} - "
+              "build it on Windows to check the checksum.")
+        return 0 if not problems else _report(problems)
+    else:
+        size = os.path.getsize(exe)
+        if size != int(manifest.get("bytes", 0)):
+            problems.append(f"bytes is {manifest.get('bytes')}, the file is {size}")
+        actual = digest(exe)
+        if actual != manifest.get("sha256"):
+            problems.append(f"sha256 does not match the file ({actual})")
+
+    if problems:
+        return _report(problems)
+    print(f"dist-windows/latest.json is good: {version} (build {build}), "
+          f"{manifest.get('bytes')} bytes")
+    return 0
+
+
+def _report(problems) -> int:
+    print("dist-windows/latest.json is wrong:", file=sys.stderr)
+    for problem in problems:
+        print(f"  - {problem}", file=sys.stderr)
+    return 1
+
+
+def main(argv=None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("exe", nargs="?", help="the built PyCmd exe to describe")
+    parser.add_argument("--notes", default="", help="one line shown in the app")
+    parser.add_argument("--seed", action="store_true",
+                        help="write a manifest for a build that does not exist yet")
+    args = parser.parse_args(argv)
+    if args.seed:
+        return seed(args.notes)
+    return write(args.exe, args.notes) if args.exe else check()
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
