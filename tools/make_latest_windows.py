@@ -34,6 +34,36 @@ REPO = "expstudiooficial/space_dodge-1.0"
 BRANCH = "windowsmain"
 RAW = f"https://raw.githubusercontent.com/{REPO}/{BRANCH}"
 
+# Where the exe actually lives.
+#
+# Not in the repository. A 15 MB binary committed once per version is 15 MB
+# added to every clone of this project for ever, and raw.githubusercontent is
+# a source viewer rather than a place to serve downloads from. GitHub
+# Releases is the right home: built by CI, attached to the tag, on a CDN.
+#
+# Two addresses, because they answer two different questions:
+#
+#   `url` is pinned to this exact version, because `sha256` beside it
+#   describes that build and no other. An updater downloads this one and
+#   checks the digest; a moving address would fail that check the day after
+#   the next release, which is precisely when it matters.
+#
+#   `latestUrl` always redirects to whatever the newest release is. That is
+#   the one to put on a website or hand somebody, and it is deliberately not
+#   what the updater uses.
+RELEASES = f"https://github.com/{REPO}/releases"
+
+
+def release_urls(version: str, name: str) -> dict:
+    tag = f"windows-v{version}"
+    return {
+        "url": f"{RELEASES}/download/{tag}/{name}",
+        "latestUrl": f"{RELEASES}/latest/download/PyCmd.exe",
+        "release": f"{RELEASES}/tag/{tag}",
+        "releases": RELEASES,
+        "tag": tag,
+    }
+
 
 def source_version() -> tuple:
     """The version and build the code itself claims."""
@@ -64,12 +94,14 @@ def readable(count: int) -> str:
 def build_manifest(exe: str, notes: str) -> dict:
     version, build = source_version()
     size = os.path.getsize(exe)
-    name = os.path.basename(exe)
+    # The asset is attached to the release under its built name, PyCmd.exe,
+    # whatever the file is called on the machine that made it.
+    name = "PyCmd.exe"
     return {
         "name": "PyCmd for Windows",
         "version": version,
         "build": build,
-        "url": f"{RAW}/dist-windows/{name}",
+        **release_urls(version, name),
         "sha256": digest(exe),
         "bytes": size,
         "notes": notes,
@@ -103,12 +135,11 @@ def seed(notes: str) -> int:
     installed from - which is exactly the state of a version nobody has built.
     """
     version, build = source_version()
-    name = f"PyCmd-{version}.exe"
     manifest = {
         "name": "PyCmd for Windows",
         "version": version,
         "build": build,
-        "url": f"{RAW}/dist-windows/{name}",
+        **release_urls(version, "PyCmd.exe"),
         "sha256": "",
         "bytes": 0,
         "notes": notes,
@@ -166,8 +197,25 @@ def check() -> int:
     if int(manifest.get("build", 0)) != build:
         problems.append(f"build is {manifest.get('build')}, the source says {build}")
 
+    # The address must be the release asset for *this* version. A manifest
+    # whose url drifts to a moving target is worse than a broken one: it
+    # would download a different build than the sha256 beside it describes,
+    # and the updater would refuse it with a checksum error that points
+    # nowhere near the actual mistake.
+    wanted = release_urls(version, "PyCmd.exe")
+    if manifest.get("url") != wanted["url"]:
+        problems.append(f"url is {manifest.get('url')}, "
+                        f"it should be {wanted['url']}")
+    if manifest.get("latestUrl") != wanted["latestUrl"]:
+        problems.append("latestUrl is missing or wrong")
+
     name = os.path.basename(manifest.get("url", ""))
-    exe = os.path.join(DIST, name)
+    # Where a freshly built one sits: CI builds into dist-windows/build, and
+    # build.ps1 does the same, so the checksum can be verified on the machine
+    # that just made it without the exe ever being committed.
+    exe = next((path for path in (os.path.join(DIST, "build", name),
+                                  os.path.join(DIST, name))
+                if os.path.isfile(path)), os.path.join(DIST, name))
     if not name:
         problems.append("there is no download address in it")
     elif not manifest.get("sha256"):

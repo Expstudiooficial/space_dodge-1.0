@@ -37,6 +37,12 @@ __pycache__/
 
 # What PyInstaller writes. The recipe beside it, windows/build/, is kept.
 /dist-windows/build/
+
+# The exe itself is never committed. It lives on the release for the tag that
+# built it, which is what latest.json points at. A 15 MB binary added once per
+# version is 15 MB added to every clone of this project for ever, and
+# raw.githubusercontent is a source viewer rather than a download CDN.
+/dist-windows/*.exe
 .build-venv/
 
 # Personal permission rules, not part of the project

@@ -127,12 +127,16 @@ jobs:
         shell: pwsh
         run: |
           $version = "${{ github.ref_name }}" -replace "^windows-v", ""
-          $target = "dist-windows/PyCmd-$version.exe"
-          Copy-Item dist-windows/build/PyCmd.exe $target
-          python tools/make_latest_windows.py $target --notes "PyCmd for Windows $version"
+          # Describes the exe that is about to be attached to this release,
+          # and points the manifest at it there. The binary itself is not
+          # committed - see .gitignore - so this commit is one small JSON
+          # file and a checksum, whatever the size of the build.
+          python tools/make_latest_windows.py dist-windows/build/PyCmd.exe `
+            --notes "PyCmd for Windows $version"
+          python tools/make_latest_windows.py   # and prove what it wrote is true
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add dist-windows
+          git add dist-windows/latest.json dist-windows/SHA256SUMS.txt
           git commit -m "PyCmd for Windows $version"
           git push origin HEAD:windowsmain
 

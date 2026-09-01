@@ -434,6 +434,52 @@ missing = os.path.join(_HOME, "workspace", "nothing.py")
 check("a file that is not there is an answer, not an exception",
       not runner.run_file(missing, lines.append).get("ok"))
 
+say("\n== a client that hangs up mid-response ==")
+
+# WebView2 aborts requests constantly - a panel iframe pointed at about:blank
+# and rewritten, a navigation while an image is still coming, the window
+# closing with a poll in flight. Each one broke a write already in progress
+# and socketserver printed a full traceback for it, at a user who can do
+# nothing about it and has done nothing wrong.
+import socket as _socket  # noqa: E402
+import io as _io  # noqa: E402
+
+from pycmd_win import app as _app  # noqa: E402
+
+check("a client leaving is not a wider failure than it is",
+      _app._GONE is ConnectionError, _app._GONE)
+
+_noise = _io.StringIO()
+_real_stderr = sys.stderr
+sys.stderr = _noise
+try:
+    _url, _server = _app.serve({"_ui": os.path.join(ROOT, "windows", "ui")})
+    _port = _server.server_address[1]
+    _tok = _url.split("t=")[1]
+    for _ in range(20):
+        _sock = _socket.create_connection(("127.0.0.1", _port))
+        _sock.sendall(f"GET /app.css?t={_tok} HTTP/1.1\r\nHost: x\r\n\r\n".encode())
+        _sock.recv(1)
+        # SO_LINGER 0 makes close() send RST rather than FIN, which is what
+        # an abandoned request looks like from the server's side.
+        _sock.setsockopt(_socket.SOL_SOCKET, _socket.SO_LINGER,
+                         b"\x01\x00\x00\x00\x00\x00\x00\x00")
+        _sock.close()
+    _time.sleep(0.8)
+finally:
+    sys.stderr = _real_stderr
+
+check("twenty aborted requests print nothing", not _noise.getvalue().strip(),
+      _noise.getvalue()[:200])
+
+_sock = _socket.create_connection(("127.0.0.1", _port))
+_sock.sendall(f"GET /app.css?t={_tok} HTTP/1.1\r\nHost: x\r\n\r\n".encode())
+_after = _sock.recv(20)
+_sock.close()
+check("and the server still serves afterwards", _after.startswith(b"HTTP/1.1 200"),
+      _after)
+_server.shutdown()
+
 say("\n== every handler the UI calls exists ==")
 import re as _re  # noqa: E402
 
@@ -453,6 +499,15 @@ manifest = subprocess.run(
 )
 check("dist-windows/latest.json agrees with the source",
       manifest.returncode == 0, (manifest.stdout + manifest.stderr).strip()[:300])
+
+say("\n== the exe is not in the repository ==")
+_tracked = subprocess.run(["git", "ls-files", "dist-windows"], cwd=ROOT,
+                          capture_output=True, text=True).stdout.split()
+check("no exe is committed", not [n for n in _tracked if n.endswith(".exe")],
+      [n for n in _tracked if n.endswith(".exe")])
+check("only the manifest, the sums and the notes are",
+      sorted(os.path.basename(n) for n in _tracked)
+      == ["README.md", "SHA256SUMS.txt", "latest.json"], _tracked)
 
 say("\n== nothing points at the phone's manifest ==")
 from pycmd_win import updates  # noqa: E402

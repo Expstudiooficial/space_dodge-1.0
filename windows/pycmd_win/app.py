@@ -42,6 +42,15 @@ WINDOW = (1180, 760)
 MINIMUM = (860, 560)
 
 
+# What a client leaving looks like. Windows raises ConnectionAbortedError
+# (WinError 10053) when the local stack drops a connection whose peer has
+# gone; Unix gives BrokenPipeError; either can give ConnectionResetError.
+# ConnectionError is the base of all three, and deliberately nothing wider:
+# a bare OSError here would also swallow a real bug in a handler, which is
+# exactly the kind of thing this server must keep shouting about.
+_GONE = ConnectionError
+
+
 class _Handler(BaseHTTPRequestHandler):
     """Serves the app's own files, and nothing else.
 
@@ -61,10 +70,50 @@ class _Handler(BaseHTTPRequestHandler):
     def log_message(self, *args):  # noqa: D102 - quiet by default
         pass
 
+    def handle_one_request(self):  # noqa: D102
+        """One request, and a client that leaves early is not an error.
+
+        WebView2 aborts requests as a matter of course: a panel iframe is
+        pointed at about:blank and rewritten, a page navigates while an image
+        is still coming, the window closes with a poll in flight. Each of
+        those breaks the socket underneath a `wfile.write` that has already
+        begun, and the stock handler lets that reach `handle_error`, which
+        prints a traceback per occurrence:
+
+            ConnectionAbortedError: [WinError 10053] An established
+            connection was aborted by the software in your host machine
+
+        Nothing is wrong when that happens and there is nothing to fix at the
+        other end, so it is swallowed here rather than printed. Note it must
+        be caught around `handle_one_request` and not only around the writes:
+        the send buffer means the failure can surface later, inside the
+        header write or the read of the next request on a kept-alive
+        connection.
+        """
+        try:
+            super().handle_one_request()
+        except _GONE:
+            self.close_connection = True
+
+    def finish(self):  # noqa: D102
+        """Flushes what is left, forgiving a socket that has already gone.
+
+        `handle_one_request` is not enough on its own: this runs after it, in
+        BaseRequestHandler's own finally, and flushing a buffered response to
+        a closed socket raises here instead.
+        """
+        try:
+            super().finish()
+        except _GONE:
+            pass
+
     def _deny(self, code=404):
-        self.send_response(code)
-        self.send_header("Content-Length", "0")
-        self.end_headers()
+        try:
+            self.send_response(code)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+        except _GONE:
+            self.close_connection = True
 
     def _authorised(self, query) -> bool:
         """Whether this request may have anything at all.
@@ -196,13 +245,36 @@ class _Handler(BaseHTTPRequestHandler):
         self.end_headers()
 
 
+class _Server(ThreadingHTTPServer):
+    """The loopback server, with socketserver's traceback printing removed.
+
+    A backstop rather than the fix: the handler already forgives a client
+    that leaves. But socketserver's default `handle_error` writes a full
+    traceback to stderr for *anything* a handler raises, and in a windowed
+    build stderr is either swallowed or, worse, whatever console the user
+    happened to start the exe from. PyCmd has a log screen; that is where
+    this belongs.
+    """
+
+    def handle_error(self, request, client_address):
+        kind, error = sys.exc_info()[:2]
+        if issubclass(kind, _GONE):
+            return
+        host = self.RequestHandlerClass.roots.get("_host")
+        if host is not None:
+            import traceback
+
+            host.log("error", f"the UI server raised {kind.__name__}",
+                     traceback.format_exc())
+
+
 def serve(roots: dict) -> tuple:
     """Starts the loopback server. Returns (url, server)."""
     token = secrets.token_urlsafe(16)
     handler = type("_Bound", (_Handler,), {"roots": roots, "token": token})
     # Port 0 asks the OS for a free one, which avoids both a clash and the
     # guessing game of picking a "probably free" number.
-    server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
+    server = _Server(("127.0.0.1", 0), handler)
     server.daemon_threads = True
     port = server.server_address[1]
     threading.Thread(target=server.serve_forever, name="pycmd-ui", daemon=True).start()
