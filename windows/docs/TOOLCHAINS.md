@@ -133,9 +133,15 @@ MinGW-w64 is the easier route on Windows and is what most people have.
 compile, then `java` starts another to run. Thirty seconds for a first build
 is normal.
 
-**C# and Visual Basic** want a project around a loose file. PyCmd writes a
-minimal `.csproj` beside your file the first time you press Run, rather than
-showing you an MSBuild error.
+**C#, Visual Basic and F#** want a project around a loose file. PyCmd writes a
+minimal `.csproj`, `.vbproj` or `.fsproj` beside your file the first time you
+press Run, rather than showing you an MSBuild error. The F# one names your file
+explicitly, because F# compiles in source order and does not glob.
+
+**`.fsx` is a script, `.fs` is not.** The .NET SDK builds projects, so it has
+nothing to say about a script; a `.fsx` goes to F# Interactive and runs with no
+project at all, and PyCmd leaves none behind. Press Run on either and the right
+one happens.
 
 **NASM** assembles to a `.obj` and stops. Linking that into something runnable
 is a choice of linker, and picking one for you would be guessing.

@@ -50,7 +50,7 @@ def check(name, condition, detail=""):
 
 # ---------------------------------------------------------------------------
 
-from pycmd_win import builtins, bundle, langs, store, toolchains  # noqa: E402
+from pycmd_win import builtins, bundle, langs, runner, store, toolchains  # noqa: E402
 
 say("== where things live ==")
 made = store.prepare()
@@ -178,6 +178,64 @@ if plan.get("ok"):
           all(isinstance(part, str) and '"' not in part for part in flat), flat)
 else:
     check("a path with spaces stays one argument", True, "no python toolchain to check with")
+
+# An .fsx is a script and an .fs is a compile unit, and the .NET SDK only
+# builds the second. CI caught this the only way it could be caught - by
+# running one - and answered "Couldn't find a project to run", which is the
+# SDK being right about a file we should not have handed it.
+_dotnet = toolchains.by_id("dotnet")
+_fsi = toolchains.by_id("fsi")
+check("the SDK refuses F# scripts", ".fsx" in _dotnet.refuses, _dotnet.refuses)
+check("and F# Interactive is for them", ".fsx" in _fsi.suits, _fsi.suits)
+for _chain in toolchains.TOOLCHAINS:
+    _bad = [e for e in _chain.refuses + _chain.suits if not e.startswith(".")]
+    check(f"{_chain.id} names extensions, not languages", not _bad, _bad)
+
+_fsx = os.path.join(_HOME, "note.fsx")
+_fs = os.path.join(_HOME, "Program.fs")
+open(_fsx, "w").close()
+open(_fs, "w").close()
+_plan_fsx = toolchains.plan_for(_fsx, "fsharp")
+_plan_fs = toolchains.plan_for(_fs, "fsharp")
+check("a .fsx never plans to the SDK, however hard it is asked",
+      toolchains.plan_for(_fsx, "fsharp", prefer="dotnet").get("toolchain") != "dotnet"
+      if _plan_fsx.get("ok") else True, _plan_fsx)
+check("a .fs may", _plan_fs.get("toolchain") in ("dotnet", "fsi")
+      if _plan_fs.get("ok") else True, _plan_fs)
+
+# The project file the SDK insists on, for each of the three languages that
+# need one - and for nobody else.
+_written = []
+for _lang, _file, _want in (("fsharp", "Program.fs", ".fsproj"),
+                            ("csharp", "Program.cs", ".csproj"),
+                            ("visualbasic", "Program.vb", ".vbproj")):
+    _folder = os.path.join(_HOME, "proj-" + _lang)
+    os.makedirs(_folder, exist_ok=True)
+    _path = os.path.join(_folder, _file)
+    open(_path, "w").close()
+    runner._ensure_project(_path, _lang, "dotnet", lambda text: None)
+    _made = [n for n in os.listdir(_folder) if n.endswith(_want)]
+    check(f"a loose {_file} gets a {_want}", bool(_made), os.listdir(_folder))
+    if _made:
+        _text = open(os.path.join(_folder, _made[0]), encoding="utf-8").read()
+        _written.append((_lang, _text))
+        check(f"and it is a project the SDK can read",
+              _text.startswith("<Project Sdk=") and "</Project>" in _text, _text[:60])
+
+for _lang, _text in _written:
+    if _lang == "fsharp":
+        # F# compiles in order and does not glob. A project that names no
+        # source builds nothing and says almost nothing about why.
+        check("the F# project names its source file",
+              '<Compile Include="Program.fs" />' in _text, _text)
+
+_folder = os.path.join(_HOME, "proj-script")
+os.makedirs(_folder, exist_ok=True)
+_path = os.path.join(_folder, "note.fsx")
+open(_path, "w").close()
+runner._ensure_project(_path, "fsharp", "fsi", lambda text: None)
+check("but F# Interactive is left no stray project",
+      os.listdir(_folder) == ["note.fsx"], os.listdir(_folder))
 
 say("\n== the languages ==")
 stats = langs.stats()

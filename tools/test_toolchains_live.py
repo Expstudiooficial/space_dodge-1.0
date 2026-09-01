@@ -33,7 +33,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, "windows"))
 sys.path.insert(0, os.path.join(ROOT, "app", "src", "main", "python"))
 
-from pycmd_win import langs, toolchains  # noqa: E402
+from pycmd_win import langs, runner, toolchains  # noqa: E402
 
 WORD = "pycmdlives"
 
@@ -88,6 +88,30 @@ PROGRAMS = {
     "erlang": ("hello.erl", f'main(_) ->\n    io:format("{WORD}~n").\n'),
     "sql": ("hello.sql", f"SELECT '{WORD}';\n"),
     "fsharp": ("hello.fsx", f'printfn "{WORD}"\n'),
+    "csharp": ("Program.cs", f'System.Console.WriteLine("{WORD}");\n'),
+    "visualbasic": ("Program.vb",
+                    "Module Program\n  Sub Main()\n"
+                    f'    System.Console.WriteLine("{WORD}")\n'
+                    "  End Sub\nEnd Module\n"),
+}
+
+# Where a toolchain needs a different file from the language's usual one.
+# The .NET SDK builds a *project*, and a project compiles .fs, not .fsx - the
+# script extension goes to F# Interactive and is covered by that row instead.
+# Getting this wrong is what CI caught: hello.fsx handed to `dotnet run` gets
+# "Couldn't find a project to run", which is the SDK being right.
+PROGRAMS_BY_TOOLCHAIN = {
+    ("dotnet", "fsharp"): ("Program.fs",
+                           f'[<EntryPoint>]\nlet main _ =\n'
+                           f'    printfn "{WORD}"\n    0\n'),
+}
+
+# Toolchains that cannot print anything by design, and why. These are not
+# gaps to fill in later: saying "no sample program" about them would be
+# untrue, and a failing check about them would be noise.
+NOTHING_TO_RUN = {
+    "nasm": "assembles to an .obj on purpose - linking it is your linker's job",
+    "objc": "wants Apple's Foundation, which Windows has not got",
 }
 
 FAILURES = []
@@ -165,8 +189,12 @@ def _kill_tree(process):
 
 def run_one(folder: str, language_id: str, chain) -> tuple:
     """Builds and runs one program. Returns (ok, what happened)."""
-    name, source = PROGRAMS[language_id]
-    path = os.path.join(folder, language_id, name)
+    name, source = PROGRAMS_BY_TOOLCHAIN.get(
+        (chain.id, language_id), PROGRAMS[language_id])
+    # One folder per toolchain-and-language, not per language: two toolchains
+    # for the same language must not find each other's leftovers, and a
+    # project file written for one would be picked up by the next.
+    path = os.path.join(folder, f"{chain.id}-{language_id}", name)
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "w", encoding="utf-8") as handle:
         handle.write(source)
@@ -176,6 +204,12 @@ def run_one(folder: str, language_id: str, chain) -> tuple:
         return False, plan.get("error", "no plan")
     if plan["toolchain"] != chain.id:
         return False, f"asked for {chain.id}, got {plan['toolchain']}"
+
+    # The same courtesy the Run button does, in the same order it does it: a
+    # loose .cs, .vb or .fs gets the project file the SDK insists on. Calling
+    # the real one rather than writing another keeps the harness honest about
+    # what a user actually gets.
+    runner._ensure_project(path, language_id, plan["toolchain"], lambda text: None)
 
     output = ""
     for command in plan["commands"]:
@@ -219,6 +253,10 @@ def main(argv=None) -> int:
     folder = tempfile.mkdtemp(prefix="pycmd-live-")
     for chain in installed:
         for language_id in chain.languages:
+            if chain.id in NOTHING_TO_RUN:
+                SKIPPED.append(f"{chain.id}/{language_id} "
+                               f"({NOTHING_TO_RUN[chain.id]})")
+                continue
             if language_id not in PROGRAMS:
                 SKIPPED.append(f"{chain.id}/{language_id} (no sample program)")
                 continue

@@ -78,6 +78,7 @@ class Toolchain:
     __slots__ = (
         "id", "name", "languages", "program", "version_args", "version_pattern",
         "steps", "winget", "scoop", "choco", "site", "note", "builds",
+        "refuses", "suits",
     )
 
     def __init__(
@@ -94,6 +95,8 @@ class Toolchain:
         choco="",
         site="",
         note="",
+        refuses=(),
+        suits=(),
     ):
         self.id = id
         self.name = name
@@ -109,6 +112,13 @@ class Toolchain:
         self.choco = choco
         self.site = site
         self.note = note
+        # Covering a language is not the same as being able to open every file
+        # written in it. `dotnet run` builds a project; an .fsx is a script and
+        # has no project, so the SDK is the wrong tool for that extension
+        # however right it is for .fs. `refuses` takes it out of the running,
+        # `suits` moves a toolchain to the front for the extensions it is for.
+        self.refuses = tuple(e.lower() for e in refuses)
+        self.suits = tuple(e.lower() for e in suits)
         self.builds = len(self.steps) > 1
 
     def as_dict(self) -> dict:
@@ -441,8 +451,11 @@ TOOLCHAINS = [
         winget="winget install Microsoft.DotNet.SDK.8",
         scoop="scoop install dotnet-sdk", choco="choco install dotnet-sdk",
         site="https://dotnet.microsoft.com/download",
-        note="Runs the project in the file's folder, so a .cs file wants a "
-             ".csproj beside it. PyCmd writes one for you the first time.",
+        note="Runs the project in the file's folder, so a loose .cs, .vb or "
+             ".fs file wants a project beside it. PyCmd writes one for you "
+             "the first time. An .fsx is a script rather than a project, so "
+             "that goes to F# Interactive instead.",
+        refuses=(".fsx", ".fsscript"),
     ),
     Toolchain(
         "fsi", "F# Interactive", ["fsharp"], "dotnet",
@@ -450,7 +463,8 @@ TOOLCHAINS = [
         version_args=("--version",),
         winget="winget install Microsoft.DotNet.SDK.8",
         site="https://dotnet.microsoft.com/languages/fsharp",
-        note="Runs a single .fs file with no project around it.",
+        note="Runs a single .fs or .fsx file with no project around it.",
+        suits=(".fsx", ".fsscript"),
     ),
 
     # -- the functional ones ----------------------------------------------
@@ -720,7 +734,18 @@ def plan_for(path: str, language_id: str, prefer: str = "", refresh: bool = Fals
     # just built is somewhere you can see.
     out = os.path.join(folder, stem + (".exe" if WINDOWS else ".out"))
 
-    candidates = for_language(language_id)
+    extension = os.path.splitext(path)[1].lower()
+    candidates = [c for c in for_language(language_id)
+                  if extension not in c.refuses]
+    # If refusing left nothing at all, refuse nothing: "no toolchain for this
+    # language" is a different and much less true answer than "the only one
+    # there is would rather not".
+    candidates = candidates or for_language(language_id)
+    # A toolchain that is *for* this extension goes first, whatever the table
+    # order says. Without this a loose hello.fsx went to `dotnet run`, which
+    # answered "Couldn't find a project to run" - correct, and useless.
+    candidates = ([c for c in candidates if extension in c.suits]
+                  + [c for c in candidates if extension not in c.suits])
     if prefer:
         candidates = ([c for c in candidates if c.id == prefer]
                       + [c for c in candidates if c.id != prefer])

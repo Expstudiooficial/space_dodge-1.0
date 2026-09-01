@@ -132,31 +132,62 @@ def _pump(process, write) -> int:
     return process.wait()
 
 
-def _ensure_csproj(path: str, language_id: str, write) -> None:
-    """Gives a lone .cs or .vb file the project file the SDK insists on.
+# Which project file each .NET language wants beside a loose source file.
+_DOTNET_PROJECT = {
+    "csharp": ".csproj",
+    "visualbasic": ".vbproj",
+    "fsharp": ".fsproj",
+}
+
+
+def _ensure_project(path: str, language_id: str, toolchain: str, write) -> None:
+    """Gives a lone .cs, .vb or .fs file the project file the SDK insists on.
 
     `dotnet run` wants a project, and somebody who has just written twelve
     lines of C# has not got one. Writing the smallest possible one beside the
     file is friendlier than an error explaining MSBuild.
+
+    F# is the awkward one twice over. Its SDK does not glob sources the way
+    C#'s does - order is part of the language there, so the project has to name
+    the file - and an .fsx is a script that has no project at all. The second
+    is handled a layer up, in the toolchain table: .fsx never reaches here,
+    because `dotnet` refuses that extension and F# Interactive takes it.
+
+    Only the SDK is given a project. F# Interactive needs none, and leaving a
+    stray .fsproj beside somebody's script would change what `dotnet run` did
+    in that folder afterwards.
     """
-    if language_id not in ("csharp", "visualbasic"):
+    if toolchain != "dotnet":
+        return
+    suffix = _DOTNET_PROJECT.get(language_id)
+    if not suffix:
         return
     folder = os.path.dirname(path)
-    suffix = ".csproj" if language_id == "csharp" else ".vbproj"
     existing = [n for n in os.listdir(folder) if n.lower().endswith(suffix)]
     if existing:
         return
-    name = os.path.splitext(os.path.basename(path))[0] + suffix
-    project = (
-        '<Project Sdk="Microsoft.NET.Sdk">\n'
-        "  <PropertyGroup>\n"
-        "    <OutputType>Exe</OutputType>\n"
-        "    <TargetFramework>net8.0</TargetFramework>\n"
-        "    <Nullable>enable</Nullable>\n"
-        "    <ImplicitUsings>enable</ImplicitUsings>\n"
-        "  </PropertyGroup>\n"
-        "</Project>\n"
-    )
+    source = os.path.basename(path)
+    name = os.path.splitext(source)[0] + suffix
+    if language_id == "fsharp":
+        body = (
+            "  <PropertyGroup>\n"
+            "    <OutputType>Exe</OutputType>\n"
+            "    <TargetFramework>net8.0</TargetFramework>\n"
+            "  </PropertyGroup>\n"
+            "  <ItemGroup>\n"
+            f'    <Compile Include="{source}" />\n'
+            "  </ItemGroup>\n"
+        )
+    else:
+        body = (
+            "  <PropertyGroup>\n"
+            "    <OutputType>Exe</OutputType>\n"
+            "    <TargetFramework>net8.0</TargetFramework>\n"
+            "    <Nullable>enable</Nullable>\n"
+            "    <ImplicitUsings>enable</ImplicitUsings>\n"
+            "  </PropertyGroup>\n"
+        )
+    project = '<Project Sdk="Microsoft.NET.Sdk">\n' + body + "</Project>\n"
     try:
         with open(os.path.join(folder, name), "w", encoding="utf-8") as handle:
             handle.write(project)
@@ -266,7 +297,7 @@ def run_file(path: str, write, prefer: str = "", run_id: str = "") -> dict:
                     "run": run.as_dict()}
 
         run.toolchain = plan["toolchain"]
-        _ensure_csproj(path, language_id, write)
+        _ensure_project(path, language_id, plan["toolchain"], write)
 
         version = f" {plan['version']}" if plan.get("version") else ""
         write(f"[PyCmd] {language['name']} via {plan['name']}{version}\n")
