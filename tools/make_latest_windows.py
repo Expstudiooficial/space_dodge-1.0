@@ -77,6 +77,38 @@ def source_version() -> tuple:
     return version.group(1), int(build.group(1))
 
 
+def agrees_with_tag(tag: str) -> int:
+    """Does the source claim the version this tag says it is?
+
+    A tag and the VERSION in host.py are two statements about the same thing,
+    written at different moments by different hands, and nothing had ever
+    checked they matched. When they do not, everything downstream is quietly
+    wrong rather than loudly broken: the exe is attached to the release for
+    the tag, the manifest is written from the source, and so `url` points at
+    one release while `sha256` describes the build on another. The updater
+    then downloads fifteen megabytes and rejects them on a checksum error
+    that names neither the tag nor the version - and because BUILD did not
+    move either, nobody is offered the update in the first place.
+
+    So this is a gate, run before anything is built, and it fails with the
+    two numbers side by side.
+    """
+    version, build = source_version()
+    wanted = tag[len("windows-v"):] if tag.startswith("windows-v") else tag
+    if wanted != version:
+        print(f"the tag says {wanted}, windows/pycmd_win/host.py says {version}.",
+              file=sys.stderr)
+        print("  Nothing is built from a disagreement like that: the exe would be",
+              file=sys.stderr)
+        print("  attached to one release and the manifest would point at another.",
+              file=sys.stderr)
+        print(f"  Set VERSION = \"{wanted}\" and raise BUILD, or tag "
+              f"windows-v{version}.", file=sys.stderr)
+        return 1
+    print(f"the tag and the source agree: {version} (build {build})")
+    return 0
+
+
 def digest(path: str) -> str:
     sha = hashlib.sha256()
     with open(path, "rb") as handle:
@@ -163,6 +195,14 @@ def seed(notes: str) -> int:
     with open(MANIFEST, "w", encoding="utf-8") as handle:
         json.dump(manifest, handle, indent=2)
         handle.write("\n")
+    # And the checksums beside it, which otherwise still describe the previous
+    # version - a file whose whole job is to be trusted, quietly holding the
+    # hash of a different build.
+    with open(SUMS, "w", encoding="utf-8") as handle:
+        handle.write(f"# PyCmd for Windows {version} (build {build}) "
+                     "has not been built yet.\n")
+        handle.write("# The checksum appears here when a windows-v tag "
+                     "builds it.\n")
     print(f"seeded dist-windows/latest.json for {version} (build {build}), not yet built")
     return 0
 
@@ -261,9 +301,13 @@ def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("exe", nargs="?", help="the built PyCmd exe to describe")
     parser.add_argument("--notes", default="", help="one line shown in the app")
+    parser.add_argument("--agrees-with-tag", metavar="TAG", default="",
+                        help="check the source claims the version this tag names")
     parser.add_argument("--seed", action="store_true",
                         help="write a manifest for a build that does not exist yet")
     args = parser.parse_args(argv)
+    if args.agrees_with_tag:
+        return agrees_with_tag(args.agrees_with_tag)
     if args.seed:
         return seed(args.notes)
     return write(args.exe, args.notes) if args.exe else check()

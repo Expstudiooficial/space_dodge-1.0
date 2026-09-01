@@ -4,7 +4,7 @@
 
 | | |
 |---|---|
-| Version | 1.0.0 |
+| Version | 1.0.1 |
 | Works on | Windows 10 and newer, 64-bit |
 | Runtime | Edge WebView2, which Windows 10 and 11 already have |
 | Installer | none — it is one exe |
@@ -23,9 +23,49 @@ To make one:
 
 - **On your own machine:**
   `powershell -ExecutionPolicy Bypass -File windows\build\build.ps1`
-- **Or push a tag** `windows-v1.0.0` and let the workflow do it — it builds on
+- **Or push a tag** `windows-v1.0.1` and let the workflow do it — it builds on
   a Windows runner, proves the exe starts, writes this manifest with the real
   hash, and attaches the exe to a release.
+
+## Where the exe lives
+
+Not in this folder, and not in the repository. It is attached to the GitHub
+release for the tag that built it, which is what `latest.json` points at.
+
+`url` in the manifest is pinned to one version, because the `sha256` beside it
+describes that build and no other; a moving address would fail its own
+checksum the day after the next release. `latestUrl` always redirects to the
+newest release, and is the one to hand somebody or put on a page.
+
+## What is new in 1.0.1
+
+**An abandoned request is no longer an error.** WebView2 gives up on requests
+constantly - a plugin panel's frame is pointed at `about:blank` and rewritten,
+a page navigates while an image is still arriving, the window closes with a
+poll in flight - and each one broke a write that had already started. Python's
+HTTP server prints a full traceback for that by default, so anybody running
+the exe from a terminal saw a stream of
+
+    ConnectionAbortedError: [WinError 10053] An established connection was
+    aborted by the software in your host machine
+
+for something that was not wrong and that they could not act on. Now nothing
+is printed for it, and anything genuinely broken goes to PyCmd's own log
+screen rather than to whatever console happened to be behind the window.
+
+**Updates come from the release.** 1.0.0 shipped its exe by committing it into
+the branch, which worked and should not have: a fifteen-megabyte binary added
+once per version is fifteen megabytes added to every clone of the project for
+ever. The binary is no longer committed at all.
+
+**F# runs both ways.** An `.fsx` is a script and goes to F# Interactive; an
+`.fs` is a compile unit and goes to the .NET SDK, with the `.fsproj` written
+for you. Before, both went to the SDK and the script half failed.
+
+**A tag now has to agree with the source.** Tagging `windows-v1.0.1` while the
+code still calls itself 1.0.0 used to build happily and produce a manifest
+pointing at the wrong release. It stops the build now, and says which two
+numbers disagree.
 
 ## What is new in 1.0.0
 

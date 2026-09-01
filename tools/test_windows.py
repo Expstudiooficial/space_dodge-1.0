@@ -500,6 +500,21 @@ manifest = subprocess.run(
 check("dist-windows/latest.json agrees with the source",
       manifest.returncode == 0, (manifest.stdout + manifest.stderr).strip()[:300])
 
+# A checksums file that still names the previous build is worse than none:
+# its whole job is to be the thing you trust.
+_sums = open(os.path.join(ROOT, "dist-windows", "SHA256SUMS.txt"),
+             encoding="utf-8").read()
+_manifest = json.load(open(os.path.join(ROOT, "dist-windows", "latest.json"),
+                           encoding="utf-8"))
+if _manifest.get("sha256"):
+    check("the checksums file names the built exe",
+          _manifest["sha256"] in _sums, _sums[:80])
+else:
+    check("with nothing built, the checksums file claims nothing",
+          _manifest["sha256"] == "" and not [
+              line for line in _sums.splitlines()
+              if line.strip() and not line.startswith("#")], _sums[:120])
+
 say("\n== the exe is not in the repository ==")
 _tracked = subprocess.run(["git", "ls-files", "dist-windows"], cwd=ROOT,
                           capture_output=True, text=True).stdout.split()
